@@ -96,6 +96,21 @@ namespace sundry
         }
     }
 
+    template <int ERR_INFO_SIZE,typename ...Args>
+    void compile_shaders(Args&&... args) noexcept(false)
+    {
+        static_assert( sizeof...(Args) % 4 == 0 );
+        static_assert( sizeof...(Args) > 0 );
+        std::tuple<Args...> tup = std::make_tuple(std::forward<Args>(args)...);
+        constexpr int idx = 0;
+        constexpr int B = idx * 4;
+        compile_shader<ERR_INFO_SIZE,idx>(std::get<B + 0>(tup),std::get<B + 1>(tup),std::get<B + 2>(tup),std::get<B + 3>(tup));
+        if constexpr((std::tuple_size<std::tuple<Args...>>::value - 1) > B + 3)
+        {
+            compile_shaders_inside<ERR_INFO_SIZE,idx+1>(tup);
+        }
+    }
+
 
     
 } // namespace sundry

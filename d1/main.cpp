@@ -37,10 +37,10 @@ public:
     {
 
         try{
-            sundry::compile_shaders<100>(std::make_tuple(
+            sundry::compile_shaders<100>(
                 GL_VERTEX_SHADER,&(shader_base::vs),1,&base_vs,
                 GL_FRAGMENT_SHADER,&(shader_base::fs),1,&base_fs
-            ));
+            );
             
         }catch(sundry::CompileError e)
         {
