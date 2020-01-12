@@ -12,9 +12,17 @@ namespace sundry
         {
            
         }
-        GLuint type()
+        const char* type()
         {
-            return ty;
+            switch(ty)
+            {
+                case GL_VERTEX_SHADER:
+                    return "GL_VERTEX_SHADER";
+                case GL_FRAGMENT_SHADER:
+                    return "GL_FRAGMENT_SHADER";
+                default:
+                    return "Unimpl to do!";
+            }
         }
         int idx()
         {
