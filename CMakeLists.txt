@@ -8,7 +8,11 @@ if(WIN32)
 
     message("is Windows")
     add_definitions(/permissive-)
-    add_link_options(/SAFESEH:NO /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
+    if(${CMAKE_BUILD_TYPE} STREQUAL "Release" )
+        add_link_options(/SAFESEH:NO /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
+    else()
+        add_link_options(/SAFESEH:NO /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
+    endif()
     message(${CMAKE_EXE_LINKER_FLAGS})
 else()
 
