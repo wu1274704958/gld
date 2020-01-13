@@ -50,7 +50,7 @@ class Demo1 : public RenderDemo{
 public:
     int init() override
     {
-
+        glfwGetWindowSize(m_window,&width,&height);
         try{
             sundry::compile_shaders<100>(
                 GL_VERTEX_SHADER,&(shader_base::vs),1,&base_vs,
@@ -74,29 +74,30 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
 
         Vertex vertices[] = {
-            {
-                glm::vec3(.0f,0.8f,.0f),
+            Vertex{
+                glm::vec3(1.0f,1.0f,0.0f),
                 glm::vec4(1.0f,0.0f,0.0f,1.0f)
             },
-            {
-                glm::vec3(.8f,.0f,.0f),
-                glm::vec4(.0f,1.0f,0.0f,1.0f)
+            Vertex{
+                glm::vec3(-1.0f,0.0f,0.0f),
+                glm::vec4(0.0f,1.0f,0.0f,1.0f)
             },
-            {
-                glm::vec3(.0f,.0f,.0f),
-                glm::vec4(.0f,0.0f,1.0f,1.0f)
-            },
-            {
-                glm::vec3(.8f,-.8f,.0f),
+            Vertex{
+                glm::vec3(1.0f,0.0f,0.0f),
+                glm::vec4(0.0f,0.0f,1.0f,1.0f)
+            }
+            ,
+            Vertex{
+                glm::vec3(-1.0f,-1.0f,.0f),
                 glm::vec4(1.0f,0.0f,1.0f,1.0f)
             }
         };
 
         glBufferData(GL_ARRAY_BUFFER,sizeof(vertices),vertices,GL_STATIC_DRAW);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3 * sizeof(GLfloat),(void *)0);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
         glEnableVertexAttribArray(0);
 
-        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,4 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
+        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER,0);
@@ -128,7 +129,35 @@ public:
 
     void draw() override
     {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        glUseProgram(program);
+        
 
+        glUniform1f(alpha,1.0f);
+
+        update_matrix();
+
+        glUniformMatrix4fv(perspective,1,GL_FALSE,glm::value_ptr(perspective_m));
+        glUniformMatrix4fv(world,1,GL_FALSE,glm::value_ptr(world_m));
+        glUniformMatrix4fv(model,1,GL_FALSE,glm::value_ptr(model_m));
+
+        glBindVertexArray(vertex_arr);
+        glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
+
+        glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+        //glDrawArrays(GL_TRIANGLES,0,3);
+        
+        glBindBuffer(GL_ARRAY_BUFFER,0);
+        glBindVertexArray(0);
+    }
+
+    void update_matrix(){
+        perspective_m= glm::perspective(glm::radians(60.f),((float)width/(float)height),0.1f,256.0f);
+        world_m = glm::mat4(1.0f);
+        model_m = glm::mat4(1.0f);
+
+        world_m = glm::translate(world_m,glm::vec3(0.0f,0.0f,-3.0f));
     }
 
     ~Demo1(){
@@ -145,6 +174,10 @@ private:
     world = 0,
     model = 0,
     alpha = 0;
+    glm::mat4 perspective_m,
+    world_m,
+    model_m;
+    int width,height;
 };
 
 
