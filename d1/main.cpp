@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <dbg.hpp>
+#include <vector>
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
 #define DEL_GL_shader(id) DEL_GL(Shader,id)
@@ -164,6 +165,16 @@ public:
         DEL_GL_shader(base_vs);
         DEL_GL_shader(base_fs);
         DELS_GL_vertex_arr(vertex_arr,1);
+    }
+
+    std::vector<Vertex> generate_vertices(int density,float w)
+    {
+        float gap = 1.0f / static_cast<float>(density);
+        std::vector<glm::vec3> res;
+        auto get_line = [density,gap,&res](glm::vec3 b,glm::vec3 dir)
+        {
+            
+        };
     }
 private:
     GLuint base_vs = 0,base_fs = 0,
