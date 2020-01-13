@@ -21,11 +21,16 @@ endif()
 
 find_package(GLM)
 find_package(GLFW3)
+find_package(MINI_TEST)
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR} 
 )
+
+if(MINI_TEST_FOUND)
+    include_directories(${MINI_TEST_INCLUDE_DIR})
+endif()
 
 if(GLM_FOUND AND GLFW3_FOUND)
     message(${GLM_INCLUDE_DIR})
