@@ -45,6 +45,13 @@ BuildStr(shader_base,fs,#version 330 core\n
 struct Vertex{
     glm::vec3 pos;
     glm::vec4 color;
+    Vertex(glm::vec3 pos) : pos(pos)
+    {
+        color.r = 1.f;
+        color.g = color.b = 0.f;
+        color.a = 1.f;
+    }
+    Vertex(glm::vec3 pos,glm::vec4 color) : pos(pos),color(color){}
 };
 
 class Demo1 : public RenderDemo{
@@ -74,27 +81,10 @@ public:
         glGenBuffers(1,&vertex_buff);
         glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
 
-        Vertex vertices[] = {
-            Vertex{
-                glm::vec3(1.0f,1.0f,0.0f),
-                glm::vec4(1.0f,0.0f,0.0f,1.0f)
-            },
-            Vertex{
-                glm::vec3(-1.0f,0.0f,0.0f),
-                glm::vec4(0.0f,1.0f,0.0f,1.0f)
-            },
-            Vertex{
-                glm::vec3(1.0f,0.0f,0.0f),
-                glm::vec4(0.0f,0.0f,1.0f,1.0f)
-            }
-            ,
-            Vertex{
-                glm::vec3(-1.0f,-1.0f,.0f),
-                glm::vec4(1.0f,0.0f,1.0f,1.0f)
-            }
-        };
+        auto vertices = generate_vertices(20,0.2f); 
+        vertex_size = static_cast<int>(vertices.size());
 
-        glBufferData(GL_ARRAY_BUFFER,sizeof(vertices),vertices,GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
         glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
         glEnableVertexAttribArray(0);
 
@@ -146,7 +136,8 @@ public:
         glBindVertexArray(vertex_arr);
         glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
 
-        glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+        //glDrawArrays(GL_LINE_STRIP,0,vertex_size);
+        glDrawArrays(GL_TRIANGLE_STRIP,0,vertex_size);
         //glDrawArrays(GL_TRIANGLES,0,3);
         
         glBindBuffer(GL_ARRAY_BUFFER,0);
@@ -171,10 +162,48 @@ public:
     {
         float gap = 1.0f / static_cast<float>(density);
         std::vector<glm::vec3> res;
-        auto get_line = [density,gap,&res](glm::vec3 b,glm::vec3 dir)
+        auto get_line = [density,gap](std::vector<glm::vec3>& res,glm::vec3 b,glm::vec3 dir)
         {
-            
+            for(int i = 0;i < density;++i)
+            {
+                res.push_back(b + (dir * (gap * i)));
+            }
         };
+
+        get_line(res,glm::vec3(0.f,0.f,0.f),glm::vec3(0.f,-1.0f,0.f));
+        get_line(res,glm::vec3(0.f,-1.f,0.f),glm::vec3(1.f,0.0f,0.f));
+        get_line(res,glm::vec3(1.f,-1.f,0.f),glm::vec3(0.f,1.0f,0.f));
+        get_line(res,glm::vec3(1.f,0.f,0.f),glm::vec3(-1.f,0.0f,0.f));
+
+        res.push_back(glm::vec3(0.f,0.f,0.f));
+
+        std::vector<glm::vec3> res2;
+        glm::mat2 m(1.0f);
+        float r = glm::radians(45.f);
+        m[0][0] = glm::cos(r);
+        m[0][1] = -glm::sin(r);
+        m[1][0] = glm::sin(r);
+        m[1][1] = glm::cos(r);
+        for(auto &v : res)
+        {
+            v.x -= 0.5f;
+            v.y += 0.5f;
+
+            glm::vec2 t = m * glm::vec2(v.x,v.y);
+            v.x = t.x;
+            v.y = t.y;
+            res2.push_back(v * (1.0f - w));
+        }
+        std::vector<Vertex> res3;
+        for(int i = 0;i < res.size() * 2;++i)
+        {
+            if(i % 2 == 0)
+                res3.push_back(res[i / 2]);
+            else
+                res3.push_back(res2[i / 2]);
+        }
+
+        return res3;
     }
 private:
     GLuint base_vs = 0,base_fs = 0,
@@ -189,6 +218,7 @@ private:
     world_m,
     model_m;
     int width,height;
+    int vertex_size;
 };
 
 
