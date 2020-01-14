@@ -47,9 +47,7 @@ struct Vertex{
     glm::vec4 color;
     Vertex(glm::vec3 pos) : pos(pos)
     {
-        color.r = 1.f;
-        color.g = color.b = 0.f;
-        color.a = 1.f;
+        color = glm::vec4(0.f,1.f,.0f,0.f);
     }
     Vertex(glm::vec3 pos,glm::vec4 color) : pos(pos),color(color){}
 };
@@ -75,13 +73,18 @@ public:
         
         std::cout << base_vs <<" "<< base_fs <<std::endl;
         
+        glEnable (GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+
+        glDisable(GL_CULL_FACE);
+
         glGenVertexArrays(1,&vertex_arr);
         glBindVertexArray(vertex_arr);
 
         glGenBuffers(1,&vertex_buff);
         glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
 
-        auto vertices = generate_vertices(20,0.2f); 
+        vertices = generate_vertices(32,0.12f); 
         vertex_size = static_cast<int>(vertices.size());
 
         glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
@@ -133,23 +136,76 @@ public:
         glUniformMatrix4fv(world,1,GL_FALSE,glm::value_ptr(world_m));
         glUniformMatrix4fv(model,1,GL_FALSE,glm::value_ptr(model_m));
 
+       
+
         glBindVertexArray(vertex_arr);
         glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
 
+        update_color();
+        update_vertices();
         //glDrawArrays(GL_LINE_STRIP,0,vertex_size);
-        glDrawArrays(GL_TRIANGLE_STRIP,0,vertex_size);
+        glDrawArrays(GL_TRIANGLE_STRIP,draw_b,draw_count);
         //glDrawArrays(GL_TRIANGLES,0,3);
         
         glBindBuffer(GL_ARRAY_BUFFER,0);
         glBindVertexArray(0);
+
+        update();
     }
 
-    void update_matrix(){
+    void update_matrix()
+    {
         perspective_m= glm::perspective(glm::radians(60.f),((float)width/(float)height),0.1f,256.0f);
         world_m = glm::mat4(1.0f);
         model_m = glm::mat4(1.0f);
 
         world_m = glm::translate(world_m,glm::vec3(0.0f,0.0f,-3.0f));
+    }
+
+    void update()
+    {
+        ++draw_idx;
+        if(draw_idx == draw_dur)
+        {
+            draw_idx = 0;
+
+            draw_b += 2;
+
+            if(draw_b + min_draw_count >= vertex_size)
+            {
+                draw_b = 0;
+                draw_count = min_draw_count;
+            }else
+            if(draw_b + draw_count >= vertex_size )
+                draw_count = vertex_size - draw_b;
+            else{
+                if(draw_count < origin_draw_count)
+                    draw_count += 2;
+            }
+        }
+    }
+
+    void update_color()
+    {
+        float of = 1.0f - normal_dist(0.f);
+        int m = draw_count / 2;
+        for(int i = 0;i < draw_count;++i)
+        {
+            float ni = static_cast<float>(i - m);
+            float nd = normal_dist(ni / 2.6f);
+            vertices[draw_b + i].color.a = nd + of;
+            vertices[draw_b + i].color.r = nd;
+        }
+    }
+
+    void update_vertices()
+    {
+        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
+        glEnableVertexAttribArray(1);
     }
 
     ~Demo1(){
@@ -205,6 +261,12 @@ public:
 
         return res3;
     }
+
+    float normal_dist(float x)
+    {
+        float u = 0.0f,o = 1.0f;
+        return static_cast<float>(1.0f / glm::sqrt(2 * glm::pi<float>() * o) * glm::exp( -glm::pow(x - u,2.f) / (2.0f * glm::pow(o,2.f))));
+    }
 private:
     GLuint base_vs = 0,base_fs = 0,
     program = 0,
@@ -219,6 +281,10 @@ private:
     model_m;
     int width,height;
     int vertex_size;
+    int draw_b = 0,draw_count = 4,origin_draw_count = 16,min_draw_count = 4;
+    int draw_dur = 1;
+    int draw_idx = 0;
+    std::vector<Vertex> vertices;
 };
 
 
