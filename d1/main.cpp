@@ -9,6 +9,10 @@
 #include <dbg.hpp>
 #include <vector>
 #include <make_color.hpp>
+#include <gl_comm.hpp>
+#include <sprite.h>
+#include <program.hpp>
+
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
 #define DEL_GL_shader(id) DEL_GL(Shader,id)
