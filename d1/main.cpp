@@ -14,17 +14,19 @@
 
 #define DELS_GL(what,num,id) if(id != 0) glDelete##what(num,&id)
 #define DELS_GL_vertex_arr(id,num) DELS_GL(VertexArrays,num,id)
+#define DELS_GL_buffer(id,num) DELS_GL(Buffers,num,id)
 
 BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 perspective; \n
     uniform mat4 world; \n
     uniform mat4 model; \n
+    uniform float offsetZ;
     layout(location =0) in vec3 vposition; \n
     layout(location =1) in vec4 color; \n
     out vec4 outColor; \n
     void main() \n
     { \n
-        gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
+        gl_Position = perspective * world * model * vec4(vposition.x,vposition.y,vposition.z + offsetZ,1.0f);\n
         outColor = color;\n
     }
 )
@@ -87,7 +89,31 @@ public:
         vertices = generate_vertices(32,0.12f); 
         vertex_size = static_cast<int>(vertices.size());
 
+        bg_vertices = vertices;
+
         glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
+        glEnableVertexAttribArray(1);
+
+        glBindBuffer(GL_ARRAY_BUFFER,0);
+
+        glBindVertexArray(0);
+        //-----------------------------------------------------------
+
+        for(auto& c : bg_vertices)
+        {
+            c.color.a = 0.1f;
+        }
+
+        glGenVertexArrays(1,&bg_arr);
+        glBindVertexArray(bg_arr);
+        glGenBuffers(1,&bg_buff);
+        glBindBuffer(GL_ARRAY_BUFFER,bg_buff);
+
+        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * bg_vertices.size(),bg_vertices.data(),GL_STATIC_DRAW);
         glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
         glEnableVertexAttribArray(0);
 
@@ -108,6 +134,7 @@ public:
         world =         glGetUniformLocation(program,"world");
         model =         glGetUniformLocation(program,"model");
         alpha =         glGetUniformLocation(program,"alpha");
+        offsetZ =       glGetUniformLocation(program,"offsetZ");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -129,6 +156,7 @@ public:
         
 
         glUniform1f(alpha,1.0f);
+        glUniform1f(offsetZ,0.0f);
 
         update_matrix();
 
@@ -146,8 +174,16 @@ public:
         //glDrawArrays(GL_LINE_STRIP,0,vertex_size);
         glDrawArrays(GL_TRIANGLE_STRIP,draw_b,draw_count);
         //glDrawArrays(GL_TRIANGLES,0,3);
-        
+        glBindVertexArray(bg_arr);
+
+        glBindBuffer(GL_ARRAY_BUFFER,bg_buff);
+
+        glUniform1f(offsetZ,0.01f);
+
+        glDrawArrays(GL_TRIANGLE_STRIP,0,vertex_size);
+
         glBindBuffer(GL_ARRAY_BUFFER,0);
+
         glBindVertexArray(0);
 
         update();
@@ -159,7 +195,14 @@ public:
         world_m = glm::mat4(1.0f);
         model_m = glm::mat4(1.0f);
 
+        model_m = glm::rotate(model_m,rotate_y,glm::vec3(0.f,1.f,0.f));
+
         world_m = glm::translate(world_m,glm::vec3(0.0f,0.0f,-3.0f));
+    }
+
+    constexpr float pi_2_1()
+    {
+        return glm::pi<float>() / 2.f;
     }
 
     void update()
@@ -175,6 +218,16 @@ public:
             {
                 draw_b = 0;
                 draw_count = min_draw_count;
+    
+                if(rotate_y >= glm::pi<float>())
+                    rotate_y = 0.f;
+                else
+                {
+                    if(rotate_y >= pi_2_1() - 0.2f && rotate_y < pi_2_1() + 0.2f)
+                        rotate_y = pi_2_1() + 0.2f;
+                    else
+                        rotate_y += 0.1f;
+                }
             }else
             if(draw_b + draw_count >= vertex_size )
                 draw_count = vertex_size - draw_b;
@@ -212,6 +265,9 @@ public:
         DEL_GL_shader(base_vs);
         DEL_GL_shader(base_fs);
         DELS_GL_vertex_arr(vertex_arr,1);
+        DELS_GL_buffer(vertex_buff,1);
+        DELS_GL_vertex_arr(bg_arr,1);
+        DELS_GL_buffer(bg_buff,1);
     }
 
     std::vector<Vertex> generate_vertices(int density,float w)
@@ -272,10 +328,13 @@ private:
     program = 0,
     vertex_arr = 0,
     vertex_buff = 0,
+    bg_arr = 0,
+    bg_buff = 0,
     perspective = 0,
     world = 0,
     model = 0,
-    alpha = 0;
+    alpha = 0,
+    offsetZ = 0;
     glm::mat4 perspective_m,
     world_m,
     model_m;
@@ -284,7 +343,8 @@ private:
     int draw_b = 0,draw_count = 4,origin_draw_count = 16,min_draw_count = 4;
     int draw_dur = 1;
     int draw_idx = 0;
-    std::vector<Vertex> vertices;
+    std::vector<Vertex> vertices,bg_vertices;
+    float rotate_y = 0.f;
 };
 
 
