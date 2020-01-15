@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <dbg.hpp>
 #include <vector>
+#include <make_color.hpp>
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
 #define DEL_GL_shader(id) DEL_GL(Shader,id)
@@ -105,7 +106,8 @@ public:
 
         for(auto& c : bg_vertices)
         {
-            c.color.a = 0.1f;
+            c.color = wws::make_rgba(PREPARE_STRING("#A020F0FF")).make<glm::vec4>();
+            c.color.a = 0.12f;
         }
 
         glGenVertexArrays(1,&bg_arr);
@@ -226,7 +228,7 @@ public:
                     if(rotate_y >= pi_2_1() - 0.2f && rotate_y < pi_2_1() + 0.2f)
                         rotate_y = pi_2_1() + 0.2f;
                     else
-                        rotate_y += 0.1f;
+                        rotate_y += 0.05f;
                 }
             }else
             if(draw_b + draw_count >= vertex_size )
