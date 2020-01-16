@@ -10,6 +10,11 @@ namespace gld
         GEOMETRY = 0x8DD9
     };
 
+    enum class ArrayBufferType{
+        Normal = 0x8892,
+        ELEMENT = 0x8893
+    };
+
     template <size_t ...I>
     struct IdxArr;
 
