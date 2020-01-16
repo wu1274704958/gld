@@ -114,7 +114,7 @@ namespace gld{
 		{
 			program = oth.program;
 			oth.program = 0;
-
+            uniform_map = std::move(uniform_map);
 			shaders = std::move(shaders);
 		}
 		Program& operator=(const Program&) = delete;
@@ -124,6 +124,7 @@ namespace gld{
 			program = oth.program;
 			oth.program = 0;
 
+            uniform_map = std::move(uniform_map);
 			shaders = std::move(shaders);
 			return *this;
 		}
@@ -140,8 +141,43 @@ namespace gld{
         {
             return shaders;
         }
+        template<typename ...Args>
+        void locat_uniforms(Args&& ...args)
+        {
+            if constexpr(sizeof...(Args) > 0)
+            {
+                locat_uniforms_inside(std::forward<Args>(args)...);
+            }
+        }
+
+        Glid uniform_id(std::string str)
+        {
+            if(uniform_map.find(str) != uniform_map.end())
+            {
+                return uniform_map[str];
+            }else
+                return 0;
+        }
     private:
+
+        template<typename Fir,typename ...Args>
+        void locat_uniforms_inside(Fir&& fir,Args&& ...args)
+        {
+            if constexpr(std::is_same_v<Fir,std::string>)
+            {
+                uniform_map[std::forward<Fir>(fir)] = glGetUniformLocation(program,fir.c_str()); 
+            }else if constexpr(std::is_same_v<std::decay_t<Fir>,const char *>)
+            {
+                uniform_map[std::string(fir)] = glGetUniformLocation(program,fir); 
+            }
+            if constexpr(sizeof...(Args) > 0)
+            {
+                locat_uniforms_inside(std::forward<Args>(args)...);
+            }
+        }
+
         Shaders shaders;
         Glid program = 0;
+        std::unordered_map<std::string,Glid> uniform_map;
     }; 
 }

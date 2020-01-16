@@ -139,11 +139,13 @@ public:
 
 		program.use();
 
-        perspective =   glGetUniformLocation((GLuint)program,"perspective");
-        world =         glGetUniformLocation((GLuint)program,"world");
-        model =         glGetUniformLocation((GLuint)program,"model");
-        alpha =         glGetUniformLocation((GLuint)program,"alpha");
-        offsetZ =       glGetUniformLocation((GLuint)program,"offsetZ");
+        program.locat_uniforms("perspective","world","model","alpha","offsetZ");
+
+        perspective =   program.uniform_id("perspective");
+        world =         program.uniform_id("world");
+        model =         program.uniform_id("model");
+        alpha =         program.uniform_id("alpha");
+        offsetZ =       program.uniform_id("offsetZ");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
