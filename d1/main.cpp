@@ -13,6 +13,7 @@
 #include <sprite.h>
 #include <program.hpp>
 
+using namespace gld;
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
 #define DEL_GL_shader(id) DEL_GL(Shader,id)
@@ -64,10 +65,12 @@ public:
     int init() override
     {
         glfwGetWindowSize(m_window,&width,&height);
+        Shader<ShaderType::VERTEX> vertex;
+        Shader<ShaderType::FRAGMENT> frag;
         try{
             sundry::compile_shaders<100>(
-                GL_VERTEX_SHADER,&(shader_base::vs),1,&base_vs,
-                GL_FRAGMENT_SHADER,&(shader_base::fs),1,&base_fs
+                GL_VERTEX_SHADER,&(shader_base::vs),1,(GLuint*)vertex,
+                GL_FRAGMENT_SHADER,&(shader_base::fs),1,(GLuint*)frag
             );
             
         }catch(sundry::CompileError e)
@@ -78,7 +81,7 @@ public:
              std::cout << e.what()  <<std::endl;
         }
         
-        std::cout << base_vs <<" "<< base_fs <<std::endl;
+        std::cout << vertex.get_id() <<" "<< frag.get_id() <<std::endl;
         
         glEnable (GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -129,18 +132,18 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER,0);
         glBindVertexArray(0);
 
-        program = glCreateProgram();
-        glAttachShader(program,base_vs);
-        glAttachShader(program,base_fs);
-        glLinkProgram(program);
+		program.cretate();
+		program.attach_shader(std::move(vertex));
+		program.attach_shader(std::move(frag));
+		program.link();
 
-        glUseProgram(program);
+		program.use();
 
-        perspective =   glGetUniformLocation(program,"perspective");
-        world =         glGetUniformLocation(program,"world");
-        model =         glGetUniformLocation(program,"model");
-        alpha =         glGetUniformLocation(program,"alpha");
-        offsetZ =       glGetUniformLocation(program,"offsetZ");
+        perspective =   glGetUniformLocation((GLuint)program,"perspective");
+        world =         glGetUniformLocation((GLuint)program,"world");
+        model =         glGetUniformLocation((GLuint)program,"model");
+        alpha =         glGetUniformLocation((GLuint)program,"alpha");
+        offsetZ =       glGetUniformLocation((GLuint)program,"offsetZ");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -158,7 +161,7 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
-        glUseProgram(program);
+		program.use();
         
 
         glUniform1f(alpha,1.0f);
@@ -268,8 +271,6 @@ public:
     }
 
     ~Demo1(){
-        DEL_GL_shader(base_vs);
-        DEL_GL_shader(base_fs);
         DELS_GL_vertex_arr(vertex_arr,1);
         DELS_GL_buffer(vertex_buff,1);
         DELS_GL_vertex_arr(bg_arr,1);
@@ -330,9 +331,8 @@ public:
         return static_cast<float>(1.0f / glm::sqrt(2 * glm::pi<float>() * o) * glm::exp( -glm::pow(x - u,2.f) / (2.0f * glm::pow(o,2.f))));
     }
 private:
-    GLuint base_vs = 0,base_fs = 0,
-    program = 0,
-    vertex_arr = 0,
+    Program program;
+    GLuint vertex_arr = 0,
     vertex_buff = 0,
     bg_arr = 0,
     bg_buff = 0,
