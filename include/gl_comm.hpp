@@ -11,7 +11,7 @@ namespace gld
     };
 
     enum class ArrayBufferType{
-        Normal = 0x8892,
+        VERTEX = 0x8892,
         ELEMENT = 0x8893
     };
 

@@ -12,6 +12,7 @@
 #include <gl_comm.hpp>
 #include <sprite.h>
 #include <program.hpp>
+#include <vertex_arr.hpp>
 
 using namespace gld;
 
@@ -88,27 +89,26 @@ public:
 
         glDisable(GL_CULL_FACE);
 
-        glGenVertexArrays(1,&vertex_arr);
-        glBindVertexArray(vertex_arr);
+        
+        va1.create();
+        va1.create_arr<ArrayBufferType::VERTEX>();
 
-        glGenBuffers(1,&vertex_buff);
-        glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
+        va1.bind();
 
         vertices = generate_vertices(32,0.12f); 
         vertex_size = static_cast<int>(vertices.size());
 
         bg_vertices = vertices;
 
-        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
+        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices,GL_STATIC_DRAW);
+
         glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
         glEnableVertexAttribArray(0);
 
         glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
         glEnableVertexAttribArray(1);
 
-        glBindBuffer(GL_ARRAY_BUFFER,0);
-
-        glBindVertexArray(0);
+        va1.unbind();
         //-----------------------------------------------------------
 
         for(auto& c : bg_vertices)
@@ -334,11 +334,7 @@ public:
     }
 private:
     Program program;
-    GLuint vertex_arr = 0,
-    vertex_buff = 0,
-    bg_arr = 0,
-    bg_buff = 0,
-    perspective = 0,
+    GLuint perspective = 0,
     world = 0,
     model = 0,
     alpha = 0,
@@ -353,6 +349,7 @@ private:
     int draw_idx = 0;
     std::vector<Vertex> vertices,bg_vertices;
     float rotate_y = 0.f;
+    VertexArr va1,va2;
 };
 
 
