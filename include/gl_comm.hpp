@@ -58,4 +58,11 @@ namespace gld
         }
     }
 
+    template<typename T,size_t N>
+    struct Pair
+    {
+        using type = T;
+        constexpr static size_t val = N;
+    };
+
 }

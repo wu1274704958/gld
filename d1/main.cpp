@@ -100,13 +100,8 @@ public:
 
         bg_vertices = vertices;
 
-        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices,GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
-        glEnableVertexAttribArray(0);
-
-        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
-        glEnableVertexAttribArray(1);
+        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
+        va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<VAP_DATA<3,float,false>,VAP_DATA<4,float,false>>();
 
         va1.unbind();
         //-----------------------------------------------------------
@@ -117,20 +112,17 @@ public:
             c.color.a = 0.12f;
         }
 
-        glGenVertexArrays(1,&bg_arr);
-        glBindVertexArray(bg_arr);
-        glGenBuffers(1,&bg_buff);
-        glBindBuffer(GL_ARRAY_BUFFER,bg_buff);
+        va2.create();
+        va2.create_arr<ArrayBufferType::VERTEX>();
+        va2.bind();
 
-        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * bg_vertices.size(),bg_vertices.data(),GL_STATIC_DRAW);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
-        glEnableVertexAttribArray(0);
+        va2.buffs().get<ArrayBufferType::VERTEX>().bind_data(bg_vertices,GL_STATIC_DRAW);
 
-        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
-        glEnableVertexAttribArray(1);
+        va2.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+            VAP_DATA<3, float, false>, 
+            VAP_DATA<4, float, false>>();
 
-        glBindBuffer(GL_ARRAY_BUFFER,0);
-        glBindVertexArray(0);
+        va2.unbind();
 
 		program.cretate();
 		program.attach_shader(std::move(vertex));
@@ -177,25 +169,21 @@ public:
 
        
 
-        glBindVertexArray(vertex_arr);
-        glBindBuffer(GL_ARRAY_BUFFER,vertex_buff);
+        va1.bind();
 
         update_color();
         update_vertices();
         //glDrawArrays(GL_LINE_STRIP,0,vertex_size);
         glDrawArrays(GL_TRIANGLE_STRIP,draw_b,draw_count);
         //glDrawArrays(GL_TRIANGLES,0,3);
-        glBindVertexArray(bg_arr);
 
-        glBindBuffer(GL_ARRAY_BUFFER,bg_buff);
+        va2.bind();
 
         glUniform1f(offsetZ,0.01f);
 
         glDrawArrays(GL_TRIANGLE_STRIP,0,vertex_size);
 
-        glBindBuffer(GL_ARRAY_BUFFER,0);
-
-        glBindVertexArray(0);
+        va2.unbind();
 
         update();
     }
@@ -264,19 +252,15 @@ public:
 
     void update_vertices()
     {
-        glBufferData(GL_ARRAY_BUFFER,sizeof(Vertex) * vertices.size(),vertices.data(),GL_STATIC_DRAW);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)0);
-        glEnableVertexAttribArray(0);
+        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
 
-        glVertexAttribPointer(1,4,GL_FLOAT,GL_FALSE,7 * sizeof(GLfloat),(void *)(sizeof(GLfloat) * 3));
-        glEnableVertexAttribArray(1);
+        va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+            VAP_DATA<3, float, false>,
+            VAP_DATA<4, float, false>>();
     }
 
     ~Demo1(){
-        DELS_GL_vertex_arr(vertex_arr,1);
-        DELS_GL_buffer(vertex_buff,1);
-        DELS_GL_vertex_arr(bg_arr,1);
-        DELS_GL_buffer(bg_buff,1);
+        
     }
 
     std::vector<Vertex> generate_vertices(int density,float w)
