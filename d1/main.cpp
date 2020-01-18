@@ -10,7 +10,7 @@
 #include <vector>
 #include <make_color.hpp>
 #include <gl_comm.hpp>
-#include <sprite.h>
+#include <drawable.h>
 #include <program.hpp>
 #include <vertex_arr.hpp>
 
@@ -65,7 +65,7 @@ class Demo1 : public RenderDemo{
 public:
     int init() override
     {
-        glfwGetWindowSize(m_window,&width,&height);
+        RenderDemo::init();
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
         try{
@@ -316,6 +316,11 @@ public:
         float u = 0.0f,o = 1.0f;
         return static_cast<float>(1.0f / glm::sqrt(2 * glm::pi<float>() * o) * glm::exp( -glm::pow(x - u,2.f) / (2.0f * glm::pow(o,2.f))));
     }
+
+    void onWindowResize(int w, int h) override
+    {
+        glViewport(0, 0, w, h);
+    }
 private:
     Program program;
     GLuint perspective = 0,
@@ -326,7 +331,6 @@ private:
     glm::mat4 perspective_m,
     world_m,
     model_m;
-    int width,height;
     int vertex_size;
     int draw_b = 0,draw_count = 4,origin_draw_count = 16,min_draw_count = 4;
     int draw_dur = 1;
