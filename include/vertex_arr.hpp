@@ -95,7 +95,7 @@ namespace gld
         }
 
         template<typename T>
-        void bind_data(std::vector<T> v,GLenum ty)
+        void bind_data(std::vector<T>& v,GLenum ty)
         {
             glBufferData(static_cast<size_t>(ABT),sizeof(T) * v.size(),v.data(),ty);
         }
@@ -248,6 +248,7 @@ namespace gld
         template<ArrayBufferType ABT>
         void create_arr()
         {
+            bind();
             vbuffs.get<ABT>().create();
         }
         

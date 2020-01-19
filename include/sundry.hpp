@@ -3,6 +3,9 @@
 #include <tuple>
 #include <exception>
 #include <iostream>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace sundry
 {
@@ -111,6 +114,11 @@ namespace sundry
         }
     }
 
+    template<typename GenTy = float>
+    GenTy normal_dist(GenTy x,GenTy u = 0.0,GenTy o = 1.0)
+    {
+        return static_cast<GenTy>(1.0f / glm::sqrt(2 * glm::template pi<GenTy>() * o) * glm::exp(-glm::pow(x - u, 2.f) / (2.0f * glm::pow(o, 2.f))));
+    }
 
     
 } // namespace sundry

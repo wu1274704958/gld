@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 #include <RenderDemo.h>
 #include <cstdio>
+#include <memory>
 #include <macro.hpp>
 #include <sundry.hpp>
 #include <glm/glm.hpp>
@@ -13,6 +14,8 @@
 #include <drawable.h>
 #include <program.hpp>
 #include <vertex_arr.hpp>
+#include "view1.hpp"
+#include "view2.hpp"
 
 using namespace gld;
 
@@ -51,15 +54,7 @@ BuildStr(shader_base,fs,#version 330 core\n
     }
 )
 
-struct Vertex{
-    glm::vec3 pos;
-    glm::vec4 color;
-    Vertex(glm::vec3 pos) : pos(pos)
-    {
-        color = glm::vec4(0.f,1.f,.0f,0.f);
-    }
-    Vertex(glm::vec3 pos,glm::vec4 color) : pos(pos),color(color){}
-};
+
 
 class Demo1 : public RenderDemo{
 public:
@@ -93,36 +88,10 @@ public:
         va1.create();
         va1.create_arr<ArrayBufferType::VERTEX>();
 
-        va1.bind();
-
         vertices = generate_vertices(32,0.12f); 
-        vertex_size = static_cast<int>(vertices.size());
-
-        bg_vertices = vertices;
-
-        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
-        va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<VAP_DATA<3,float,false>,VAP_DATA<4,float,false>>();
-
-        va1.unbind();
-        //-----------------------------------------------------------
-
-        for(auto& c : bg_vertices)
-        {
-            c.color = wws::make_rgba(PREPARE_STRING("#A020F0FF")).make<glm::vec4>();
-            c.color.a = 0.12f;
-        }
 
         va2.create();
         va2.create_arr<ArrayBufferType::VERTEX>();
-        va2.bind();
-
-        va2.buffs().get<ArrayBufferType::VERTEX>().bind_data(bg_vertices,GL_STATIC_DRAW);
-
-        va2.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
-            VAP_DATA<3, float, false>, 
-            VAP_DATA<4, float, false>>();
-
-        va2.unbind();
 
 		program.cretate();
 		program.attach_shader(std::move(vertex));
@@ -148,6 +117,12 @@ public:
         GLenum err = glGetError();
         dbg(err);
 
+        bg = std::unique_ptr<View1>(new View1(program, va2, vertices, glm::vec4(0.f, 1.0f, 0.f, 0.4f)));
+        bg->init();
+
+        cxt = std::unique_ptr<View2>(new View2(program, va1, std::move(vertices), glm::vec4(0.f, 1.0f, 0.f, 1.f)));
+        cxt->init();
+
         return 0;
     }
 
@@ -156,107 +131,29 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
 		program.use();
-        
 
-        glUniform1f(alpha,1.0f);
-        glUniform1f(offsetZ,0.0f);
+        glUniformMatrix4fv(perspective, 1, GL_FALSE, glm::value_ptr(perspective_m));
+        glUniformMatrix4fv(world, 1, GL_FALSE, glm::value_ptr(world_m));
 
-        update_matrix();
-
-        glUniformMatrix4fv(perspective,1,GL_FALSE,glm::value_ptr(perspective_m));
-        glUniformMatrix4fv(world,1,GL_FALSE,glm::value_ptr(world_m));
-        glUniformMatrix4fv(model,1,GL_FALSE,glm::value_ptr(model_m));
-
-       
-
-        va1.bind();
-
-        update_color();
-        update_vertices();
-        //glDrawArrays(GL_LINE_STRIP,0,vertex_size);
-        glDrawArrays(GL_TRIANGLE_STRIP,draw_b,draw_count);
-        //glDrawArrays(GL_TRIANGLES,0,3);
-
-        va2.bind();
-
-        glUniform1f(offsetZ,0.01f);
-
-        glDrawArrays(GL_TRIANGLE_STRIP,0,vertex_size);
-
-        va2.unbind();
+        bg->draw();
+        cxt->draw();
 
         update();
+        update_matrix();
     }
 
     void update_matrix()
     {
         perspective_m= glm::perspective(glm::radians(60.f),((float)width/(float)height),0.1f,256.0f);
         world_m = glm::mat4(1.0f);
-        model_m = glm::mat4(1.0f);
-
-        model_m = glm::rotate(model_m,rotate_y,glm::vec3(0.f,1.f,0.f));
 
         world_m = glm::translate(world_m,glm::vec3(0.0f,0.0f,-3.0f));
     }
 
-    constexpr float pi_2_1()
-    {
-        return glm::pi<float>() / 2.f;
-    }
-
     void update()
     {
-        ++draw_idx;
-        if(draw_idx == draw_dur)
-        {
-            draw_idx = 0;
-
-            draw_b += 2;
-
-            if(draw_b + min_draw_count >= vertex_size)
-            {
-                draw_b = 0;
-                draw_count = min_draw_count;
-    
-                if(rotate_y >= glm::pi<float>())
-                    rotate_y = 0.f;
-                else
-                {
-                    if(rotate_y >= pi_2_1() - 0.2f && rotate_y < pi_2_1() + 0.2f)
-                        rotate_y = pi_2_1() + 0.2f;
-                    else
-                        rotate_y += 0.05f;
-                }
-            }else
-            if(draw_b + draw_count >= vertex_size )
-                draw_count = vertex_size - draw_b;
-            else{
-                if(draw_count < origin_draw_count)
-                    draw_count += 2;
-            }
-        }
-    }
-
-    void update_color()
-    {
-        float of = 1.0f - normal_dist(0.f);
-        int m = draw_count / 2;
-        for(int i = 0;i < draw_count;++i)
-        {
-            float ni = static_cast<float>(i - m);
-            float nd = normal_dist(ni / 2.6f);
-            vertices[draw_b + i].color.a = nd + of;
-            vertices[draw_b + i].color.r = nd;
-        }
-    }
-
-    void update_vertices()
-    {
-        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
-
-        va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
-            VAP_DATA<3, float, false>,
-            VAP_DATA<4, float, false>>();
+        bg->update();
+        cxt->update();
     }
 
     ~Demo1(){
@@ -311,11 +208,7 @@ public:
         return res3;
     }
 
-    float normal_dist(float x)
-    {
-        float u = 0.0f,o = 1.0f;
-        return static_cast<float>(1.0f / glm::sqrt(2 * glm::pi<float>() * o) * glm::exp( -glm::pow(x - u,2.f) / (2.0f * glm::pow(o,2.f))));
-    }
+    
 
     void onWindowResize(int w, int h) override
     {
@@ -329,15 +222,12 @@ private:
     alpha = 0,
     offsetZ = 0;
     glm::mat4 perspective_m,
-    world_m,
-    model_m;
-    int vertex_size;
-    int draw_b = 0,draw_count = 4,origin_draw_count = 16,min_draw_count = 4;
-    int draw_dur = 1;
-    int draw_idx = 0;
-    std::vector<Vertex> vertices,bg_vertices;
-    float rotate_y = 0.f;
+    world_m;
+    
+    std::vector<Vertex> vertices;
     VertexArr va1,va2;
+    std::unique_ptr<View1> bg;
+    std::unique_ptr<View2> cxt;
 };
 
 

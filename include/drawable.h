@@ -57,6 +57,7 @@ namespace gld{
 
         virtual void update_matrix(glm::mat4 mat)
         {
+            program.use();
             glUniformMatrix4fv(model_id, 1, GL_FALSE, glm::value_ptr(mat));
         }
 
