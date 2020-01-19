@@ -117,11 +117,42 @@ public:
         GLenum err = glGetError();
         dbg(err);
 
-        bg = std::unique_ptr<View1>(new View1(program, va2, vertices, glm::vec4(0.f, 1.0f, 0.f, 0.4f)));
-        bg->init();
+        //bg = std::unique_ptr<View1>(new View1(program, va2, vertices, glm::vec4(0.f, 1.0f, 0.f, 0.4f)));
+        //bg->init();
+        float z = 0.0f;
+        int MAX = 16;
+        int count = 16;
+        for (int i = 0; i < MAX; ++i)
+        {
+            cxts.push_back(std::unique_ptr<View2>(new View2(program, va1, vertices,
+                glm::vec4(0.f, 1.0f, 0.f, 1.f))));
+            cxts[i]->alpha = 1.0f - static_cast<float>(i) * 0.05f;
+            cxts[i]->pos.z = z;
+            z -= 1.6f;
+            cxts[i]->origin_count = count;
+            count += 4;
+            if (i == 0)
+                cxts[i]->is_launch = true;
+        }
 
-        cxt = std::unique_ptr<View2>(new View2(program, va1, std::move(vertices), glm::vec4(0.f, 1.0f, 0.f, 1.f)));
-        cxt->init();
+        View2* ptr = nullptr;
+        for (int i = MAX - 1; i >= 0; --i)
+        {
+            if (ptr)
+            {
+                cxts[i]->first_birth_cb = [ptr](View2 &v) {
+                    ptr->is_launch = true;
+                };
+            }
+            ptr = cxts[i].get();
+        }
+
+        for(auto& p : cxts)
+            p->init();
+
+        //bg->offsetZ = 0.01f;
+        //bg->alpha = 0.5f;
+        //bg->visible = false;
 
         return 0;
     }
@@ -135,8 +166,9 @@ public:
         glUniformMatrix4fv(perspective, 1, GL_FALSE, glm::value_ptr(perspective_m));
         glUniformMatrix4fv(world, 1, GL_FALSE, glm::value_ptr(world_m));
 
-        bg->draw();
-        cxt->draw();
+        //bg->draw();
+        for (auto& p : cxts)
+            p->draw();
 
         update();
         update_matrix();
@@ -152,8 +184,9 @@ public:
 
     void update()
     {
-        bg->update();
-        cxt->update();
+        //bg->update();
+        for (auto& p : cxts)
+            p->update();
     }
 
     ~Demo1(){
@@ -226,8 +259,8 @@ private:
     
     std::vector<Vertex> vertices;
     VertexArr va1,va2;
-    std::unique_ptr<View1> bg;
-    std::unique_ptr<View2> cxt;
+    //std::unique_ptr<View1> bg;
+    std::vector<std::unique_ptr<View2>> cxts;
 };
 
 

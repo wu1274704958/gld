@@ -1,6 +1,7 @@
 #pragma once
 
 #include "view1.hpp"
+#include <functional>
 
 class View2 : public View1
 {
@@ -21,7 +22,8 @@ public:
 	
 	void update()override
 	{
-        ++draw_idx;
+        if(is_launch)
+            ++draw_idx;
         if (draw_idx == draw_dur)
         {
             draw_idx = 0;
@@ -32,7 +34,6 @@ public:
             {
                 b = 0;
                 count = min_count;
-              
             }
             else
             if (b + count >= vertex_size)
@@ -40,6 +41,12 @@ public:
             else {
                 if (count < origin_count)
                     count += 2;
+                if (count >= origin_count && !birth)
+                {
+                    birth = true;
+                    if (first_birth_cb)
+                        first_birth_cb(*this);
+                }
             }
         }
 	}
@@ -68,11 +75,12 @@ public:
         va.unbind();
     }
 
-
 	int origin_count = 16, min_count = 4;
 	int draw_dur = 1;
 	int draw_idx = 0;
-
+    bool is_launch = false;
+    std::function<void(View2&)> first_birth_cb;
+    bool birth = false;
 protected:
 	int vertex_size;
 	

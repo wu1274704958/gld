@@ -55,10 +55,11 @@ public:
 
 		va.unbind();
 	}
+	float alpha = 1.0f, offsetZ = 0.0f;
 protected:
 	gld::VertexArr& va;
 	std::vector<Vertex> vertices;
 	uint32_t b = 0, count = 0;
-	float alpha = 1.0f, offsetZ = 0.0f;
+	
 };
 

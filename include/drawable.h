@@ -17,6 +17,7 @@ namespace gld{
             model_key(std::move(model_key))
         {
             rotate = pos = glm::vec3(0.f, 0.f, 0.f);
+            scale = glm::vec3(1.f, 1.f, 1.f);
         }
 
         Drawable(const Drawable&) = default;
@@ -44,6 +45,8 @@ namespace gld{
         virtual void preDraw()
         {
             glm::mat4 model(1.0f);
+
+            model = glm::scale(model, scale);
 
             model = glm::rotate(model, rotate.x, glm::vec3(1.f, 0.f, 0.f));
             model = glm::rotate(model, rotate.y, glm::vec3(0.f, 1.f, 0.f));
@@ -85,11 +88,12 @@ namespace gld{
         
         glm::vec3 pos;
         glm::vec3 rotate;
+        glm::vec3 scale;
         std::string model_key;
         Glid model_id;
-       
+        bool visible = true;
     protected:
         Program& program;
-        bool visible = true;
+        
     };
 }
