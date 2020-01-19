@@ -100,6 +100,12 @@ namespace gld
             glBufferData(static_cast<size_t>(ABT),sizeof(T) * v.size(),v.data(),ty);
         }
 
+        template<typename T>
+        void bind_data(std::vector<T>&& v, GLenum ty)
+        {
+            glBufferData(static_cast<size_t>(ABT), sizeof(T)* v.size(), v.data(), ty);
+        }
+
         template<typename T,size_t N>
         void bind_data(T (&v)[N],GLenum ty)
         {
