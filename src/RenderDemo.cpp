@@ -2,6 +2,8 @@
 #include <RenderDemo.h>
 
 std::vector<RenderDemo*> RenderDemo::WindowResizeListeners = std::vector<RenderDemo*>();
+std::vector<RenderDemo*> RenderDemo::MouseButtonListeners = std::vector<RenderDemo*>();
+std::vector<RenderDemo*> RenderDemo::MouseMoveListeners = std::vector<RenderDemo*>();
 
 int RenderDemo::initWindow(int w,int h,const char *title)
 {
@@ -34,7 +36,9 @@ int RenderDemo::initWindow(int w,int h,const char *title)
 int RenderDemo::init()
 {
     glfwGetWindowSize(m_window, &width, &height);
-    glfwSetWindowSizeCallback(m_window, onWindowResize);
+    glfwSetWindowSizeCallback(m_window, WindowResizeCallBack);
+    glfwSetMouseButtonCallback(m_window,MouseButtonCallBack);
+    glfwSetCursorPosCallback(m_window,MouseMoveCallBack);
     return 0;
 }
 
@@ -50,28 +54,50 @@ void RenderDemo::destroy()
 
 void RenderDemo::regOnWindowResizeListener(RenderDemo* rd)
 {
-    if (std::find(WindowResizeListeners.begin(), WindowResizeListeners.end(), rd) == WindowResizeListeners.end())
-    {
-        WindowResizeListeners.push_back(rd);
-    }
+    add_listener(WindowResizeListeners,rd);
 }
 
 void RenderDemo::unregOnWindowResizeListener(RenderDemo* rd)
 {
-    if (auto it = std::find(WindowResizeListeners.begin(), WindowResizeListeners.end(), rd);it != WindowResizeListeners.end())
-    {
-        WindowResizeListeners.erase(it);
-    }
+    remove_listener(WindowResizeListeners,rd);
 }
 
-void RenderDemo::onWindowResize(GLFWwindow* window, int w, int h)
+void RenderDemo::WindowResizeCallBack(GLFWwindow* window, int w, int h)
 {
-    for (auto it : WindowResizeListeners)
-    {
+    call_listeners(WindowResizeListeners,window,[w,h](RenderDemo* it){
         it->width = w;
         it->height = h;
         it->onWindowResize(w, h);
-    }
+    });
+}
+
+void RenderDemo::regOnMouseButtonListener(RenderDemo* rd)
+{
+    add_listener(MouseButtonListeners,rd);
+}
+
+void RenderDemo::unregOnMouseButtonListener(RenderDemo* rd)
+{
+    remove_listener(MouseButtonListeners,rd);
+}
+
+void RenderDemo::MouseButtonCallBack(GLFWwindow* window,int btn,int action,int mod)
+{
+    call_listeners<int,int,int>(MouseButtonListeners,window,&RenderDemo::onMouseButton,btn,action,mod);
+}
+
+
+void RenderDemo::regOnMouseMoveListener(RenderDemo* rd)
+{
+    add_listener(MouseMoveListeners,rd);
+}
+void RenderDemo::unregOnMouseMoveListener(RenderDemo* rd)
+{
+    remove_listener(MouseMoveListeners,rd);
+}
+void RenderDemo::MouseMoveCallBack(GLFWwindow* window,double x,double y)
+{
+    call_listeners<double,double>(MouseMoveListeners,window,&RenderDemo::onMouseMove,x,y);
 }
 
 void RenderDemo::run()
@@ -88,8 +114,37 @@ void RenderDemo::onWindowResize(int w, int h)
 {
 }
 
+void RenderDemo::onMouseButton(int,int,int){}
+void RenderDemo::onMouseMove(double,double){}
+
 RenderDemo::~RenderDemo()
 {
     destroy();
+}
+
+void RenderDemo::remove_listener(std::vector<RenderDemo*>& list,RenderDemo* rd)
+{
+    if (auto it = std::find(list.begin(), list.end(), rd);it != list.end())
+    {
+        list.erase(it);
+    }
+}
+void RenderDemo::add_listener(std::vector<RenderDemo*>& list,RenderDemo* rd)
+{
+    if (std::find(list.begin(), list.end(), rd) == list.end())
+    {
+        list.push_back(rd);
+    }
+}
+
+void RenderDemo::call_listeners(std::vector<RenderDemo*>& list,GLFWwindow* window,std::function<void(RenderDemo*)> func)
+{
+    for (auto it : list)
+    {
+        if(it->m_window == window)
+        {
+            func(it);
+        }
+    }
 }
 
