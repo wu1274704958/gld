@@ -48,11 +48,11 @@ namespace gld{
 
             model = glm::scale(model, scale);
 
+            model = glm::translate(model, pos);
+
             model = glm::rotate(model, rotate.x, glm::vec3(1.f, 0.f, 0.f));
             model = glm::rotate(model, rotate.y, glm::vec3(0.f, 1.f, 0.f));
             model = glm::rotate(model, rotate.z, glm::vec3(0.f, 0.f, 1.f));
-
-            model = glm::translate(model, pos);
 
             update_matrix(model);
             onPreDraw();
