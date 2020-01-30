@@ -1,5 +1,5 @@
 #include <glad/glad.h>
-#include <RenderDemo.h>
+#include <RenderDemoRotate.hpp>
 #include <cstdio>
 #include <memory>
 #include <macro.hpp>
@@ -56,15 +56,11 @@ BuildStr(shader_base,fs,#version 330 core\n
 
 
 
-class Demo1 : public RenderDemo{
+class Demo1 : public RenderDemoRotate{
 public:
     int init() override
     {
-        RenderDemo::init();
-        rotate = glm::vec3(0.f,0.f,0.f);
-        regOnMouseButtonListener(this);
-        regOnMouseMoveListener(this);
-
+        RenderDemoRotate::init();
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
         try{
@@ -87,7 +83,7 @@ public:
         glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 
         glDisable(GL_CULL_FACE);
-
+        glEnable(GL_DEPTH_TEST);
         
         va1.create();
         va1.create_arr<ArrayBufferType::VERTEX>();
@@ -248,33 +244,6 @@ public:
 
         return res3;
     }
-    void onMouseButton(int btn,int action,int mode) override
-    {
-        if(btn == GLFW_MOUSE_BUTTON_1)
-            mkd_left = action == GLFW_PRESS;
-    }
-    
-
-    void onMouseMove(double x,double y) override
-    {
-        if(mkd_left)
-        {
-            rotate.y += 0.1f * (static_cast<float>(x) - last_mouse_pos.x);
-            rotate.x += 0.1f * (static_cast<float>(y) - last_mouse_pos.y);
-            if(rotate.x > 360.f)
-                rotate.x -= 360.f;
-            if(rotate.x < 0)
-                rotate.x += 360.f;
-            if(rotate.y > 360.f)
-                rotate.y -= 360.f;    
-            if(rotate.y < 0)
-                rotate.y += 360.f;
-        }
-        last_mouse_pos.x = static_cast<float>(x);
-        last_mouse_pos.y = static_cast<float>(y);
-        dbg(rotate.y);
-        dbg(rotate.z);
-    }
 
     void onWindowResize(int w, int h) override
     {
@@ -289,11 +258,8 @@ private:
     offsetZ = 0;
     glm::mat4 perspective_m,
     world_m;
-    bool mkd_left = false;
     std::vector<Vertex> vertices;
     VertexArr va1,va2;
-    glm::vec3 rotate;
-    glm::vec2 last_mouse_pos;
     //std::unique_ptr<View1> bg;
     std::vector<std::unique_ptr<View2>> cxts;
 };
