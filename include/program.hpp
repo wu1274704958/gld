@@ -157,7 +157,7 @@ namespace gld{
             {
                 return uniform_map[str];
             }else
-                return 0;
+                return -1;
         }
     private:
 
