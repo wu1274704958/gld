@@ -23,18 +23,15 @@ BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 model; \n
     uniform vec3 light_pos; \n
     layout(location =0) in vec3 vposition; \n
-    layout(location =1) in vec3 vcolor; \n
     layout(location =2) in vec3 vnormal; \n
-    out vec3 outColor; \n
     out vec3 oNormal; \n
     out vec3 light_dir; \n
     void main() \n
     { \n
         gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
         vec3 vpos = vec3(world * model * vec4(vposition,1.0f));\n
-        mat3 nor_mat = mat3(world * model);
-        light_dir = normalize(vpos - light_pos);\n
-        outColor = vcolor;\n
+        mat3 nor_mat = mat3(world * model);\n
+        light_dir = normalize(light_pos - vpos);\n
         oNormal = normalize(nor_mat * vnormal);\n
     }
 )
@@ -44,10 +41,16 @@ BuildStr(shader_base,fs,#version 330 core\n
     in vec3 oNormal; \n
     in vec3 light_dir; \n
     out vec4 color; \n
+    uniform vec3 obj_color;\n
+    uniform vec3 light_color;\n
+    uniform float ambient_strength;\n
     void main() \n
     { \n
-        float a = 1.0f;\n
-        color = vec4(outColor,a);\n
+        vec3 ambient = light_color * ambient_strength;\n
+
+        vec3 diffuse = light_color * max(dot(light_dir,oNormal),0.0f);
+
+        color = vec4((ambient + diffuse) * obj_color,1.0f);\n
     }
 )
 
@@ -95,12 +98,15 @@ public:
 
 		program.use();
 
-        program.locat_uniforms("perspective","world","model","light_pos");
+        program.locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength");
 
         perspective =   program.uniform_id("perspective");
         world =         program.uniform_id("world");
         model =         program.uniform_id("model");
         light_pos =     program.uniform_id("light_pos");
+        obj_color =     program.uniform_id("obj_color");
+        light_color =   program.uniform_id("light_color");
+        ambient_strength=program.uniform_id("ambient_strength");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -108,6 +114,8 @@ public:
         dbg(world);
         dbg(model);
         dbg(light_pos);
+        dbg(obj_color);
+        dbg(std::make_tuple(light_color,ambient_strength));
         GLenum err = glGetError();
         dbg(err);
 
@@ -164,7 +172,10 @@ private:
     int perspective = -1,
     world = -1,
     model = -1,
-    light_pos = -1;
+    light_pos = -1,
+    obj_color = -1,
+    light_color = -1,
+    ambient_strength = -1;
     glm::mat4 perspective_m,
     world_m;
     VertexArr va1,va2;
