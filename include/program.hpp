@@ -151,7 +151,7 @@ namespace gld{
             }
         }
 
-        Glid uniform_id(std::string str)
+        int uniform_id(std::string str)
         {
             if(uniform_map.find(str) != uniform_map.end())
             {
@@ -179,6 +179,6 @@ namespace gld{
 
         Shaders shaders;
         Glid program = 0;
-        std::unordered_map<std::string,Glid> uniform_map;
+        std::unordered_map<std::string,int> uniform_map;
     }; 
 }

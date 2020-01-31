@@ -21,18 +21,28 @@ BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 perspective; \n
     uniform mat4 world; \n
     uniform mat4 model; \n
+    uniform vec3 light_pos; \n
     layout(location =0) in vec3 vposition; \n
-    layout(location =1) in vec3 color; \n
+    layout(location =1) in vec3 vcolor; \n
+    layout(location =2) in vec3 vnormal; \n
     out vec3 outColor; \n
+    out vec3 oNormal; \n
+    out vec3 light_dir; \n
     void main() \n
     { \n
-        gl_Position = perspective * world * model * vec4(vposition.x,vposition.y,vposition.z,1.0f);\n
-        outColor = color;\n
+        gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
+        vec3 vpos = vec3(world * model * vec4(vposition,1.0f));\n
+        mat3 nor_mat = mat3(world * model);
+        light_dir = normalize(vpos - light_pos);\n
+        outColor = vcolor;\n
+        oNormal = normalize(nor_mat * vnormal);\n
     }
 )
 
 BuildStr(shader_base,fs,#version 330 core\n
     in vec3 outColor; \n
+    in vec3 oNormal; \n
+    in vec3 light_dir; \n
     out vec4 color; \n
     void main() \n
     { \n
@@ -85,17 +95,19 @@ public:
 
 		program.use();
 
-        program.locat_uniforms("perspective","world","model");
+        program.locat_uniforms("perspective","world","model","light_pos");
 
         perspective =   program.uniform_id("perspective");
         world =         program.uniform_id("world");
         model =         program.uniform_id("model");
+        light_pos =     program.uniform_id("light_pos");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
         dbg(perspective);
         dbg(world);
         dbg(model);
+        dbg(light_pos);
         GLenum err = glGetError();
         dbg(err);
 
@@ -149,9 +161,10 @@ public:
     }
 private:
     Program program;
-    GLuint perspective = 0,
-    world = 0,
-    model = 0;
+    int perspective = -1,
+    world = -1,
+    model = -1,
+    light_pos = -1;
     glm::mat4 perspective_m,
     world_m;
     VertexArr va1,va2;
