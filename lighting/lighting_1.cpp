@@ -27,6 +27,8 @@ BuildStr(shader_base,vs,#version 330 core\n
     layout(location =1) in vec3 vnormal; \n
     out vec3 oNormal; \n
     out vec3 light_dir; \n
+    out vec3 view_dir;\n
+    uniform vec3 view_pos;\n
     void main() \n
     { \n
         gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
@@ -34,23 +36,32 @@ BuildStr(shader_base,vs,#version 330 core\n
         mat3 nor_mat = mat3(world * model);\n
         light_dir = normalize(light_pos - vpos);\n
         oNormal = normalize(nor_mat * vnormal);\n
+        view_dir = normalize(view_pos - vpos);\n
     }
 )
 
 BuildStr(shader_base,fs,#version 330 core\n
     in vec3 oNormal; \n
     in vec3 light_dir; \n
+    in vec3 view_dir; \n
     out vec4 color; \n
     uniform vec3 obj_color;\n
     uniform vec3 light_color;\n
     uniform float ambient_strength;\n
+    uniform float specular_strength;\n
     void main() \n
     { \n
         vec3 ambient = light_color * ambient_strength;\n
 
         vec3 diffuse = light_color * max(dot(light_dir,oNormal),0.0f);
 
-        color = vec4( (ambient + diffuse) * obj_color,1.0f);\n
+        vec3 light_reflect = reflect(-light_dir,oNormal);
+
+        float spec = pow(max(dot(light_reflect,view_dir),0.0f),2.0);
+
+        vec3 specular = specular_strength * spec * light_color;
+
+        color = vec4( (ambient + diffuse + specular) * obj_color,1.0f);\n
     }
 )
 
@@ -92,7 +103,9 @@ public:
 
 		program.use();
 
-        program.locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength");
+        program.locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength",
+            "specular_strength",
+            "view_pos");
 
         perspective =   program.uniform_id("perspective");
         world =         program.uniform_id("world");
@@ -101,6 +114,8 @@ public:
         obj_color =     program.uniform_id("obj_color");
         light_color =   program.uniform_id("light_color");
         ambient_strength=program.uniform_id("ambient_strength");
+        specular_strength = program.uniform_id("specular_strength");
+        view_pos = program.uniform_id("view_pos");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -109,7 +124,7 @@ public:
         dbg(model);
         dbg(light_pos);
         dbg(obj_color);
-        dbg(std::make_tuple(light_color,ambient_strength));
+        dbg(std::make_tuple(light_color,ambient_strength,specular_strength,view_pos));
         GLenum err = glGetError();
         dbg(err);
 
@@ -118,6 +133,9 @@ public:
         glUniform3fv(light_color,1,glm::value_ptr(light_c));
         glm::vec3 light_p = glm::vec3(-1.f,1.f,-1.f);
         glUniform3fv(light_pos,1,glm::value_ptr(light_p));
+        glm::vec3 view_p = glm::vec3(0.0f,0.0f,-3.0f);
+        glUniform3fv(view_pos,1,glm::value_ptr(view_p));
+        glUniform1f(specular_strength,1.f);
 
         float vertices[] = {
             -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
@@ -235,7 +253,9 @@ private:
     light_pos = -1,
     obj_color = -1,
     light_color = -1,
-    ambient_strength = -1;
+    ambient_strength = -1,
+    specular_strength = -1,
+    view_pos = -1;
     glm::mat4 perspective_m,
     world_m;
     VertexArr va1,va2;
