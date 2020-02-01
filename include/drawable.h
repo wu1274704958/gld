@@ -46,9 +46,9 @@ namespace gld{
         {
             glm::mat4 model(1.0f);
 
-            model = glm::scale(model, scale);
-
             model = glm::translate(model, pos);
+
+            model = glm::scale(model, scale);
 
             model = glm::rotate(model, rotate.x, glm::vec3(1.f, 0.f, 0.f));
             model = glm::rotate(model, rotate.y, glm::vec3(0.f, 1.f, 0.f));

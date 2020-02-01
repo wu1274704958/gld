@@ -5,11 +5,12 @@
 #include <vertex_arr.hpp>
 #include <drawable.h>
 #include <vector>
-
-class View1 : public gld::Drawable
+namespace gld{
+	
+class Model : public gld::Drawable
 {
 public:
-	View1(gld::Program& p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
+	Model(gld::Program& p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
 		Drawable(p,"model"),
 		va(va),
         color(color),
@@ -18,19 +19,19 @@ public:
 		k_color = p.uniform_id("obj_color");
 	}
 
-	virtual ~View1()
+	virtual ~Model()
 	{
 
 	}
 
 	void onPreDraw()override 
 	{
-		glUniform3fv(k_color,3,glm::value_ptr(color));
+		glUniform3fv(k_color,1,glm::value_ptr(color));
 	}
 	void onDraw()override 
 	{
 		va.bind();
-		glDrawArrays(GL_TRIANGLES, 0, draw_count * 3);
+		glDrawArrays(GL_TRIANGLES, 0, draw_count);
 		va.unbind();
 	}
 	void update()override 
@@ -48,3 +49,4 @@ protected:
     uint32_t draw_count;
 };
 
+}

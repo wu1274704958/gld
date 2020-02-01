@@ -24,7 +24,7 @@ BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 model; \n
     uniform vec3 light_pos; \n
     layout(location =0) in vec3 vposition; \n
-    layout(location =2) in vec3 vnormal; \n
+    layout(location =1) in vec3 vnormal; \n
     out vec3 oNormal; \n
     out vec3 light_dir; \n
     void main() \n
@@ -38,7 +38,6 @@ BuildStr(shader_base,vs,#version 330 core\n
 )
 
 BuildStr(shader_base,fs,#version 330 core\n
-    in vec3 outColor; \n
     in vec3 oNormal; \n
     in vec3 light_dir; \n
     out vec4 color; \n
@@ -51,7 +50,7 @@ BuildStr(shader_base,fs,#version 330 core\n
 
         vec3 diffuse = light_color * max(dot(light_dir,oNormal),0.0f);
 
-        color = vec4((ambient + diffuse) * obj_color,1.0f);\n
+        color = vec4( (ambient + diffuse) * obj_color,1.0f);\n
     }
 )
 
@@ -85,12 +84,6 @@ public:
 
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
-        
-        va1.create();
-        va1.create_arr<ArrayBufferType::VERTEX>();
-
-        va2.create();
-        va2.create_arr<ArrayBufferType::VERTEX>();
 
 		program.cretate();
 		program.attach_shader(std::move(vertex));
@@ -119,6 +112,12 @@ public:
         dbg(std::make_tuple(light_color,ambient_strength));
         GLenum err = glGetError();
         dbg(err);
+
+        glUniform1f(ambient_strength,0.1f);
+        glm::vec3 light_c = glm::vec3(1.f,1.f,1.f);
+        glUniform3fv(light_color,1,glm::value_ptr(light_c));
+        glm::vec3 light_p = glm::vec3(-1.f,1.f,-1.f);
+        glUniform3fv(light_pos,1,glm::value_ptr(light_p));
 
         float vertices[] = {
             -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
@@ -172,6 +171,10 @@ public:
         va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<VAP_DATA<3,float,false>,VAP_DATA<3,float,false>>();
         va1.unbind();
 
+        cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,glm::vec3(0.f,1.f,0.f),12)));
+
+        update_matrix();
+
         for(auto& p : cxts)
             p->init();
 
@@ -192,6 +195,8 @@ public:
 
         update();
         update_matrix();
+
+		program.unuse();
     }
 
     void update_matrix()

@@ -87,6 +87,9 @@ namespace gld{
         void use(){
 			glUseProgram(program);
         }
+        void unuse(){
+			glUseProgram(0);
+        }
 
         template<ShaderType ST>
         void attach_shader(Shader<ST> s)
