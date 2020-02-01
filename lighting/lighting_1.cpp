@@ -173,6 +173,8 @@ public:
 
         cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,glm::vec3(0.f,1.f,0.f),12)));
 
+        cxts[0]->scale = glm::vec3(0.6f,0.6f,0.6f);
+
         update_matrix();
 
         for(auto& p : cxts)
