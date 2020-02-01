@@ -57,7 +57,7 @@ BuildStr(shader_base,fs,#version 330 core\n
 
         vec3 light_reflect = reflect(-light_dir,oNormal);
 
-        float spec = pow(max(dot(light_reflect,view_dir),0.0f),2.0);
+        float spec = pow(max(dot(light_reflect,view_dir),0.0f),32.0);
 
         vec3 specular = specular_strength * spec * light_color;
 
@@ -191,7 +191,7 @@ public:
 
         cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,glm::vec3(0.f,1.f,0.f),12)));
 
-        cxts[0]->scale = glm::vec3(0.6f,0.6f,0.6f);
+        cxts[0]->scale = glm::vec3(1.f,1.f,1.f);
 
         update_matrix();
 
@@ -267,7 +267,7 @@ private:
 int main()
 {
     Demo1 d;
-    if( d.initWindow(300,300,"Demo1"))
+    if( d.initWindow(800,800,"Demo1"))
     {
         printf("init window failed\n");
         return -1;
