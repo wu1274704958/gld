@@ -53,15 +53,15 @@ BuildStr(shader_base,fs,#version 330 core\n
     { \n
         vec3 ambient = light_color * ambient_strength;\n
 
-        vec3 diffuse = light_color * max(dot(light_dir,oNormal),0.0f);
+        vec3 diffuse = obj_color * max(dot(light_dir,oNormal),0.0f);
 
         vec3 light_reflect = reflect(-light_dir,oNormal);
 
-        float spec = pow(max(dot(light_reflect,view_dir),0.0f),32.0);
+        float spec = pow(max(dot(view_dir,light_reflect),0.0f),32.0);
 
         vec3 specular = specular_strength * spec * light_color;
 
-        color = vec4( (ambient + diffuse + specular) * obj_color,1.0f);\n
+        color = vec4( (ambient + diffuse + specular),1.0f);\n
     }
 )
 
@@ -133,7 +133,7 @@ public:
         glUniform3fv(light_color,1,glm::value_ptr(light_c));
         glm::vec3 light_p = glm::vec3(-1.f,1.f,-1.f);
         glUniform3fv(light_pos,1,glm::value_ptr(light_p));
-        glm::vec3 view_p = glm::vec3(0.0f,0.0f,-3.0f);
+        glm::vec3 view_p = glm::vec3(0.0f,0.0f,0.0f);
         glUniform3fv(view_pos,1,glm::value_ptr(view_p));
         glUniform1f(specular_strength,1.f);
 
@@ -189,7 +189,7 @@ public:
         va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<VAP_DATA<3,float,false>,VAP_DATA<3,float,false>>();
         va1.unbind();
 
-        cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,glm::vec3(0.f,1.f,0.f),12)));
+        cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,wws::make_rgb(PREPARE_STRING("#191970")).make<glm::vec3>(),12)));
 
         cxts[0]->scale = glm::vec3(1.f,1.f,1.f);
 
