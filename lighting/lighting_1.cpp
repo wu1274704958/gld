@@ -22,42 +22,44 @@ BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 perspective; \n
     uniform mat4 world; \n
     uniform mat4 model; \n
-    uniform vec3 light_pos; \n
     layout(location =0) in vec3 vposition; \n
     layout(location =1) in vec3 vnormal; \n
     out vec3 oNormal; \n
-    out vec3 light_dir; \n
-    out vec3 view_dir;\n
-    uniform vec3 view_pos;\n
+    out vec3 oVpos; \n
     void main() \n
     { \n
         gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
-        vec3 vpos = vec3(world * model * vec4(vposition,1.0f));\n
+        oVpos = vec3(world * model * vec4(vposition,1.0f));\n
         mat3 nor_mat = mat3(world * model);\n
-        light_dir = normalize(light_pos - vpos);\n
         oNormal = normalize(nor_mat * vnormal);\n
-        view_dir = normalize(view_pos - vpos);\n
     }
 )
 
 BuildStr(shader_base,fs,#version 330 core\n
     in vec3 oNormal; \n
-    in vec3 light_dir; \n
-    in vec3 view_dir; \n
+    in vec3 oVpos; \n
     out vec4 color; \n
     uniform vec3 obj_color;\n
     uniform vec3 light_color;\n
     uniform float ambient_strength;\n
     uniform float specular_strength;\n
+    uniform float shininess;\n
+
+    uniform vec3 light_pos; \n
+    uniform vec3 view_pos;\n
     void main() \n
     { \n
+        vec3 light_dir = normalize(light_pos - oVpos);\n
+
+        vec3 view_dir = normalize(view_pos - oVpos);\n
+
         vec3 ambient = light_color * ambient_strength;\n
 
         vec3 diffuse = obj_color * max(dot(light_dir,oNormal),0.0f);
 
         vec3 light_reflect = reflect(-light_dir,oNormal);
 
-        float spec = pow(max(dot(view_dir,light_reflect),0.0f),32.0);
+        float spec = pow(max(dot(view_dir,light_reflect),0.0f),shininess);
 
         vec3 specular = specular_strength * spec * light_color;
 
@@ -105,7 +107,8 @@ public:
 
         program.locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength",
             "specular_strength",
-            "view_pos");
+            "view_pos",
+            "shininess");
 
         perspective =   program.uniform_id("perspective");
         world =         program.uniform_id("world");
@@ -124,7 +127,7 @@ public:
         dbg(model);
         dbg(light_pos);
         dbg(obj_color);
-        dbg(std::make_tuple(light_color,ambient_strength,specular_strength,view_pos));
+        dbg(std::make_tuple(light_color,ambient_strength,specular_strength,view_pos,program.uniform_id("shininess")));
         GLenum err = glGetError();
         dbg(err);
 
@@ -135,7 +138,8 @@ public:
         glUniform3fv(light_pos,1,glm::value_ptr(light_p));
         glm::vec3 view_p = glm::vec3(0.0f,0.0f,0.0f);
         glUniform3fv(view_pos,1,glm::value_ptr(view_p));
-        glUniform1f(specular_strength,1.f);
+        glUniform1f(specular_strength,0.7f);
+        glUniform1f(program.uniform_id("shininess"),32.0f);
 
         float vertices[] = {
             -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
