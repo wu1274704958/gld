@@ -87,7 +87,7 @@ namespace gld
             program(program)
         {}
 
-        UTDataMapTy operator=(UTDataMapTy data)
+        UTDataMapTy& operator=(UTDataMapTy data)
         {
             const std::string& key_r = key;
             int id = program.uniform_id(key_r);

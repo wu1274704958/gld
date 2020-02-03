@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <uniform.hpp>
 
 namespace gld{
 
@@ -14,7 +15,7 @@ namespace gld{
         
         Drawable(Program& program,std::string model_key) :
             program(program),
-            model_key(std::move(model_key))
+            model(std::move(model_key),program)
         {
             rotate = pos = glm::vec3(0.f, 0.f, 0.f);
             scale = glm::vec3(1.f, 1.f, 1.f);
@@ -27,9 +28,6 @@ namespace gld{
 
         virtual void init()
         {
-            model_id = program.uniform_id(model_key);
-            if (model_id <= 0)
-                throw std::runtime_error("This Program not found model!");
             onInit();
         }
 
@@ -61,7 +59,7 @@ namespace gld{
         virtual void update_matrix(glm::mat4 mat)
         {
             program.use();
-            glUniformMatrix4fv(model_id, 1, GL_FALSE, glm::value_ptr(mat));
+            model = glm::value_ptr(mat);
         }
 
         void setRotateX(float x) {
@@ -89,11 +87,10 @@ namespace gld{
         glm::vec3 pos;
         glm::vec3 rotate;
         glm::vec3 scale;
-        std::string model_key;
-        Glid model_id;
+        
         bool visible = true;
     protected:
         Program& program;
-        
+        Uniform<UT::Matrix4> model;
     };
 }
