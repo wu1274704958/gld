@@ -5,6 +5,9 @@
 #include <vertex_arr.hpp>
 #include <drawable.h>
 #include <vector>
+#include <uniform.hpp>
+#include "light.hpp"
+
 namespace gld{
 	
 class Model : public gld::Drawable
@@ -13,10 +16,11 @@ public:
 	Model(gld::Program& p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
 		Drawable(p,"model"),
 		va(va),
-        color(color),
+		material(p),
+		color(color),
         draw_count(triangle_count * 3)
 	{
-		k_color = p.uniform_id("obj_color");
+		
 	}
 
 	virtual ~Model()
@@ -26,7 +30,10 @@ public:
 
 	void onPreDraw()override 
 	{
-		glUniform3fv(k_color,1,glm::value_ptr(color));
+		material.color = glm::value_ptr(color);
+		material.ambient_strength = ambient_strength;
+		material.shininess = shininess;
+		material.specular_strength = specular_strength;
 	}
 	void onDraw()override 
 	{
@@ -42,10 +49,13 @@ public:
 	{
 		
 	}
+	Material material;
+	glm::vec3 color;
+    float ambient_strength;
+    float specular_strength;
+    float shininess;
 protected:
 	gld::VertexArr& va;
-    glm::vec3 color;
-    int k_color;
     uint32_t draw_count;
 };
 

@@ -75,19 +75,19 @@ namespace gld
     template<UT Ut>
     class Uniform{
     public:
-        using UTDataMapTy = typename MapUTData<static_cast<size_t>(Ut),
+        using UTDataMapTy = std::remove_reference_t<typename MapUTData<static_cast<size_t>(Ut),
             UTData<UT::Float,float>,
             UTData<UT::Matrix4, MatData>,
             UTData<UT::Vec3,float*>,
             UTData<UT::Vec4,float*>
-        >::template type;
+        >::template type>;
 
         Uniform(std::string key, Program& program) :
             key(key),
             program(program)
         {}
 
-        UTDataMapTy& operator=(UTDataMapTy data)
+        UTDataMapTy operator=(UTDataMapTy data)
         {
             const std::string& key_r = key;
             int id = program.uniform_id(key_r);

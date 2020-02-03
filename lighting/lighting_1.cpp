@@ -16,6 +16,7 @@
 #include <vertex_arr.hpp>
 #include "model.hpp"
 #include <uniform.hpp>
+#include "light.hpp"
 
 using namespace gld;
 
@@ -72,6 +73,7 @@ BuildStr(shader_base,fs,#version 330 core\n
 
 class Demo1 : public RenderDemoRotate{
 public:
+    Demo1() : light(program),view_pos("view_pos",program),perspective("perspective",program),world("world",program) {}
     int init() override
     {
         RenderDemoRotate::init();
@@ -111,36 +113,18 @@ public:
             "view_pos",
             "shininess");
 
-        perspective =   program.uniform_id("perspective");
-        world =         program.uniform_id("world");
-        model =         program.uniform_id("model");
-        light_pos =     program.uniform_id("light_pos");
-        obj_color =     program.uniform_id("obj_color");
-        light_color =   program.uniform_id("light_color");
-        ambient_strength=program.uniform_id("ambient_strength");
-        specular_strength = program.uniform_id("specular_strength");
-        view_pos = program.uniform_id("view_pos");
-
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
-        dbg(perspective);
-        dbg(world);
-        dbg(model);
-        dbg(light_pos);
-        dbg(obj_color);
-        dbg(std::make_tuple(light_color,ambient_strength,specular_strength,view_pos,program.uniform_id("shininess")));
         GLenum err = glGetError();
         dbg(err);
 
-        glUniform1f(ambient_strength,0.1f);
+        
         glm::vec3 light_c = glm::vec3(1.f,1.f,1.f);
-        glUniform3fv(light_color,1,glm::value_ptr(light_c));
+        light.color = glm::value_ptr(light_c);
         glm::vec3 light_p = glm::vec3(-1.f,1.f,-1.f);
-        glUniform3fv(light_pos,1,glm::value_ptr(light_p));
+        light.pos = glm::value_ptr(light_p);
         glm::vec3 view_p = glm::vec3(0.0f,0.0f,0.0f);
-        glUniform3fv(view_pos,1,glm::value_ptr(view_p));
-        glUniform1f(specular_strength,0.7f);
-        glUniform1f(program.uniform_id("shininess"),32.0f);
+        view_pos = glm::value_ptr(view_p);
 
         float vertices[] = {
             -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
@@ -197,7 +181,10 @@ public:
         cxts.push_back(std::unique_ptr<Model>(new Model(program,va1,wws::make_rgb(PREPARE_STRING("#191970")).make<glm::vec3>(),12)));
 
         cxts[0]->scale = glm::vec3(1.f,1.f,1.f);
-
+        auto ptr = dynamic_cast<Model*>(cxts[0].get());
+        ptr->shininess = 32.f;
+        ptr->specular_strength = 0.7f;
+        ptr->ambient_strength = 0.1f;
         update_matrix();
 
         for(auto& p : cxts)
@@ -212,8 +199,8 @@ public:
         
 		program.use();
 
-        glUniformMatrix4fv(perspective, 1, GL_FALSE, glm::value_ptr(perspective_m));
-        glUniformMatrix4fv(world, 1, GL_FALSE, glm::value_ptr(world_m));
+        perspective = glm::value_ptr(perspective_m);
+        world = glm::value_ptr(world_m);
         
         for (auto& p : cxts)
             p->draw();
@@ -252,19 +239,12 @@ public:
     }
 private:
     Program program;
-    int perspective = -1,
-    world = -1,
-    model = -1,
-    light_pos = -1,
-    obj_color = -1,
-    light_color = -1,
-    ambient_strength = -1,
-    specular_strength = -1,
-    view_pos = -1;
     glm::mat4 perspective_m,
     world_m;
     VertexArr va1,va2;
-    //std::unique_ptr<View1> bg;
+    Light light;
+    Uniform<UT::Vec3> view_pos;
+    Uniform<UT::Matrix4> perspective,world;
     std::vector<std::unique_ptr<Drawable>> cxts;
 };
 
