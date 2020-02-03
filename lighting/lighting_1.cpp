@@ -15,6 +15,7 @@
 #include <program.hpp>
 #include <vertex_arr.hpp>
 #include "model.hpp"
+#include <uniform.hpp>
 
 using namespace gld;
 
@@ -50,7 +51,7 @@ BuildStr(shader_base,fs,#version 330 core\n
     void main() \n
     { \n
         vec3 light_dir = normalize(light_pos - oVpos);\n
-
+    
         vec3 view_dir = normalize(view_pos - oVpos);\n
 
         vec3 ambient = light_color * ambient_strength;\n
@@ -84,7 +85,7 @@ public:
             
         }catch(sundry::CompileError e)
         {
-             std::cout << "compile failed " << e.type() <<  " " << e.what()  <<std::endl;
+             std::cout << "compile failed " << e.what()  <<std::endl;
         }catch(std::exception e)
         {
              std::cout << e.what()  <<std::endl;

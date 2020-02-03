@@ -6,16 +6,23 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <string>
 
 namespace sundry
 {
     
     struct CompileError : public std::exception{
-        CompileError( char const *str,GLuint ty,int idx) : exception(str) ,ty(ty) , _idx(idx)
+        inline static CompileError create( char const *str,GLuint ty,int idx)
         {
-           
+            std::string msg;
+            msg += type(ty);
+            msg += " index: ";
+            msg += std::to_string(idx);
+            msg += " msg: ";
+            msg += str;
+            return CompileError(msg.c_str());
         }
-        const char* type()
+        inline static const char* type(GLuint ty)
         {
             switch(ty)
             {
@@ -27,13 +34,7 @@ namespace sundry
                     return "Unimpl to do!";
             }
         }
-        int idx()
-        {
-            return _idx;
-        }
-        private:
-            GLuint ty;
-            int _idx;
+        CompileError(const char*str) :exception(str) {}
     };
 
     struct CompileArgs{
@@ -55,7 +56,7 @@ namespace sundry
         if(!out_shader) return;
         GLuint shader = glCreateShader(ty);
         if(shader <= 0)
-            throw CompileError("Create shader failed!",ty,Idx);
+            throw CompileError::create("Create shader failed!",ty,Idx);
 	    glShaderSource(shader,num,source, nullptr);
 	    glCompileShader(shader);
 
@@ -68,7 +69,7 @@ namespace sundry
             memset(buf,0,sizeof(buf));
             glGetShaderInfoLog(shader,sizeof(buf),&size,buf);
             glDeleteShader(shader);
-            throw CompileError(buf,ty,Idx);
+            throw CompileError::create(buf,ty,Idx);
         }
         *out_shader = shader;
     }

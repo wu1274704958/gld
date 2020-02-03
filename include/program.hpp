@@ -154,12 +154,23 @@ namespace gld{
             }
         }
 
-        int uniform_id(std::string str)
+        int uniform_id(const char* str_data)
         {
+            std::string str(str_data);
             if(uniform_map.find(str) != uniform_map.end())
             {
                 return uniform_map[str];
             }else
+                return -1;
+        }
+
+        int uniform_id(const std::string& str)
+        {
+            if (uniform_map.find(str) != uniform_map.end())
+            {
+                return uniform_map[str];
+            }
+            else
                 return -1;
         }
     private:

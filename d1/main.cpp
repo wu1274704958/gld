@@ -71,7 +71,7 @@ public:
             
         }catch(sundry::CompileError e)
         {
-             std::cout << "compile failed " << e.type() <<  " " << e.what()  <<std::endl;
+             std::cout << "compile failed " << e.what()  <<std::endl;
         }catch(std::exception e)
         {
              std::cout << e.what()  <<std::endl;
