@@ -182,9 +182,9 @@ public:
 
         cxts[0]->scale = glm::vec3(1.f,1.f,1.f);
         auto ptr = dynamic_cast<Model*>(cxts[0].get());
-        ptr->shininess = 32.f;
-        ptr->specular_strength = 0.7f;
-        ptr->ambient_strength = 0.1f;
+        ptr->material.shininess = 32.f;
+        ptr->material.specular_strength = 0.7f;
+        ptr->material.ambient_strength = 0.1f;
         update_matrix();
 
         for(auto& p : cxts)
@@ -199,8 +199,8 @@ public:
         
 		program.use();
 
-        perspective = glm::value_ptr(perspective_m);
-        world = glm::value_ptr(world_m);
+        perspective.sync();
+        world.sync();
         
         for (auto& p : cxts)
             p->draw();
@@ -213,14 +213,13 @@ public:
 
     void update_matrix()
     {
-        perspective_m= glm::perspective(glm::radians(60.f),((float)width/(float)height),0.1f,256.0f);
-        world_m = glm::mat4(1.0f);
+        perspective = glm::perspective(glm::radians(60.f),((float)width/(float)height),0.1f,256.0f);
+        world = glm::mat4(1.0f);
 
-        world_m = glm::translate(world_m,glm::vec3(0.0f,0.0f,-3.0f));
-
-        world_m = glm::rotate(world_m, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
-        world_m = glm::rotate(world_m, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
-        world_m = glm::rotate(world_m, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
+        world = glm::translate(*world,glm::vec3(0.0f,0.0f,-3.0f));
+        world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
+        world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
+        world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
     }
 
     void update()
@@ -239,12 +238,11 @@ public:
     }
 private:
     Program program;
-    glm::mat4 perspective_m,
-    world_m;
     VertexArr va1,va2;
     Light light;
     Uniform<UT::Vec3> view_pos;
-    Uniform<UT::Matrix4> perspective,world;
+    GlmUniform<UT::Matrix4> perspective;
+    GlmUniform<UT::Matrix4> world;
     std::vector<std::unique_ptr<Drawable>> cxts;
 };
 

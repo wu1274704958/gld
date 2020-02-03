@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uniform.hpp"
+#include <glm_uniform.hpp>
 
 namespace gld{
     struct Light{
@@ -21,9 +22,9 @@ namespace gld{
             shininess("shininess",p)
              {}
        
-        Uniform<UT::Vec3> color;
-        Uniform<UT::Float> ambient_strength;
-        Uniform<UT::Float> specular_strength;
-        Uniform<UT::Float> shininess;
+        GlmUniform<UT::Vec3> color;
+        GlmUniform<UT::Float> ambient_strength;
+        GlmUniform<UT::Float> specular_strength;
+        GlmUniform<UT::Float> shininess;
     };
 }

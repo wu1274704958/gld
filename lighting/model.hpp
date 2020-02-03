@@ -7,6 +7,7 @@
 #include <vector>
 #include <uniform.hpp>
 #include "light.hpp"
+#include <glm_uniform.hpp>
 
 namespace gld{
 	
@@ -17,10 +18,9 @@ public:
 		Drawable(p,"model"),
 		va(va),
 		material(p),
-		color(color),
         draw_count(triangle_count * 3)
 	{
-		
+		material.color = color;
 	}
 
 	virtual ~Model()
@@ -30,10 +30,10 @@ public:
 
 	void onPreDraw()override 
 	{
-		material.color = glm::value_ptr(color);
-		material.ambient_strength = ambient_strength;
-		material.shininess = shininess;
-		material.specular_strength = specular_strength;
+		material.color.sync();
+		material.ambient_strength.sync();
+		material.shininess.sync();
+		material.specular_strength.sync();
 	}
 	void onDraw()override 
 	{
@@ -50,10 +50,6 @@ public:
 		
 	}
 	Material material;
-	glm::vec3 color;
-    float ambient_strength;
-    float specular_strength;
-    float shininess;
 protected:
 	gld::VertexArr& va;
     uint32_t draw_count;
