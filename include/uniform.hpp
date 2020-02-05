@@ -51,7 +51,7 @@ namespace gld
         using type = void;
     };
 
-    struct UniformNotFound : public std::exception
+    struct UniformNotFound : public std::runtime_error
     {
         inline static UniformNotFound create(const std::string& key)
         {
@@ -60,7 +60,7 @@ namespace gld
             msg += "!";
             return UniformNotFound(msg.c_str());
         }
-        UniformNotFound(const char* str) : exception(str) {}
+        UniformNotFound(const char* str) : runtime_error(str) {}
     };
 
     struct MatData

@@ -11,7 +11,7 @@
 namespace sundry
 {
     
-    struct CompileError : public std::exception{
+    struct CompileError : public std::runtime_error{
         inline static CompileError create( char const *str,GLuint ty,int idx)
         {
             std::string msg;
@@ -34,7 +34,7 @@ namespace sundry
                     return "Unimpl to do!";
             }
         }
-        CompileError(const char*str) :exception(str) {}
+        CompileError(const char*str) :runtime_error(str) {}
     };
 
     struct CompileArgs{
