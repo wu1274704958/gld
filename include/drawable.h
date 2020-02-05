@@ -21,11 +21,6 @@ namespace gld{
             scale = glm::vec3(1.f, 1.f, 1.f);
         }
 
-        Drawable(const Drawable&) = default;
-        Drawable(Drawable&&) = default;
-        Drawable& operator=(const Drawable&) = default;
-        Drawable& operator=(Drawable&&) = default;
-
         virtual void init()
         {
             onInit();

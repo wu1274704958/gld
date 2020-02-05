@@ -28,9 +28,9 @@ namespace gld
         template<size_t Idx,typename F,typename ...Ps>
         static constexpr size_t map_gl_type_enum_sub()
         {
-            if constexpr (std::is_same_v<Ty, F::template type>)
+            if constexpr (std::is_same_v<Ty, typename F::type>)
             {
-                return F::template val;
+                return F::val;
             }
             else {
                 if constexpr (sizeof...(Ps) > 0)
@@ -130,18 +130,18 @@ namespace gld
         template<size_t Stride,size_t Idx,size_t Off,typename T,typename ...Ts>
         void vertex_attrib_pointer_sub()
         {
-            glVertexAttribPointer(Idx,T::template len,T::template map_gl_type_enum(),T::template normalized,Stride,(void *)Off);
+            glVertexAttribPointer(Idx,T::len,T::map_gl_type_enum(),T::normalized,Stride,(void *)Off);
             glEnableVertexAttribArray(Idx);
             if constexpr(sizeof...(Ts) > 0)
             {
-                vertex_attrib_pointer_sub<Stride,Idx + 1,sizeof(T::template type) * T::template len,Ts...>();
+                vertex_attrib_pointer_sub<Stride,Idx + 1,sizeof(typename T::type) * T::len,Ts...>();
             }
         }
 
         template<typename T, typename ...Ts>
         static constexpr size_t vertex_attrib_stride()
         {
-            constexpr size_t res = sizeof(T::template type) * T::template len;
+            constexpr size_t res = sizeof(typename T::type) * T::len;
             if constexpr (sizeof...(Ts) > 0)
             {
                 return res + vertex_attrib_stride<Ts...>();
@@ -176,12 +176,12 @@ namespace gld
 		VABuffers(VABuffers&& s)
             
         {
-			tup = std::move(tup);
+			tup = std::move(s.tup);
 		}
 
 		VABuffers& operator=(const VABuffers&) = delete;
 		VABuffers& operator=(VABuffers&& s) {
-			tup = std::move(tup);
+			tup = std::move(s.tup);
 			return *this;
 		}
 
@@ -214,14 +214,14 @@ namespace gld
         {
             id = oth.id;
             oth.id = 0;
-            vbuffs = std::move(vbuffs);
+            vbuffs = std::move(oth.vbuffs);
         }
         VertexArr& operator=(VertexArr&& oth)
         {
             clean();
             id = oth.id;
             oth.id = 0;
-            vbuffs = std::move(vbuffs);
+            vbuffs = std::move(oth.vbuffs);
             return *this;
         }
         

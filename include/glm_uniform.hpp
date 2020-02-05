@@ -13,7 +13,7 @@ namespace gld
             UTData<UT::Matrix4, glm::mat4>,
             UTData<UT::Vec3,glm::vec3>,
             UTData<UT::Vec4,glm::vec4>
-        >::template type>;
+        >::type>;
 
         GlmUniform(std::string key,Program& p) : uniform(std::move(key),p)
         {

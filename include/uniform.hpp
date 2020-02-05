@@ -27,9 +27,9 @@ namespace gld
     {
         constexpr static decltype(auto) func()
         {
-            if constexpr (UtId == Fir::template UtId)
+            if constexpr (UtId == Fir::UtId)
             {
-                using T = typename Fir::template type;
+                using T = typename Fir::type;
                 return std::declval<T>();
             }
             else
@@ -75,12 +75,12 @@ namespace gld
     template<UT Ut>
     class Uniform{
     public:
-        using UTDataMapTy = std::remove_reference_t<typename MapUTData<static_cast<size_t>(Ut),
+        using UTDataMapTy = typename std::remove_reference_t<typename MapUTData<static_cast<size_t>(Ut),
             UTData<UT::Float,float>,
             UTData<UT::Matrix4, MatData>,
             UTData<UT::Vec3,float*>,
             UTData<UT::Vec4,float*>
-        >::template type>;
+        >::type>;
 
         Uniform(std::string key, Program& program) :
             key(key),

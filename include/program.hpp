@@ -66,12 +66,12 @@ namespace gld{
 		Shaders() {}
 		Shaders(const Shaders&) = delete;
 		Shaders(Shaders&& s) {
-			tup = std::move(tup);
+			tup = std::move(s.tup);
 		}
 
 		Shaders& operator=(const Shaders&) = delete;
 		Shaders& operator=(Shaders&& s) {
-			tup = std::move(tup);
+			tup = std::move(s.tup);
 			return *this;
 		}
 
@@ -118,8 +118,8 @@ namespace gld{
 		{
 			program = oth.program;
 			oth.program = 0;
-            uniform_map = std::move(uniform_map);
-			shaders = std::move(shaders);
+            uniform_map = std::move(oth.uniform_map);
+			shaders = std::move(oth.shaders);
 		}
 		Program& operator=(const Program&) = delete;
 		Program& operator=(Program&& oth)
@@ -128,8 +128,8 @@ namespace gld{
 			program = oth.program;
 			oth.program = 0;
 
-            uniform_map = std::move(uniform_map);
-			shaders = std::move(shaders);
+            uniform_map = std::move(oth.uniform_map);
+			shaders = std::move(oth.shaders);
 			return *this;
 		}
 		~Program() {

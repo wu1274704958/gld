@@ -16,8 +16,8 @@ class Model : public gld::Drawable
 public:
 	Model(gld::Program& p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
 		Drawable(p,"model"),
-		va(va),
 		material(p),
+		va(va),
         draw_count(triangle_count * 3)
 	{
 		material.color = color;
