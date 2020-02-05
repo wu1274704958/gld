@@ -165,5 +165,21 @@ namespace gld{
         static std::unique_ptr<std::string> load(std::filesystem::path p);
     };
 
-    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>> DefResMgr;
+    struct StbImage {
+        unsigned char* data = nullptr;
+        int width = 0;
+        int height = 0;
+        int channel = 0;
+        unsigned int gl_format();
+        ~StbImage();
+    };
+
+    struct LoadImage
+    {
+        using RetTy = std::unique_ptr<StbImage>;
+        using ArgsTy = int;
+        static std::unique_ptr<StbImage> load(std::filesystem::path p,int req_comp);
+    };
+
+    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,ResLoadPlugTy<ResType::image,LoadImage>> DefResMgr;
 }

@@ -10,7 +10,9 @@ namespace gld
         Float = 0x0,
         Matrix4,
         Vec3,
-        Vec4
+        Vec4,
+        Int,
+        Sampler2D
     };
 
     template <UT Ut,typename T>
@@ -79,7 +81,9 @@ namespace gld
             UTData<UT::Float,float>,
             UTData<UT::Matrix4, MatData>,
             UTData<UT::Vec3,float*>,
-            UTData<UT::Vec4,float*>
+            UTData<UT::Vec4,float*>,
+            UTData<UT::Int,int>,
+            UTData<UT::Sampler2D,int>
         >::type>;
 
         Uniform(std::string key, Program& program) :
@@ -111,6 +115,11 @@ namespace gld
             if constexpr (Ut == UT::Vec4)
             {
                 glUniform4fv(id, 1, data);
+            }
+            else
+            if constexpr (Ut == UT::Int || Ut == UT::Sampler2D)
+            {
+                glUniform1i(id, data);
             }
             return data;
         }

@@ -12,7 +12,9 @@ namespace gld
             UTData<UT::Float,float>,
             UTData<UT::Matrix4, glm::mat4>,
             UTData<UT::Vec3,glm::vec3>,
-            UTData<UT::Vec4,glm::vec4>
+            UTData<UT::Vec4,glm::vec4>,
+            UTData<UT::Int, int>,
+            UTData<UT::Sampler2D, int>
         >::type>;
 
         GlmUniform(std::string key,Program& p) : uniform(std::move(key),p)
@@ -45,13 +47,12 @@ namespace gld
 
         void sync()
         {
-            if constexpr (Ut == UT::Float)
-            {
-                uniform = data;
-            }else
             if constexpr (Ut == UT::Matrix4 || Ut == UT::Vec3 || Ut == UT::Vec4)
             {
                 uniform = glm::value_ptr(data);
+            }
+            else {
+                uniform = data;
             }
         }
 
