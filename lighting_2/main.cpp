@@ -19,6 +19,7 @@
 #include "model.hpp"
 #include <uniform.hpp>
 #include "light.hpp"
+#include <texture.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -135,7 +136,8 @@ public:
          -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
          -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
         };
-
+        TexOpLimit<TexOption::WRAP_S,TexOpVal::REPEAT>::can_set<TexOpVal::CLAMP_TO_BORDER>;
+        TexOpLimitList<TexOpLimit<TexOption::WRAP_S,TexOpVal::REPEAT>>::can_set<TexOption::WRAP_S,TexOpVal::CLAMP_TO_BORDER>;
         va1.create();
         va1.create_arr<ArrayBufferType::VERTEX>();
 

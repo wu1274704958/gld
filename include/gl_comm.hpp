@@ -65,4 +65,24 @@ namespace gld
         constexpr static size_t val = N;
     };
 
+    template<size_t V1,size_t V2>
+    struct Vmv{
+        constexpr static size_t v1 = V1;
+        constexpr static size_t v2 = V2;
+        template<size_t V>
+        inline constexpr static size_t map()
+        {
+            if constexpr(V == V1)
+            {
+                return V2;
+            }else
+            if constexpr(V == V2)
+            {
+                return V1;
+            }else
+            {
+                return 0;
+            }
+        }
+    };
 }
