@@ -13,10 +13,16 @@ namespace gld{
     };
 
     template <class T,typename ...Args>											
-    using has_load_func_t = decltype(T::load(std::declval<Args>()...));
+    using has_load_func_t = decltype(T::load(std::declval<std::filesystem::path>(),std::declval<Args>()...));
 
     template <typename T,typename ...Args>
     using has_load_func_vt = wws::is_detected<has_load_func_t,T,Args...>;
+
+    template <class T>
+    using has_load_func2_t = decltype(T::load(std::declval<std::filesystem::path>()));
+
+    template <typename T>
+    using has_load_func2_vt = wws::is_detected<has_load_func2_t, T>;
 
     template <class T>											
     using has_ret_type_t = typename T::RetTy;
@@ -41,9 +47,41 @@ namespace gld{
         
         using Ret = typename T::RetTy;
         using Args = typename T::ArgsTy;
-        static_assert(has_load_func_vt<T,Args>::value,"this type must has load func!!!");
-        static_assert(std::is_same_v<has_load_func_t<T,Args>,Ret>,"this loadret type must same!!!");
-        
+        static_assert(
+            has_load_func_vt<T,Args>::value || (has_load_func2_vt<T>::value && std::is_same_v<Args,void>),
+            "this type must has load func!!!");
+    };
+
+    template<size_t Rt,typename ...Ts>
+    struct MapResPlug;
+
+    template<size_t Rt,typename Fir,typename ...Ts>
+    struct MapResPlug<Rt,Fir,Ts...>
+    {
+        constexpr static decltype(auto) func()
+        {
+            if constexpr (Rt == Fir::res_type)
+            {
+                using T = typename Fir::type;
+                return std::declval<T>();
+            }
+            else
+            {
+                using T = typename MapResPlug<Rt, Ts...>::type;
+                if constexpr (std::is_same_v<T, void>)
+                {
+                    static_assert("Error Type!!!");
+                }
+                return std::declval<T>();
+            }
+        }
+        using type = typename std::remove_reference_t<decltype(func())>;
+    };
+
+    template<size_t Rt>
+    struct MapResPlug<Rt>
+    {
+        using type = void;
     };
     
     template<char Separator,typename ...Plugs>
@@ -61,7 +99,7 @@ namespace gld{
                 throw std::runtime_error("This root not exists!!!");
         }
 
-        std::filesystem::path uri_to_path(std::string& uri) const
+        std::filesystem::path to_path(std::string& uri) const
         {
             int b = 0,i = 0;
             std::filesystem::path res = root;
@@ -86,17 +124,46 @@ namespace gld{
             return res;
         }
 
-        std::filesystem::path uri_to_path(const char* uri) const
+        std::filesystem::path to_path(const char* uri) const
         {
             std::string str(uri);
-            return uri_to_path(str);
+            return to_path(str);
         }
 
-        std::filesystem::path uri_to_path(std::string&& uri) const
+        std::filesystem::path to_path(std::string&& uri) const
         {
-            return uri_to_path(uri);
+            return to_path(uri);
+        }
+
+        template<ResType Rt,typename Uri>
+        auto
+            load(Uri&& uri,typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::ArgsTy args)
+            ->typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::RetTy
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type;
+            return Ty::load(to_path(std::forward<Uri>(uri)),std::forward<typename Ty::ArgsTy>(args));
+        }
+
+        template<ResType Rt, typename Uri>
+        auto
+            load(Uri&& uri)
+            ->typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::RetTy
+        {
+            static_assert(std::is_same_v<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::ArgsTy, void>,
+                "Load plug args type must be void!!!");
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+            return Ty::load(to_path(std::forward<Uri>(uri)));
         }
     protected:
         std::filesystem::path root;
     };
+
+    struct LoadText
+    {
+        using RetTy = std::unique_ptr<std::string>;
+        using ArgsTy = void;
+        static std::unique_ptr<std::string> load(std::filesystem::path p);
+    };
+
+    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>> DefResMgr;
 }

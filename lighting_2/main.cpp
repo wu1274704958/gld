@@ -1,24 +1,21 @@
 #include <resource_mgr.hpp>
 #include <FindPath.hpp>
+#include <dbg.hpp>
 
 namespace fs = std::filesystem;
 
-struct test
-{
-    using RetTy = int;
-    using ArgsTy = int;
-    static int load(int);
-};
+
 
 using namespace gld;
 
 int main()
 {
-    ResLoadPlugTy<ResType::image,test> r;
     fs::path root = wws::find_path(3,"res",true);
-    ResourceMgr<'/'> res_mgr(std::move(root));
+    DefResMgr res_mgr(std::move(root));
 
-    res_mgr.uri_to_path("shader/base.vs");
+    auto vs_str = res_mgr.load<ResType::text>("lighting_2/base_vs.glsl");
+    auto fg_str = res_mgr.load<ResType::text>("lighting_2/base_fg.glsl");
+    
 
     return 0;
 }
