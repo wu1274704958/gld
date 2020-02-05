@@ -46,10 +46,57 @@ namespace gld{
         
     };
     
-
+    template<char Separator,typename ...Plugs>
     class ResourceMgr{
     public:
+        ResourceMgr(const char* _root) : root(_root)
+        {
+            if(!std::filesystem::exists(root))
+                throw std::runtime_error("This root not exists!!!");
+        }
 
+        ResourceMgr(std::filesystem::path _root) : root(_root)
+        {
+            if(!std::filesystem::exists(root))
+                throw std::runtime_error("This root not exists!!!");
+        }
+
+        std::filesystem::path uri_to_path(std::string& uri) const
+        {
+            int b = 0,i = 0;
+            std::filesystem::path res = root;
+            for(;i < uri.size();++i)
+            {
+                if(uri[i] == Separator)
+                {
+                    std::string t = uri.substr(b,i - b);
+                    if(!t.empty())
+                        res.append(t.c_str());
+                    b = i + 1;
+                }
+            }
+            if(b < i)
+            {
+                std::string t = uri.substr(b,i - b);
+                if(!t.empty())
+                    res.append(t.c_str());
+            }
+            if(!std::filesystem::exists(res))
+                throw std::runtime_error("This file not exists!!!");
+            return res;
+        }
+
+        std::filesystem::path uri_to_path(const char* uri) const
+        {
+            std::string str(uri);
+            return uri_to_path(str);
+        }
+
+        std::filesystem::path uri_to_path(std::string&& uri) const
+        {
+            return uri_to_path(uri);
+        }
     protected:
+        std::filesystem::path root;
     };
 }
