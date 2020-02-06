@@ -51,6 +51,10 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     target_link_libraries(lighting_2 ${GLFW3_LIBRARY} )
 
+    add_executable(lighting_3 lighting_3/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp)
+
+    target_link_libraries(lighting_3 ${GLFW3_LIBRARY} )
+
 endif()
 
         
