@@ -7,11 +7,11 @@ namespace gld{
     struct Light{
         Light(Program& p):
             color("light_color",p),
-            pos("light_pos",p)
+            dir("light_dir",p)
              {}
 
         Uniform<UT::Vec3> color;
-        Uniform<UT::Vec3> pos;
+        Uniform<UT::Vec3> dir;
     };
 
     struct Material {

@@ -38,7 +38,7 @@ public:
         DefResMgr res_mgr(std::move(root));
 
         auto vs_str = res_mgr.load<ResType::text>("lighting_2/base_vs.glsl");
-        auto fg_str = res_mgr.load<ResType::text>("lighting_3/base_fg.glsl");
+        auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg.glsl");
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
         auto box_spec = res_mgr.load<ResType::image>("lighting_3/container2_specular.png",0);
 
@@ -75,7 +75,7 @@ public:
 
         program.use();
 
-        program.locat_uniforms("perspective", "world", "model", "light_pos", "diffuseTex", "light_color", "ambient_strength",
+        program.locat_uniforms("perspective", "world", "model", "light_dir", "diffuseTex", "light_color", "ambient_strength",
             "specular_strength",
             "view_pos",
             "shininess","specularTex"
@@ -119,8 +119,8 @@ public:
 
         glm::vec3 light_c = glm::vec3(1.f, 1.f, 1.f);
         light.color = glm::value_ptr(light_c);
-        glm::vec3 light_p = glm::vec3(-1.f, 1.f, -1.f);
-        light.pos = glm::value_ptr(light_p);
+        glm::vec3 light_p = glm::vec3(-0.2f, -1.0f, -0.3f);
+        light.dir = glm::value_ptr(light_p);
         glm::vec3 view_p = glm::vec3(0.0f, 0.0f, 0.0f);
         view_pos = glm::value_ptr(view_p);
 
