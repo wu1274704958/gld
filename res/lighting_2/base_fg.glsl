@@ -13,7 +13,7 @@ uniform vec3 light_pos;
 uniform vec3 view_pos;
 void main() 
 { 
-    vec3 obj_color = vec3(texture(diffuseTex, oUv));
+    vec3 obj_color = texture(diffuseTex, oUv).rgb;
     
     vec3 light_dir = normalize(light_pos - oVpos);
 

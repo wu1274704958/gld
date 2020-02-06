@@ -42,7 +42,7 @@ public:
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
 
         auto vs_p = vs_str.get()->c_str();
-        auto fg_p = vs_str.get()->c_str();
+        auto fg_p = fg_str.get()->c_str();
 
         try {
             sundry::compile_shaders<100>(
@@ -80,6 +80,24 @@ public:
             "shininess");
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+        if(box)
+        {
+            diffuseTex.create();
+            diffuseTex.bind();
+
+            diffuseTex.tex_image(0,box->gl_format(),0,box->gl_format(),box->data,box->width,box->height);
+            diffuseTex.generate_mipmap();
+
+            diffuseTex.set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+            diffuseTex.set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
+
+            diffuseTex.set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
+            diffuseTex.set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+        }else{
+            dbg("load texture failed!!");
+            return -1;
+        }
 
         GLenum err = glGetError();
         dbg(err);
@@ -136,8 +154,7 @@ public:
          -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
          -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
         };
-        TexOpLimit<TexOption::WRAP_S,TexOpVal::REPEAT>::can_set<TexOpVal::CLAMP_TO_BORDER>;
-        TexOpLimitList<TexOpLimit<TexOption::WRAP_S,TexOpVal::REPEAT>>::can_set<TexOption::WRAP_S,TexOpVal::CLAMP_TO_BORDER>;
+        
         va1.create();
         va1.create_arr<ArrayBufferType::VERTEX>();
 
@@ -149,7 +166,7 @@ public:
             VAP_DATA<2,float,false>>();
         va1.unbind();
 
-        cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12)));
+        cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex)));
 
         cxts[0]->scale = glm::vec3(1.f, 1.f, 1.f);
         auto ptr = dynamic_cast<Model*>(cxts[0].get());
@@ -216,6 +233,7 @@ private:
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
     std::vector<std::unique_ptr<Drawable>> cxts;
+    Texture<TexType::D2> diffuseTex;
 };
 
 

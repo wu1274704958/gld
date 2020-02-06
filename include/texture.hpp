@@ -1,4 +1,5 @@
 #pragma once
+#include <gl_comm.hpp>
 
 namespace gld{
     enum class TexType
@@ -91,10 +92,6 @@ namespace gld{
 
     template<TexOption Op,TexOpVal ...Vs>
     struct TexOpLimit {
-        template<TexOpVal V>
-        constexpr static bool can_set = can_set_sub<V,Vs...>();
-
-        constexpr static size_t Option = static_cast<size_t>(Op);
 
         template<TexOpVal V,TexOpVal F,TexOpVal ...vs>
         constexpr static bool can_set_sub()
@@ -112,12 +109,17 @@ namespace gld{
                 }
             }
         }
+
+        template<TexOpVal V>
+        constexpr static bool can_set = can_set_sub<V,Vs...>();
+
+        constexpr static size_t Option = static_cast<size_t>(Op);
+
+        
     };
 
     template<typename ...Args>
     struct TexOpLimitList{
-        template<TexOption Op,TexOpVal V>
-        constexpr static bool can_set = can_set_sub<Op,V,Args...>();
 
         template<TexOption Op,TexOpVal V,typename F,typename ...args>
         constexpr static bool can_set_sub()
@@ -135,6 +137,137 @@ namespace gld{
                 }
             }
         }
+
+        template<TexOption Op,TexOpVal V>
+        constexpr static bool can_set = can_set_sub<Op,V,Args...>();
+        
+    };
+
+    template<TexType Tt>
+    class Texture{
+    public:
+        using TexOpLimitLsTy = typename TexOpLimitList<
+            TexOpLimit<TexOption::MIN_FILTER,
+                TexOpVal::NEAREST,               
+                TexOpVal::LINEAR,                
+                TexOpVal::NEAREST_MIPMAP_NEAREST,
+                TexOpVal::NEAREST_MIPMAP_LINEAR, 
+                TexOpVal::LINEAR_MIPMAP_NEAREST, 
+                TexOpVal::LINEAR_MIPMAP_LINEAR>,
+            TexOpLimit<TexOption::MAG_FILTER,
+                TexOpVal::NEAREST,               
+                TexOpVal::LINEAR,                
+                TexOpVal::NEAREST_MIPMAP_NEAREST,
+                TexOpVal::NEAREST_MIPMAP_LINEAR, 
+                TexOpVal::LINEAR_MIPMAP_NEAREST, 
+                TexOpVal::LINEAR_MIPMAP_LINEAR>,
+            TexOpLimit<TexOption::WRAP_R,
+                TexOpVal::REPEAT,
+                TexOpVal::MIRRORED_REPEAT,
+                TexOpVal::CLAMP_TO_EDGE,
+                TexOpVal::CLAMP_TO_BORDER>,
+            TexOpLimit<TexOption::WRAP_T,
+                TexOpVal::REPEAT,
+                TexOpVal::MIRRORED_REPEAT,
+                TexOpVal::CLAMP_TO_EDGE,
+                TexOpVal::CLAMP_TO_BORDER>,
+            TexOpLimit<TexOption::WRAP_S,
+                TexOpVal::REPEAT,
+                TexOpVal::MIRRORED_REPEAT,
+                TexOpVal::CLAMP_TO_EDGE,
+                TexOpVal::CLAMP_TO_BORDER>
+            >;
+
+        Texture()
+        {
+            id = 0;
+        }
+
+        void create()
+        {
+            glGenTextures(1,&id);
+        }
+
+        void clean()
+        {
+            if(good())
+                glDeleteTextures(1,&id);
+        }
+
+        Texture(const Texture&) = delete;
+        Texture& operator=(const Texture&) = delete;
+
+        Texture(Texture&& oth)
+        {
+            id = oth.id;
+            oth.id = 0;
+        }
+        Texture& operator=(Texture&& oth)
+        {
+            clean();
+            id = oth.id;
+            oth.id = 0;
+            return *this;
+        }
+        
+        ~Texture()
+        {
+            clean();
+        }
+
+        void bind()
+        {
+            glBindTexture(static_cast<size_t>(Tt),id);
+        }
+
+        void unbind()
+        {
+            glBindTexture(static_cast<size_t>(Tt),0);
+        }
+
+        template<typename T,typename ...Oths>
+        void tex_image(int level, int internalformat, int border, unsigned int format,const T* pixels,int width,Oths ...oths)
+        {
+            unsigned int type = static_cast<unsigned int>(MapGlTypeEnum<T>::val);
+            if constexpr(Tt == TexType::D1)
+            {
+                glTexImage1D(static_cast<int>(Tt),level,internalformat,width,border,format,type,pixels);
+            }else
+            if constexpr(Tt == TexType::D2)
+            {
+                glTexImage2D(static_cast<int>(Tt),level,internalformat,width,std::forward<Oths>(oths)...,border,format,type,pixels);
+            }else
+            if constexpr(Tt == TexType::D3)
+            {
+                glTexImage3D(static_cast<int>(Tt),level,internalformat,width,std::forward<Oths>(oths)...,border,format,type,pixels);
+            }
+        }
+
+        void generate_mipmap()
+        {
+            glGenerateMipmap(static_cast<int>(Tt));
+        }
+
+        template<ActiveTexId Id>
+        void active()
+        {
+            glActiveTexture(static_cast<int>(Id));
+            bind();
+        }
+
+        template<TexOption Op,TexOpVal V>
+        void set_paramter()
+        {
+            static_assert(TexOpLimitLsTy::can_set<Op,V>,"This option maybe can not set this value!!!");
+            glTexParameteri(static_cast<int>(Tt), static_cast<int>(Op), static_cast<int>(V));
+        }
+
+        bool good()
+        {
+            return id > 0;
+        }
+    protected:
+        Glid id;
     };
     
 }

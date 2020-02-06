@@ -15,33 +15,9 @@ namespace gld
         
         static constexpr size_t map_gl_type_enum()
         {
-            return map_gl_type_enum_sub<0, 
-                Pair<char, 0x1400>,
-                Pair<unsigned char, 0x1401>,
-                Pair<short, 0x1402>,
-                Pair<unsigned short, 0x1403>,
-                Pair<int, 0x1404>,
-                Pair<unsigned int, 0x1405>,
-                Pair<float, 0x1406>,
-                Pair<double, 0x140A>>();
+            return MapGlTypeEnum<Ty>::val;
         }
-        template<size_t Idx,typename F,typename ...Ps>
-        static constexpr size_t map_gl_type_enum_sub()
-        {
-            if constexpr (std::is_same_v<Ty, typename F::type>)
-            {
-                return F::val;
-            }
-            else {
-                if constexpr (sizeof...(Ps) > 0)
-                {
-                    return map_gl_type_enum_sub<Idx + 1, Ps...>();
-                }
-                else {
-                    return 0;
-                }
-            }
-        }
+        
     };
 
     template <ArrayBufferType ABT>
@@ -130,11 +106,12 @@ namespace gld
         template<size_t Stride,size_t Idx,size_t Off,typename T,typename ...Ts>
         void vertex_attrib_pointer_sub()
         {
-            glVertexAttribPointer(Idx,T::len,T::map_gl_type_enum(),T::normalized,Stride,(void *)Off);
+            constexpr size_t off = Off * sizeof(typename T::type);
+            glVertexAttribPointer(Idx,T::len,static_cast<int>( T::map_gl_type_enum() ),T::normalized,Stride,(void *)off);
             glEnableVertexAttribArray(Idx);
             if constexpr(sizeof...(Ts) > 0)
             {
-                vertex_attrib_pointer_sub<Stride,Idx + 1,sizeof(typename T::type) * T::len,Ts...>();
+                vertex_attrib_pointer_sub<Stride,Idx + 1,Off + T::len,Ts...>();
             }
         }
 

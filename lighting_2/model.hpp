@@ -8,17 +8,19 @@
 #include <uniform.hpp>
 #include "light.hpp"
 #include <glm_uniform.hpp>
+#include <texture.hpp>
 
 namespace gld{
 	
 class Model : public gld::Drawable
 {
 public:
-	Model(gld::Program& p,gld::VertexArr& va,uint32_t triangle_count) : 
+	Model(gld::Program& p,gld::VertexArr& va,uint32_t triangle_count,Texture<TexType::D2> &texture) : 
 		Drawable(p,"model"),
 		material(p),
 		va(va),
-        draw_count(triangle_count * 3)
+        draw_count(triangle_count * 3),
+		diffuseTex(texture)
 	{
 
 	}
@@ -30,6 +32,8 @@ public:
 
 	void onPreDraw()override 
 	{
+		diffuseTex.active<ActiveTexId::_0>();
+
 		material.diffuseTex.sync();
 		material.ambient_strength.sync();
 		material.shininess.sync();
@@ -50,6 +54,7 @@ public:
 		
 	}
 	Material material;
+	Texture<TexType::D2>& diffuseTex;
 protected:
 	gld::VertexArr& va;
     uint32_t draw_count;
