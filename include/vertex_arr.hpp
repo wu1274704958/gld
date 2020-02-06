@@ -106,12 +106,11 @@ namespace gld
         template<size_t Stride,size_t Idx,size_t Off,typename T,typename ...Ts>
         void vertex_attrib_pointer_sub()
         {
-            constexpr size_t off = Off * sizeof(typename T::type);
-            glVertexAttribPointer(Idx,T::len,static_cast<int>( T::map_gl_type_enum() ),T::normalized,Stride,(void *)off);
+            glVertexAttribPointer(Idx,T::len,static_cast<int>( T::map_gl_type_enum() ),T::normalized,Stride,(void *)Off);
             glEnableVertexAttribArray(Idx);
             if constexpr(sizeof...(Ts) > 0)
             {
-                vertex_attrib_pointer_sub<Stride,Idx + 1,Off + T::len,Ts...>();
+                vertex_attrib_pointer_sub<Stride,Idx + 1,Off + sizeof(typename T::type) * T::len,Ts...>();
             }
         }
 
