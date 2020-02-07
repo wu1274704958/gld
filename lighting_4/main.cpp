@@ -8,6 +8,7 @@
 #include <sundry.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/rotate_vector.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <dbg.hpp>
 #include <vector>
@@ -275,6 +276,11 @@ public:
     {
         for (auto& p : cxts)
             p->update();
+        
+        glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
+        pl_pos = glm::rotateZ(pl_pos,pl_angle);
+        pl.pos = glm::value_ptr(pl_pos);
+        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
     }
 
     ~Demo1() {
@@ -295,6 +301,7 @@ private:
     std::vector<std::unique_ptr<Drawable>> cxts;
     Texture<TexType::D2> diffuseTex,specularTex;
     PointLight pl;
+    float pl_angle = 0.0f;
 };
 
 
