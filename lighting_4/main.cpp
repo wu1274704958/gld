@@ -20,6 +20,8 @@
 #include <uniform.hpp>
 #include "light.hpp"
 #include <texture.hpp>
+#include <comm.hpp>
+#include <random>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -27,7 +29,8 @@ namespace fs = std::filesystem;
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : light(program), view_pos("view_pos", program), perspective("perspective", program), world("world", program) {}
+    Demo1() : light(program), view_pos("view_pos", program), perspective("perspective", program), world("world", program),
+        pl(program) {}
     int init() override
     {
         RenderDemoRotate::init();
@@ -37,7 +40,7 @@ public:
         fs::path root = wws::find_path(3, "res", true);
         DefResMgr res_mgr(std::move(root));
 
-        auto vs_str = res_mgr.load<ResType::text>("lighting_2/base_vs.glsl");
+        auto vs_str = res_mgr.load<ResType::text>("lighting_4/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg.glsl");
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
         auto box_spec = res_mgr.load<ResType::image>("lighting_3/container2_specular.png",0);
@@ -78,7 +81,12 @@ public:
         program.locat_uniforms("perspective", "world", "model", "light_dir", "diffuseTex", "light_color", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex"
+            "shininess","specularTex",
+            "pl_constant",
+            "pl_linear",
+            "pl_quadratic",
+            "pl_color",
+            "pl_pos"
             );
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -123,6 +131,16 @@ public:
         light.dir = glm::value_ptr(light_p);
         glm::vec3 view_p = glm::vec3(0.0f, 0.0f, 0.0f);
         view_pos = glm::value_ptr(view_p);
+
+        glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
+        pl.pos = glm::value_ptr(pl_pos);
+
+        glm::vec3 pl_c = glm::vec3(1.f, 0.f, 0.f);
+        pl.color = glm::value_ptr(pl_c);
+        pl.constant = 1.0f;
+        pl.linear = 0.09f;
+        pl.quadratic = 0.032f;
+
 
         float vertices[] = {
             // positions          // normals           // texture coords
@@ -180,21 +198,48 @@ public:
             VAP_DATA<2,float,false>>();
         va1.unbind();
 
-        cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex,specularTex)));
+        glm::vec3 cubePositions[] = {
+            glm::vec3( 0.0f,  0.0f,  0.0f),
+            glm::vec3( 2.0f,  5.0f, -15.0f),
+            glm::vec3(-1.5f, -2.2f, -2.5f),
+            glm::vec3(-3.8f, -2.0f, -12.3f),
+            glm::vec3( 2.4f, -0.4f, -3.5f),
+            glm::vec3(-1.7f,  3.0f, -7.5f),
+            glm::vec3( 1.3f, -2.0f, -2.5f),
+            glm::vec3( 1.5f,  2.0f, -2.5f),
+            glm::vec3( 1.5f,  0.2f, -1.5f),
+            glm::vec3(-1.3f,  1.0f, -1.5f)
+        };
+        for(int i = 0;i < wws::arrLen(cubePositions);++i)
+        {
+            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex,specularTex)));
 
-        cxts[0]->scale = glm::vec3(1.f, 1.f, 1.f);
-        auto ptr = dynamic_cast<Model*>(cxts[0].get());
-        ptr->material.shininess = 256.f;
-        ptr->material.specular_strength = 1.0f;
-        ptr->material.ambient_strength = 0.1f;
-        ptr->material.diffuseTex = 0;
-        ptr->material.specularTex = 1;
+            cxts[i]->scale = glm::vec3(1.f, 1.f, 1.f);
+            auto ptr = dynamic_cast<Model*>(cxts[i].get());
+            ptr->material.shininess = 32.f;
+            ptr->material.specular_strength = 0.7f;
+            ptr->material.ambient_strength = 0.1f;
+            ptr->material.diffuseTex = 0;
+            ptr->material.specularTex = 1;
+            ptr->pos = cubePositions[i];
+
+            ptr->rotate = glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
+        }
+
         update_matrix();
 
         for (auto& p : cxts)
             p->init();
 
         return 0;
+    }
+
+    float rd_0_1()
+    {
+        std::random_device r;
+        std::default_random_engine e1(r());
+        std::uniform_int_distribution<int> uniform_dist(0, 1000000);
+        return static_cast<float>(uniform_dist(e1)) / 100000.f;
     }
 
     void draw() override
@@ -249,6 +294,7 @@ private:
     GlmUniform<UT::Matrix4> world;
     std::vector<std::unique_ptr<Drawable>> cxts;
     Texture<TexType::D2> diffuseTex,specularTex;
+    PointLight pl;
 };
 
 

@@ -14,6 +14,21 @@ namespace gld{
         Uniform<UT::Vec3> dir;
     };
 
+    struct PointLight{
+        PointLight(Program& p):
+            color("pl_color",p),
+            pos("pl_pos",p),
+            constant("pl_constant",p),
+            linear("pl_linear",p),
+            quadratic("pl_quadratic",p)
+            {}
+        Uniform<UT::Vec3> color;
+        Uniform<UT::Vec3> pos;
+        Uniform<UT::Float> constant;
+        Uniform<UT::Float> linear;
+        Uniform<UT::Float> quadratic;
+    };
+
     struct Material {
         Material(Program& p):
             diffuseTex("diffuseTex",p),
