@@ -127,6 +127,47 @@ namespace gld
         std::string key;
         Program& program;
     };
+
+    template<typename  T>
+    struct CustomUniform{
+        using UTDataMapTy = T;
+
+        CustomUniform(std::string key,Program& p) : key(std::move(key)),program(p)
+        {
+            
+        }
+        template<typename ...Args>
+        CustomUniform(std::string key,Program& p,Args&& ...args) : 
+            key(std::move(key)),program(p),
+            data(std::forward<Args>(args)...)
+        {
+            
+        }
+
+        UTDataMapTy operator=(UTDataMapTy d)
+        {
+            data = d;
+            return d;
+        }
+
+        operator UTDataMapTy& ()
+        {
+            return data;
+        }
+
+        UTDataMapTy& operator*()
+        {
+            return data;
+        }
+
+        virtual void sync(){}
+
+        virtual ~CustomUniform(){}
+
+        UTDataMapTy data;
+        std::string key;
+        Program& program;
+    };
     
 } // namespace gld
 
