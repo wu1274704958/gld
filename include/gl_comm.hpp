@@ -12,7 +12,8 @@ namespace gld
 
     enum class ArrayBufferType{
         VERTEX = 0x8892,
-        ELEMENT = 0x8893
+        ELEMENT = 0x8893,
+        UNIFORM = 0x8A11
     };
 
     template <size_t ...I>

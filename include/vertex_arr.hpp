@@ -127,7 +127,7 @@ namespace gld
             }
         }
 
-    private:
+    protected:
         Glid id = 0;
     };
 
