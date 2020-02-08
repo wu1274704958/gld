@@ -1,4 +1,4 @@
-#version 330 core
+#version 450 core
 uniform mat4 perspective;
 uniform mat4 world; 
 uniform mat4 model;

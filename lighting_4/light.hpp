@@ -4,14 +4,12 @@
 #include <glm_uniform.hpp>
 
 namespace gld{
-    struct Light{
-        Light(Program& p):
-            color("light_color",p),
-            dir("light_dir",p)
+    struct DictLight{
+        DictLight()
              {}
 
-        Uniform<UT::Vec3> color;
-        Uniform<UT::Vec3> dir;
+        glm::vec3 color;
+        glm::vec3 dir;
     };
 
     struct PointLight{

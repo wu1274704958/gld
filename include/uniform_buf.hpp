@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include <vertex_arr.hpp>
 
 namespace gld{
@@ -8,6 +9,7 @@ namespace gld{
     template<ArrayBufferType ABT,unsigned int Binding,typename T>
     class Buffer : public VABuffer<ABT>
     {
+        using BaseTy = VABuffer<ABT>;
         static_assert(std::is_standard_layout_v<T>,"this type must is standard!!!");
     public:
         Buffer(){}
@@ -35,14 +37,34 @@ namespace gld{
             return data;
         }
 
-        void bind_buf_base()
+        T* operator->() 
         {
-            glBindBufferBase(static_cast<unsigned int>(ABT),static_cast<unsigned int>(Binding),id);
+            return &data;
         }
 
-        T* map(int64 offset,unsigned int map_flag)
+        operator const T& () const
         {
-            return dynamic_cast<T*>(glMapBufferRange(
+            return data;
+        }
+
+        const T& operator*() const 
+        {
+            return data;
+        }
+
+        const T* operator->() const
+        {
+            return &data;
+        }
+
+        void bind_buf_base()
+        {
+            glBindBufferBase(static_cast<unsigned int>(ABT),static_cast<unsigned int>(Binding), BaseTy::id);
+        }
+
+        T* map(int64_t offset,unsigned int map_flag)
+        {
+            return reinterpret_cast<T*>(glMapBufferRange(
                             static_cast<unsigned int>(ABT),
                             offset,
                             sizeof(T),
@@ -62,6 +84,7 @@ namespace gld{
     template<unsigned int Binding,typename T>
     class UniformBuf : public Buffer<ArrayBufferType::UNIFORM,Binding,T>
     {
+        using BaseTy = Buffer<ArrayBufferType::UNIFORM,Binding,T>;
     public:
         UniformBuf(){}
         template<typename ...Args>
@@ -70,21 +93,21 @@ namespace gld{
 
         void init(GLenum ty)
         {
-            create();
-            bind();
-            bind_null_data(ty);
-            unbind();
+            BaseTy::create();
+            BaseTy::bind();
+            BaseTy::bind_null_data(ty);
+            BaseTy::unbind();
         }
 
         virtual void sync(unsigned int map_flag){
-            bind_buf_base();
+            BaseTy::bind_buf_base();
 
-            T* map_block = map(0,map_flag);
+            T* map_block =  BaseTy::map(0,map_flag);
             if(map_block)
             {
-                std::memmove(map_block,&data,sizeof(T));
+                std::memmove(map_block,&(BaseTy::data),sizeof(T));
             }
-            unmap();
+             BaseTy::unmap();
         }
     };
 }

@@ -1,12 +1,18 @@
-#version 330 core
+#version 450 core
+
 in vec3 oNormal; 
 in vec3 oVpos; 
 in vec2 oUv;
 in vec3 o_pl_pos;
-out vec4 color; 
+out vec4 color;
+
+layout (std140,binding = 0) uniform DirctLight{
+    vec3 light_color;
+    vec3 light_dir;
+};
+
 uniform sampler2D diffuseTex;
 uniform sampler2D specularTex;
-uniform vec3 light_color;
 uniform float ambient_strength;
 uniform float specular_strength;
 uniform float shininess;
@@ -16,7 +22,6 @@ uniform float pl_linear;
 uniform float pl_quadratic;
 uniform vec3  pl_color;
 
-uniform vec3 light_dir; 
 uniform vec3 view_pos;
 void main() 
 { 

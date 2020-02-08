@@ -23,6 +23,7 @@
 #include <texture.hpp>
 #include <comm.hpp>
 #include <random>
+#include <uniform_buf.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -30,7 +31,7 @@ namespace fs = std::filesystem;
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : light(program), view_pos("view_pos", program), perspective("perspective", program), world("world", program),
+    Demo1() : view_pos("view_pos", program), perspective("perspective", program), world("world", program),
         pl(program) {}
     int init() override
     {
@@ -79,7 +80,7 @@ public:
 
         program.use();
 
-        program.locat_uniforms("perspective", "world", "model", "light_dir", "diffuseTex", "light_color", "ambient_strength",
+        program.locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
             "shininess","specularTex",
@@ -125,11 +126,13 @@ public:
         GLenum err = glGetError();
         dbg(err);
 
+        light.init(GL_STATIC_DRAW);
+        
+        light->color = glm::vec3(1.f, 1.f, 1.f);
+        light->dir = glm::vec3(-0.2f, -1.0f, -0.3f);
 
-        glm::vec3 light_c = glm::vec3(1.f, 1.f, 1.f);
-        light.color = glm::value_ptr(light_c);
-        glm::vec3 light_p = glm::vec3(-0.2f, -1.0f, -0.3f);
-        light.dir = glm::value_ptr(light_p);
+        light.sync(GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT);
+
         glm::vec3 view_p = glm::vec3(0.0f, 0.0f, 0.0f);
         view_pos = glm::value_ptr(view_p);
 
@@ -294,7 +297,7 @@ public:
 private:
     Program program;
     VertexArr va1, va2;
-    Light light;
+    UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
