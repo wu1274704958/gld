@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <comm.hpp>
+#include <glsl_preprocess.hpp>
 
 
 namespace gld{

@@ -1,9 +1,6 @@
 #version 450 core
 
-struct DirctLight{
-    vec3 color;
-    vec3 dir;
-};
+#include <light.glsl>
 
 in vec3 oNormal; 
 in vec3 oVpos; 
