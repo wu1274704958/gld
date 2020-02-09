@@ -42,6 +42,8 @@ public:
         fs::path root = wws::find_path(3, "res", true);
         DefResMgr res_mgr(std::move(root));
 
+        glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
+
         auto vs_str = res_mgr.load<ResType::text>("lighting_4/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg.glsl");
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);

@@ -30,37 +30,35 @@ namespace gld::glsl{
         static std::shared_ptr<IncludeCatche> get_instance();
     };
 
-    template<typename Par>
     class Preprocess{
         public:
 
         virtual ~Preprocess(){}
         virtual bool interest(const std::vector<token::Token>& ts,int b,int e) = 0;
-        virtual std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e) = 0; 
-        void set_parent(Par* p){
-            parent = p;
-        }
-        protected:
-        Par* parent = null;
+        virtual std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(std::filesystem::path,std::string&&)> process_f) = 0; 
     };
 
     struct GlslPreprocessErr : std::runtime_error{
         GlslPreprocessErr(const char* str) : runtime_error(str){}
     };
 
-    template<char Symbol>
+    template<char Symbol,typename ...Args>
     class PreprocessMgr{
     public:
-        PreprocessMgr(std::initializer_list<Preprocess<PreprocessMgr<Symbol>>> list)
+        PreprocessMgr()
         {
-            for(auto &v : list)
+            (procs.push_back(new Args()),...);
+        }
+
+        ~PreprocessMgr()
+        {
+            for(auto v : procs)
             {
-                v.set_parent(this);
-                procs.push_back(std::move(v));
+                delete v;
             }
         }
 
-        std::string process(std::filesystem::path path,std::string&& str)
+        std::string process(std::filesystem::path path,std::string&& str) const
         {
             token::TokenStream<std::string> tos(std::move(str));
             tos.analyse();
@@ -81,7 +79,11 @@ namespace gld::glsl{
                     {
                         if(proc.interest(ts,i,e))
                         {
-                            auto res = proc.handle(std::move(path),ts,i,e);
+                            std::function<std::string(std::filesystem::path,std::string&&)> process_f = [this](std::filesystem::path path,std::string&& str)
+                            {
+                                this->process(std::move(path),std::move(str));
+                            };
+                            auto res = proc.handle(std::move(path),ts,i,e,process_f);
                             if(res)
                             {
                                 ts.erase(ts.begin() + i,ts.begin() + (e + 1));
@@ -97,11 +99,10 @@ namespace gld::glsl{
             return os.str();
         }
     protected:
-        std::vector<Preprocess<PreprocessMgr<Symbol>>> procs;    
+        std::vector<Preprocess*> procs;    
     };
 
-    template<typename T>
-    class IncludePreprocess : public Preprocess<T>
+    class IncludePreprocess : public Preprocess
     {
         bool interest(const std::vector<token::Token>& ts,int b,int e) override
         {
@@ -110,14 +111,11 @@ namespace gld::glsl{
             return ts[b].body == "include" && ts[b + 1].per == '"' && ts[b + 1].back == '"' && !is_empty(ts[b + 1].body);
         }
 
-        bool is_empty(std::string& str)
+        bool is_empty(const std::string& str)
         {
             return str.empty() && str[0] == ' ';
         }
 
-        virtual std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e) override
-        {
-            return std::nullopt_t;
-        }
+        std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(std::filesystem::path,std::string&&)> process_f) override;
     };
 }
