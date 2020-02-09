@@ -1,6 +1,6 @@
 #version 450 core
 
-#include <light.glsl>
+#include "light.glsl"
 
 in vec3 oNormal; 
 in vec3 oVpos; 

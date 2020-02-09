@@ -55,7 +55,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     target_link_libraries(lighting_3 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_4 lighting_4/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp)
+    add_executable(lighting_4 lighting_4/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
 
     target_link_libraries(lighting_4 ${GLFW3_LIBRARY} )
 
