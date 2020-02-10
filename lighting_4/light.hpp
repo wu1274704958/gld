@@ -24,6 +24,7 @@ namespace gld{
         glm::vec3 color;
         float b;
         glm::vec3 pos;
+        float c;
     };
 
     struct Material {
