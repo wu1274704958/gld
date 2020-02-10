@@ -40,9 +40,7 @@ public:
         Shader<ShaderType::FRAGMENT> frag;
 
         fs::path root = wws::find_path(3, "res", true);
-        DefResMgr res_mgr(std::move(root));
-
-        glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
+        ResMgrWithGlslPreProcess res_mgr(std::move(root));
 
         auto vs_str = res_mgr.load<ResType::text>("lighting_4/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg.glsl");
@@ -51,6 +49,9 @@ public:
 
         auto vs_p = vs_str.get()->c_str();
         auto fg_p = fg_str.get()->c_str();
+
+        dbg(vs_p);
+        dbg(fg_p);
 
         try {
             sundry::compile_shaders<100>(

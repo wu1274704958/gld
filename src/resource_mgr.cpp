@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include <3rd_party/stb/stb_image.h>
+#include <glsl_preprocess.hpp>
 
 namespace fs = std::filesystem;
 using namespace std;
@@ -26,6 +27,21 @@ std::unique_ptr<std::string> gld::LoadText::load(fs::path p)
 			res->append(buf);
 		}
 		return std::unique_ptr<std::string>(res);
+	}
+	else
+		return std::unique_ptr<std::string>();
+}
+
+std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(fs::path p)
+{
+	auto ptr = LoadText::load(p);
+	
+	if (ptr)
+	{
+		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
+
+		std::string res = preprocess.process(std::move(p),std::move(*ptr));
+		return std::unique_ptr<std::string>(new std::string(std::move(res)));
 	}
 	else
 		return std::unique_ptr<std::string>();

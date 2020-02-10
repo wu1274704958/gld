@@ -72,28 +72,29 @@ namespace gld::glsl{
                     while(ts[e].back != '\n')
                     { 
                         if(e + 1 >= ts.size())
-                            throw GlslPreprocessErr("Syntax error!");
+                            goto OutLoop;
                         ++e; 
                     }
                     for(auto& proc : procs)
                     {
-                        if(proc.interest(ts,i,e))
+                        if(proc->interest(ts,i,e))
                         {
-                            std::function<std::string(std::filesystem::path,std::string&&)> process_f = [this](std::filesystem::path path,std::string&& str)
+                            std::function<std::string(std::filesystem::path,std::string&&)> process_f = [this](std::filesystem::path path,std::string&& str)->std::string
                             {
-                                this->process(std::move(path),std::move(str));
+                                return this->process(std::move(path),std::move(str));
                             };
-                            auto res = proc.handle(std::move(path),ts,i,e,process_f);
+                            auto res = proc->handle(std::move(path),ts,i,e,process_f);
                             if(res)
                             {
                                 ts.erase(ts.begin() + i,ts.begin() + (e + 1));
-                                ts.insert(ts.begin() + i,token::Token(std::move(res.value()),token::Token::None,'\n'));
+                                ts.insert(ts.begin() + i,token::Token(std::move(*res),token::Token::None,'\n'));
                                 break;
                             }
                         }
                     }
                 }
             }
+            OutLoop:
             std::ostringstream os;
             tos.save(os);
             return os.str();

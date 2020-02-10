@@ -23,7 +23,7 @@ namespace gld::glsl{
         {
             return std::optional<std::string>( IncludeCatche::get_instance()->map[ps] );
         }else{
-            std::filesystem::path in_path = path;
+            std::filesystem::path in_path = path.parent_path();
             in_path /= ts[b + 1].body.c_str();
             if(fs::exists(in_path))
             {
