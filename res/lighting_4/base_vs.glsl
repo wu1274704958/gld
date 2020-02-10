@@ -25,10 +25,7 @@ void main()
     mat3 nor_mat = mat3(world * model);
     oNormal = normalize(nor_mat * vnormal);
 
-    
+    o_pl = pointLight;
     o_pl.pos = (world * model * vec4(pointLight.pos,0.0f)).xyz;
-    o_pl.color = pointLight.color;
-    o_pl.constant   = pointLight.constant;
-    o_pl.linear     = pointLight.linear;
-    o_pl.quadratic  = pointLight.quadratic;
+    
 }
