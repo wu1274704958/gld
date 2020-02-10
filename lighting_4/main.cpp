@@ -31,8 +31,8 @@ namespace fs = std::filesystem;
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos", program), perspective("perspective", program), world("world", program),
-        pl(program) {}
+    Demo1() : view_pos("view_pos", program), perspective("perspective", program), world("world", program)
+        {}
     int init() override
     {
         RenderDemoRotate::init();
@@ -86,12 +86,7 @@ public:
         program.locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex",
-            "pl_constant",
-            "pl_linear",
-            "pl_quadratic",
-            "pl_color",
-            "pl_pos"
+            "shininess","specularTex"
             );
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -139,15 +134,14 @@ public:
         glm::vec3 view_p = glm::vec3(0.0f, 0.0f, 0.0f);
         view_pos = glm::value_ptr(view_p);
 
-        glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
-        pl.pos = glm::value_ptr(pl_pos);
-
-        glm::vec3 pl_c = glm::vec3(1.f, 0.f, 0.f);
-        pl.color = glm::value_ptr(pl_c);
-        pl.constant = 1.0f;
-        pl.linear = 0.09f;
-        pl.quadratic = 0.032f;
-
+        pl.init(GL_STATIC_DRAW);
+        pl->pos = glm::vec3(1.f, -2.f, 0.f);
+        
+        pl->color = glm::vec3(1.f,0.f, 0.f);
+        pl->constant = 1.0f;
+        pl->linear = 0.09f;
+        pl->quadratic = 0.032f;
+        pl.sync(GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
 
         float vertices[] = {
             // positions          // normals           // texture coords
@@ -285,7 +279,8 @@ public:
         
         glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
         pl_pos = glm::rotateZ(pl_pos,pl_angle);
-        pl.pos = glm::value_ptr(pl_pos);
+        pl->pos = pl_pos;
+        pl.sync(GL_MAP_WRITE_BIT);
         if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
     }
 
@@ -306,7 +301,7 @@ private:
     GlmUniform<UT::Matrix4> world;
     std::vector<std::unique_ptr<Drawable>> cxts;
     Texture<TexType::D2> diffuseTex,specularTex;
-    PointLight pl;
+    UniformBuf<1,PointLight> pl;
     float pl_angle = 0.0f;
 };
 

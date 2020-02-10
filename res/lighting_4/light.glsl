@@ -6,4 +6,13 @@ struct DirctLight{
     vec3 dir;
 };
 
+struct PointLight{
+    
+    float constant;
+    float linear;
+    float quadratic;
+    vec3 color;
+    vec3 pos;
+};
+
 #endif

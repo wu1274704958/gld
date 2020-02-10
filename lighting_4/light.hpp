@@ -7,24 +7,23 @@ namespace gld{
     struct DictLight{
         DictLight()
              {}
-
         glm::vec3 color;
+        float a;
         glm::vec3 dir;
+        float b;
     };
-
+    
     struct PointLight{
-        PointLight(Program& p):
-            color("pl_color",p),
-            pos("pl_pos",p),
-            constant("pl_constant",p),
-            linear("pl_linear",p),
-            quadratic("pl_quadratic",p)
+        PointLight()
             {}
-        Uniform<UT::Vec3> color;
-        Uniform<UT::Vec3> pos;
-        Uniform<UT::Float> constant;
-        Uniform<UT::Float> linear;
-        Uniform<UT::Float> quadratic;
+        
+        float constant;
+        float linear;
+        float quadratic;
+        float a;
+        glm::vec3 color;
+        float b;
+        glm::vec3 pos;
     };
 
     struct Material {

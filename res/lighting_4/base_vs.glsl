@@ -1,4 +1,11 @@
 #version 450 core
+
+#include"light.glsl"
+
+layout (std140,binding = 1) uniform PL{
+    PointLight pointLight;
+};
+
 uniform mat4 perspective;
 uniform mat4 world; 
 uniform mat4 model;
@@ -9,7 +16,7 @@ layout(location = 2) in vec2 vuv;
 out vec3 oNormal; 
 out vec3 oVpos;
 out vec2 oUv;
-out vec3 o_pl_pos;
+out PointLight o_pl;
 void main() 
 { 
     oUv = vuv;
@@ -17,5 +24,11 @@ void main()
     oVpos = vec3(world * model * vec4(vposition,1.0f));
     mat3 nor_mat = mat3(world * model);
     oNormal = normalize(nor_mat * vnormal);
-    o_pl_pos = (world * model * vec4(pl_pos,0.0f)).xyz;
+
+    
+    o_pl.pos = (world * model * vec4(pointLight.pos,0.0f)).xyz;
+    o_pl.color = pointLight.color;
+    o_pl.constant   = pointLight.constant;
+    o_pl.linear     = pointLight.linear;
+    o_pl.quadratic  = pointLight.quadratic;
 }
