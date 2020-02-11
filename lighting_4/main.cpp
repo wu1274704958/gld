@@ -43,7 +43,7 @@ public:
         ResMgrWithGlslPreProcess res_mgr(std::move(root));
 
         auto vs_str = res_mgr.load<ResType::text>("lighting_4/base_vs.glsl");
-        auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg.glsl");
+        auto fg_str = res_mgr.load<ResType::text>("lighting_5/base_fg.glsl");
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
         auto box_spec = res_mgr.load<ResType::image>("lighting_3/container2_specular.png",0);
 
