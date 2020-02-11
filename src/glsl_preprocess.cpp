@@ -21,7 +21,8 @@ namespace gld::glsl{
         std::string ps = path.string();
         std::filesystem::path in_path = path.parent_path();
         in_path /= ts[b + 1].body.c_str();
-        std::string in_ps = in_path.string();
+        fs::path in_absolute = fs::absolute(in_path);
+        std::string in_ps = in_absolute.string();
         if(IncludeCatche::get_instance()->has(in_ps))
         {
             return std::optional<std::string>( IncludeCatche::get_instance()->map[in_ps] );
