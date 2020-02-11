@@ -26,6 +26,6 @@ void main()
     oNormal = normalize(nor_mat * vnormal);
 
     o_pl = pointLight;
-    o_pl.pos = (world * model * vec4(pointLight.pos,0.0f)).xyz;
+    o_pl.pos = (world * vec4(pointLight.pos,0.0f)).xyz;
     
 }
