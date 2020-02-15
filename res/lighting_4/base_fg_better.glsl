@@ -36,20 +36,20 @@ void main()
 vec3 calc_point_light(vec3 obj_color,vec3 view_dir,PointLight pl)
 {
 
-    vec3 pl_dir = normalize(o_pl.pos - oVpos);
+    vec3 pl_dir = normalize(pl.pos - oVpos);
 
-    float dist = length(o_pl.pos - oVpos);
+    float dist = length(pl.pos - oVpos);
 
-    float attenuation = 1.0 / (o_pl.constant + o_pl.linear * dist + 
-                o_pl.quadratic * (dist * dist));
+    float attenuation = 1.0 / (pl.constant + pl.linear * dist + 
+                pl.quadratic * (dist * dist));
 
-    vec3 pl_diffuse = (o_pl.color *  obj_color) * (max(dot(pl_dir,oNormal),0.0f) * attenuation);
+    vec3 pl_diffuse = (pl.color *  obj_color) * (max(dot(pl_dir,oNormal),0.0f) * attenuation);
 
     vec3 pl_reflect = reflect(-pl_dir,oNormal);
 
     float pl_spec = pow(max(dot(view_dir,pl_reflect),0.0f),shininess);
 
-    vec3 pl_specular = attenuation * specular_strength * pl_spec * (o_pl.color * texture(specularTex,oUv).rgb);
+    vec3 pl_specular = attenuation * specular_strength * pl_spec * (pl.color * texture(specularTex,oUv).rgb);
     
     return pl_diffuse + pl_specular;
 }
