@@ -70,6 +70,10 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     target_link_libraries(lighting_6 ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 
+    add_executable(load_model load_model/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+
+    target_link_libraries(load_model ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
+
 endif()
 
         
