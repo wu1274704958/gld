@@ -83,7 +83,7 @@ namespace gld::glsl{
                             {
                                 return this->process(std::move(path),std::move(str));
                             };
-                            auto res = proc->handle(std::move(path),ts,i,e,process_f);
+                            auto res = proc->handle(path,ts,i,e,process_f);
                             if(res)
                             {
                                 ts.erase(ts.begin() + i,ts.begin() + (e + 1));

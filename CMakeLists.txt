@@ -22,6 +22,7 @@ endif()
 find_package(GLM)
 find_package(GLFW3)
 find_package(MINI_TEST)
+find_package(ASSIMP)
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -37,7 +38,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     include_directories( ${GLFW3_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/3rd_party/stb
-    ${GLM_INCLUDE_DIR} )
+    ${GLM_INCLUDE_DIR} 
+    ${ASSIMP_INCLUDE_DIR}
+    )
 
     add_executable(d1 d1/main.cpp  glad.c src/RenderDemo.cpp)
 
@@ -62,6 +65,14 @@ if(GLM_FOUND AND GLFW3_FOUND)
     add_executable(lighting_5 lighting_5/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
 
     target_link_libraries(lighting_5 ${GLFW3_LIBRARY} )
+
+    add_executable(lighting_6 lighting_6/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+
+    target_link_libraries(lighting_6 ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
+
+    add_executable(load_model load_model/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+
+    target_link_libraries(load_model ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 
 endif()
 

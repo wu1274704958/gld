@@ -5,9 +5,7 @@
     "version": "0.2.0",
     "configurations": [
 
-
-
-
+    
         {
             "name": "d1",
             "type": "cppvsdbg",
@@ -68,6 +66,28 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/lighting_5.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
+            "name": "lighting_6",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/lighting_6.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
+            "name": "load_model",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/load_model.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
