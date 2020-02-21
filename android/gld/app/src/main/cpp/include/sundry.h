@@ -14,15 +14,6 @@
 #include <EGL/eglext.h>
 #include <serialization.hpp>
 
-struct EGLCxt{
-    GLint major = 0,minor = 0;
-    EGLDisplay display;
-    EGLConfig config;
-    EGLContext context;
-    EGLSurface surface;
-    EGLint format;
-};
-
 template <typename F,typename ...Args>
 std::string link_str_ex(std::string &str,F &&f,Args&& ...args){
     str += wws::to_string(std::forward<F>(f));
@@ -47,48 +38,83 @@ std::string link_str(F &&f,Args&& ...args){
     }
 }
 
-
-std::optional<EGLCxt> initOpenGlES(bool es3 = false) {
-
-    EGLDisplay display = EGL_NO_DISPLAY;
-
-    if ((display = eglGetDisplay(EGL_DEFAULT_DISPLAY)) == EGL_NO_DISPLAY) {
-        throw std::runtime_error(link_str("eglGetDisplay returned err ", eglGetError()));
-    }
+struct EGLCxt{
     GLint major = 0,minor = 0;
-
-    if (!eglInitialize(display, &major, &minor)) {
-        throw std::runtime_error(link_str("eglInitialize returned err ", eglGetError()));
-    }
-    EGLint attribs[] = {
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-            EGL_DEPTH_SIZE, 16,
-            EGL_ALPHA_SIZE, 8,
-            EGL_BLUE_SIZE, 8,
-            EGL_GREEN_SIZE, 8,
-            EGL_RED_SIZE, 8,
-            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-            EGL_NONE};
-    if(es3)
-        attribs[1] = EGL_OPENGL_ES3_BIT_KHR;
-
-    EGLConfig  config;
-    EGLint config_len;
-    if (!eglChooseConfig(display, attribs, &config, 1, &config_len)) {
-        throw std::runtime_error(link_str("eglChooseConfig returned err ", eglGetError()));
-    }
-
-    EGLint attributes[] = {EGL_CONTEXT_CLIENT_VERSION, es3 ? 3 : 2, EGL_NONE};
+    EGLDisplay display;
+    EGLConfig config;
     EGLContext context;
-    if (!(context = eglCreateContext(display, config, NULL, attributes))) {
-        throw std::runtime_error(link_str("eglCreateContext returned err ", eglGetError()));
-    }
-    EGLSurface surface = NULL;
+    EGLSurface surface = nullptr;
     EGLint format;
-    if (!eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format)) {
-        throw std::runtime_error(link_str("eglGetConfigAttrib returned err ", eglGetError()));
+    bool maked_current = false;
+
+    EGLCxt(bool es3 = false) {
+
+        display = EGL_NO_DISPLAY;
+
+        if ((display = eglGetDisplay(EGL_DEFAULT_DISPLAY)) == EGL_NO_DISPLAY) {
+            throw std::runtime_error(link_str("eglGetDisplay returned err ", eglGetError()));
+        }
+
+        if (!eglInitialize(display, &major, &minor)) {
+            throw std::runtime_error(link_str("eglInitialize returned err ", eglGetError()));
+        }
+        EGLint attribs[] = {
+                EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                EGL_DEPTH_SIZE, 16,
+                EGL_ALPHA_SIZE, 8,
+                EGL_BLUE_SIZE, 8,
+                EGL_GREEN_SIZE, 8,
+                EGL_RED_SIZE, 8,
+                EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                EGL_NONE};
+        if(es3)
+            attribs[1] = EGL_OPENGL_ES3_BIT_KHR;
+
+        EGLint config_len;
+        if (!eglChooseConfig(display, attribs, &config, 1, &config_len)) {
+            throw std::runtime_error(link_str("eglChooseConfig returned err ", eglGetError()));
+        }
+
+        EGLint attributes[] = {EGL_CONTEXT_CLIENT_VERSION, es3 ? 3 : 2, EGL_NONE};
+
+        if (!(context = eglCreateContext(display, config, NULL, attributes))) {
+            throw std::runtime_error(link_str("eglCreateContext returned err ", eglGetError()));
+        }
+
+        if (!eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format)) {
+            throw std::runtime_error(link_str("eglGetConfigAttrib returned err ", eglGetError()));
+        }
+
     }
-    return std::make_optional<EGLCxt>({major,minor,display,config,context,surface,format});
-}
+
+    void create_surface(EGLNativeWindowType window)
+    {
+        // 创建 On-Screen 渲染区域
+        surface = eglCreateWindowSurface(display, config, window, 0);
+        if (surface == EGL_NO_SURFACE) {
+            throw std::runtime_error(link_str("eglCreateWindowSurface failed: %d", eglGetError()));
+        }
+    }
+
+    void make_current()
+    {
+        if (!eglMakeCurrent(display, surface, surface, context)) {
+            throw std::runtime_error(link_str("eglMakeCurrent failed: %d", eglGetError()));
+        }
+        maked_current = true;
+    }
+
+    ~EGLCxt()
+    {
+        if(surface)
+            eglDestroySurface(display, surface);
+        if(maked_current)
+            eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroyContext(display, context);
+        maked_current = false;
+    }
+};
+
+
 
 #endif //GLD_SUNDRY_H

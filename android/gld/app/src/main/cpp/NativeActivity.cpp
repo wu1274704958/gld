@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <sundry.h>
 #include <pthread.h>
+#include <memory>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -24,15 +25,16 @@ extern "C" {
 #else
         Loge("main() %d",0);
 #endif
-        std::optional<EGLCxt> cxt = std::nullopt;
+        std::shared_ptr<EGLCxt> cxt_p;
         try{
-            cxt = std::move(initOpenGlES());
+            EGLCxt cxt;
+            cxt_p = std::make_shared<EGLCxt>(cxt);
         }catch (std::runtime_error e)
         {
             Loge("%s",e.what());
         }
 
-        Loge("init success! %d.%d",cxt->major,cxt->minor);
+        Loge("init success! %d.%d",cxt_p->major,cxt_p->minor);
     }
 }
 
