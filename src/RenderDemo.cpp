@@ -1,6 +1,8 @@
 
 #ifndef PF_ANDROID
 #include <glad/glad.h>
+#else
+#include <EGLCxt.h>
 #endif
 
 #include <RenderDemo.h>

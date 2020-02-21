@@ -19,6 +19,7 @@
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
 
 static void ProcessAndroidCmd(struct android_app* app, int32_t cmd);
+static int32_t onEvent(struct android_app* app, AInputEvent* event);
 
 extern "C" {
     void android_main(struct android_app* app)
@@ -40,9 +41,10 @@ extern "C" {
         app->userData = &cxt_p;
         //（1）指定cmd处理方法
         app->onAppCmd = ProcessAndroidCmd;
+        app->onInputEvent = onEvent;
 
         // loop waiting for stuff to do.
-        while (true) {
+        while (cxt_p->is_runing()) {
             // Read all pending events.
             int events;
             struct android_poll_source *source;
@@ -52,7 +54,6 @@ extern "C" {
                 if (source != NULL) {
                     source->process(app, source);
                 }
-
                 // Check if we are exiting.
                 if (app->destroyRequested != 0) {
                     Loge("destroy requested!");
@@ -64,6 +65,7 @@ extern "C" {
 
             //（3）TODO：画帧
         }
+        cxt_p->destroy_surface();
     }
 
     static void ProcessAndroidCmd(struct android_app* app, int32_t cmd) {
@@ -86,11 +88,25 @@ extern "C" {
                 case APP_CMD_LOST_FOCUS:
 
                     break;
+                case APP_CMD_DESTROY:
+                    cxt_p->quit();
+                    break;
             }
         }catch (std::runtime_error e)
         {
             Loge("ProcessAndroidCmd: \n%s",e.what());
         }
+    }
+
+    static int32_t onEvent(struct android_app* app, AInputEvent* event)
+    {
+        auto ty = AInputEvent_getType(event);
+        Loge("on event %d",ty);
+        switch (ty)
+        {
+
+        }
+        return 1;
     }
 
 }
