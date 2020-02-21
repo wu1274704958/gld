@@ -13,6 +13,8 @@
 #include <string>
 #include <EGL/eglext.h>
 #include <serialization.hpp>
+#include <functional>
+#include <stack>
 
 template <typename F,typename ...Args>
 std::string link_str_ex(std::string &str,F &&f,Args&& ...args){
@@ -40,12 +42,11 @@ std::string link_str(F &&f,Args&& ...args){
 
 struct EGLCxt{
     GLint major = 0,minor = 0;
-    EGLDisplay display;
-    EGLConfig config;
-    EGLContext context;
+    EGLDisplay display  = nullptr;
+    EGLConfig config = nullptr;
+    EGLContext context = nullptr;
     EGLSurface surface = nullptr;
     EGLint format;
-    bool maked_current = false;
 
     EGLCxt(bool es3 = false) {
 
@@ -77,9 +78,12 @@ struct EGLCxt{
 
         EGLint attributes[] = {EGL_CONTEXT_CLIENT_VERSION, es3 ? 3 : 2, EGL_NONE};
 
-        if (!(context = eglCreateContext(display, config, NULL, attributes))) {
+        context = eglCreateContext(display, config, EGL_NO_CONTEXT, attributes);
+        if (context == EGL_NO_CONTEXT)
+        {
             throw std::runtime_error(link_str("eglCreateContext returned err ", eglGetError()));
         }
+
 
         if (!eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format)) {
             throw std::runtime_error(link_str("eglGetConfigAttrib returned err ", eglGetError()));
@@ -87,32 +91,108 @@ struct EGLCxt{
 
     }
 
+    EGLCxt(EGLCxt&& oth)
+    {
+        destroy();
+
+        major   = oth.major;
+        minor   = oth.minor;
+        display = oth.display;
+        config  = oth.config;
+        context = oth.context;
+        surface = oth.surface;
+        format  = oth.format;
+
+        oth.clear();
+    }
+
+    EGLCxt& operator=(EGLCxt&& oth)
+    {
+
+        major   = oth.major;
+        minor   = oth.minor;
+        display = oth.display;
+        config  = oth.config;
+        context = oth.context;
+        surface = oth.surface;
+        format  = oth.format;
+
+        oth.clear();
+    }
+
+    void clear()
+    {
+        major = 0;
+        minor = 0;
+        display  = nullptr;
+        config = nullptr;
+        context = nullptr;
+        surface = nullptr;
+        format = 0;
+    }
+
+    void destroy()
+    {
+        destroy_surface();
+        if(display && context)
+            eglDestroyContext(display, context);
+    }
+
+    EGLCxt(const EGLCxt&) = delete;
+
     void create_surface(EGLNativeWindowType window)
     {
         // 创建 On-Screen 渲染区域
         surface = eglCreateWindowSurface(display, config, window, 0);
         if (surface == EGL_NO_SURFACE) {
-            throw std::runtime_error(link_str("eglCreateWindowSurface failed: %d", eglGetError()));
+            throw std::runtime_error(link_str("eglCreateWindowSurface failed: ", eglGetError()));
         }
     }
 
     void make_current()
     {
         if (!eglMakeCurrent(display, surface, surface, context)) {
-            throw std::runtime_error(link_str("eglMakeCurrent failed: %d", eglGetError()));
+            throw std::runtime_error(link_str("eglMakeCurrent failed: ", eglGetError()));
         }
-        maked_current = true;
+    }
+
+    void clear_current()
+    {
+        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+
+    void destroy_surface()
+    {
+        if(surface)
+        {
+            clear_current();
+            eglDestroySurface(display, surface);
+        }
+
+    }
+
+    void run_ui_thread(std::function<void(EGLCxt&)> f)
+    {
+        task_stack.push(f);
+    }
+
+    void run_task()
+    {
+        while(!task_stack.empty())
+        {
+            auto f = std::move(task_stack.top());
+            if(f) f(*this);
+            task_stack.pop();
+        }
     }
 
     ~EGLCxt()
     {
-        if(surface)
-            eglDestroySurface(display, surface);
-        if(maked_current)
-            eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroyContext(display, context);
-        maked_current = false;
+        destroy();
     }
+
+private:
+    std::stack<std::function<void(EGLCxt&)>> task_stack;
 };
 
 

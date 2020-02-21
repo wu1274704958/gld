@@ -18,6 +18,8 @@ include_directories(
         "include"
         "${CMAKE_ANDROID_NDK}/sources/android"
         ${MINI_TEST_INCLUDE_DIR}
+        "../../../../../../include"
+        "../../../../../../"
 )
 
 add_library( # Sets the name of the library.
