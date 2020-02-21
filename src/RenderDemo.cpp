@@ -1,10 +1,15 @@
+
+#ifndef PF_ANDROID
 #include <glad/glad.h>
+#endif
+
 #include <RenderDemo.h>
 
 std::vector<RenderDemo*> RenderDemo::WindowResizeListeners = std::vector<RenderDemo*>();
 std::vector<RenderDemo*> RenderDemo::MouseButtonListeners = std::vector<RenderDemo*>();
 std::vector<RenderDemo*> RenderDemo::MouseMoveListeners = std::vector<RenderDemo*>();
 
+#ifndef PF_ANDROID
 int RenderDemo::initWindow(int w,int h,const char *title)
 {
     if(!glfwInit())
@@ -32,13 +37,21 @@ int RenderDemo::initWindow(int w,int h,const char *title)
 
     return 0;
 }
+#else
+    void  RenderDemo::set_egl_cxt(int w,int h,std::weak_ptr<EGLCxt> cxt)
+    {
+
+    }
+#endif
 
 int RenderDemo::init()
 {
+#ifndef PF_ANDROID
     glfwGetWindowSize(m_window, &width, &height);
     glfwSetWindowSizeCallback(m_window, WindowResizeCallBack);
     glfwSetMouseButtonCallback(m_window,MouseButtonCallBack);
     glfwSetCursorPosCallback(m_window,MouseMoveCallBack);
+#endif
     return 0;
 }
 
@@ -47,9 +60,11 @@ void RenderDemo::destroy()
     unregOnWindowResizeListener(this);
     if(error_c < 0)
         return;
+#ifndef PF_ANDROID
     if(m_window )
         glfwDestroyWindow(m_window);
     glfwTerminate();
+#endif
 }
 
 void RenderDemo::regOnWindowResizeListener(RenderDemo* rd)
@@ -62,7 +77,7 @@ void RenderDemo::unregOnWindowResizeListener(RenderDemo* rd)
     remove_listener(WindowResizeListeners,rd);
 }
 
-void RenderDemo::WindowResizeCallBack(GLFWwindow* window, int w, int h)
+void RenderDemo::WindowResizeCallBack(RenderDemo::WINDOW_TYPE window, int w, int h)
 {
     call_listeners(WindowResizeListeners,window,[w,h](RenderDemo* it){
         it->width = w;
@@ -81,7 +96,7 @@ void RenderDemo::unregOnMouseButtonListener(RenderDemo* rd)
     remove_listener(MouseButtonListeners,rd);
 }
 
-void RenderDemo::MouseButtonCallBack(GLFWwindow* window,int btn,int action,int mod)
+void RenderDemo::MouseButtonCallBack(RenderDemo::WINDOW_TYPE window,int btn,int action,int mod)
 {
     call_listeners<int,int,int>(MouseButtonListeners,window,&RenderDemo::onMouseButton,btn,action,mod);
 }
@@ -95,19 +110,21 @@ void RenderDemo::unregOnMouseMoveListener(RenderDemo* rd)
 {
     remove_listener(MouseMoveListeners,rd);
 }
-void RenderDemo::MouseMoveCallBack(GLFWwindow* window,double x,double y)
+void RenderDemo::MouseMoveCallBack(RenderDemo::WINDOW_TYPE window,double x,double y)
 {
     call_listeners<double,double>(MouseMoveListeners,window,&RenderDemo::onMouseMove,x,y);
 }
 
 void RenderDemo::run()
 {
+#ifndef PF_ANDROID
     while (!glfwWindowShouldClose(m_window))
 	{
         draw();
         glfwSwapBuffers(m_window);
 		glfwPollEvents();
 	}
+#endif
 }
 
 void RenderDemo::onWindowResize(int w, int h)
@@ -137,11 +154,13 @@ void RenderDemo::add_listener(std::vector<RenderDemo*>& list,RenderDemo* rd)
     }
 }
 
-void RenderDemo::call_listeners(std::vector<RenderDemo*>& list,GLFWwindow* window,std::function<void(RenderDemo*)> func)
+void RenderDemo::call_listeners(std::vector<RenderDemo*>& list,RenderDemo::WINDOW_TYPE window,std::function<void(RenderDemo*)> func)
 {
     for (auto it : list)
     {
+#ifndef PF_ANDROID
         if(it->m_window == window)
+#endif
         {
             func(it);
         }

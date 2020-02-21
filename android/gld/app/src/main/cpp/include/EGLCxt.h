@@ -2,8 +2,8 @@
 // Created by admin on 2020/2/20.
 //
 
-#ifndef GLD_SUNDRY_H
-#define GLD_SUNDRY_H
+#ifndef GLD_EGLCXT_H
+#define GLD_EGLCXT_H
 
 #include <tuple>
 #include <optional>
@@ -197,4 +197,4 @@ private:
 
 
 
-#endif //GLD_SUNDRY_H
+#endif //GLD_EGLCXT_H

@@ -61,6 +61,8 @@
         "filesystem": "cpp",
         "optional": "cpp",
         "fstream": "cpp",
-        "random": "cpp"
+        "random": "cpp",
+        "deque": "cpp",
+        "stack": "cpp"
     }
 }

@@ -28,6 +28,7 @@ add_library( # Sets the name of the library.
         # Sets the library as a shared library.
         SHARED
 
+        ../../../../../../src/RenderDemo.cpp
         # Provides a relative path to your source file(s).
         ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
         NativeActivity.cpp

@@ -1,6 +1,6 @@
 #include <native_app_glue/android_native_app_glue.h>
 #include <android/log.h>
-#include <sundry.h>
+#include <EGLCxt.h>
 #include <pthread.h>
 #include <memory>
 
@@ -12,6 +12,8 @@
 
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+
+#include <RenderDemo.h>
 
 
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
