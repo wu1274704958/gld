@@ -31,6 +31,8 @@ extern "C" {
         {
             Loge("%s",e.what());
         }
+
+        Loge("init success! %d.%d",cxt->major,cxt->minor);
     }
 }
 

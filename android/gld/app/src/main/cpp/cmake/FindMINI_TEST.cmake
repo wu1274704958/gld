@@ -8,16 +8,25 @@ message( "finding mini-test!"  )
         message("Find MINI_TEST_PATH env!")
         message(${MINI_TEST_PATH})
 
-        find_path( MINI_TEST_INCLUDE_DIR dbg.hpp "${MINI_TEST_PATH}/include" )
+        string(REPLACE "\\" "/" MINI_TEST_PATH_R "${MINI_TEST_PATH}/include")
+
+        set(CMAKE_FIND_ROOT_PATH ${MINI_TEST_PATH_R})
+
+        message(${MINI_TEST_PATH_R})
+
+        find_path( MINI_TEST_INCLUDE_DIR dbg.hpp HINTS ${MINI_TEST_PATH_R})
 
         if( MINI_TEST_INCLUDE_DIR )
 
             set( MINI_TEST_FOUND TRUE )
 
         else()
-
-            set( MINI_TEST_FOUND FALSE )
-
+            if(MINI_TEST_PATH_R)
+                set( MINI_TEST_INCLUDE_DIR ${MINI_TEST_PATH_R})
+                set( MINI_TEST_FOUND TRUE )
+            else()
+                set( MINI_TEST_FOUND FALSE )
+            endif()
         endif()
 
     else()
