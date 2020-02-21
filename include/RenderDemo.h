@@ -1,6 +1,6 @@
-
+#pragma once
 #ifdef PF_ANDROID
-
+#include <GlfwDef.h>
 #else
 #include <GLFW/glfw3.h>
 #endif
@@ -20,7 +20,7 @@ public:
 #ifndef PF_ANDROID
     int initWindow(int w,int h,const char *title);
 #else
-    void set_egl_cxt(int w,int h,std::weak_ptr<EGLCxt> cxt);
+    void set_egl_cxt(int w,int h,std::shared_ptr<EGLCxt> cxt);
 #endif
     virtual int init();
     virtual void run();
@@ -38,8 +38,8 @@ protected:
 
 #ifdef PF_ANDROID
 protected:
-    using WINDOW_TYPE = std::weak_ptr<EGLCxt>;
-    std::weak_ptr<EGLCxt> m_window;
+    using WINDOW_TYPE = std::shared_ptr<EGLCxt>;
+    std::shared_ptr<EGLCxt> m_window;
 #else
     using WINDOW_TYPE = GLFWwindow *;
     GLFWwindow *m_window;

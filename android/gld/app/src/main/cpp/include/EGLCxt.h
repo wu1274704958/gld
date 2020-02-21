@@ -15,12 +15,15 @@
 #include <serialization.hpp>
 #include <functional>
 #include <stack>
+#include <memory>
+#include <android/native_window.h>
 
+struct RenderDemo;
 struct EGLCxt;
 
-typedef void (* WindowResizeFuncTy)(std::weak_ptr<EGLCxt>,int,int);
-typedef void (* MouseButtonFunTy)(std::weak_ptr<EGLCxt>,int,int,int);
-typedef void (* CursorPosFunTy)(std::weak_ptr<EGLCxt>,double,double);
+typedef void (* WindowResizeFuncTy)(std::shared_ptr<EGLCxt>,int,int);
+typedef void (* MouseButtonFunTy)(std::shared_ptr<EGLCxt>,int,int,int);
+typedef void (* CursorPosFunTy)(std::shared_ptr<EGLCxt>,double,double);
 
 template <typename F,typename ...Args>
 std::string link_str_ex(std::string &str,F &&f,Args&& ...args){
@@ -46,6 +49,8 @@ std::string link_str(F &&f,Args&& ...args){
     }
 }
 
+struct android_app;
+
 struct EGLCxt{
     GLint major = 0,minor = 0;
     EGLDisplay display  = nullptr;
@@ -53,6 +58,10 @@ struct EGLCxt{
     EGLContext context = nullptr;
     EGLSurface surface = nullptr;
     EGLint format;
+    android_app* app = nullptr;
+    RenderDemo* renderDemo = nullptr;
+    int width,height;
+
 
     EGLCxt(bool es3 = false) {
 
@@ -99,7 +108,6 @@ struct EGLCxt{
 
     EGLCxt(EGLCxt&& oth)
     {
-        destroy();
 
         major   = oth.major;
         minor   = oth.minor;
@@ -108,6 +116,10 @@ struct EGLCxt{
         context = oth.context;
         surface = oth.surface;
         format  = oth.format;
+        width   = oth.width;
+        height  = oth.height;
+        app     = oth.app;
+        renderDemo = oth.renderDemo;
 
         oth.clear();
     }
@@ -115,6 +127,7 @@ struct EGLCxt{
     EGLCxt& operator=(EGLCxt&& oth)
     {
 
+        destroy();
         major   = oth.major;
         minor   = oth.minor;
         display = oth.display;
@@ -122,8 +135,13 @@ struct EGLCxt{
         context = oth.context;
         surface = oth.surface;
         format  = oth.format;
+        width   = oth.width;
+        height  = oth.height;
+        app     = oth.app;
+        renderDemo = oth.renderDemo;
 
         oth.clear();
+        return *this;
     }
 
     void clear()
@@ -134,7 +152,10 @@ struct EGLCxt{
         config = nullptr;
         context = nullptr;
         surface = nullptr;
+        app     = nullptr;
+        width = height = 0;
         format = 0;
+        renderDemo = nullptr;
     }
 
     void destroy()
@@ -153,6 +174,8 @@ struct EGLCxt{
         if (surface == EGL_NO_SURFACE) {
             throw std::runtime_error(link_str("eglCreateWindowSurface failed: ", eglGetError()));
         }
+        width = ANativeWindow_getWidth(window);
+        height = ANativeWindow_getHeight(window);
     }
 
     void make_current()
@@ -221,12 +244,21 @@ struct EGLCxt{
         running = false;
     }
 
+    void first_init(std::shared_ptr<EGLCxt> ptr);
+
+    bool has_init()
+    {
+        return first_inited;
+    }
+
+
 public:
     WindowResizeFuncTy windowResizeFunc = nullptr;
     MouseButtonFunTy mouseButtonFun = nullptr;
     CursorPosFunTy cursorPosFun = nullptr;
 protected:
     bool running = true;
+    bool first_inited = false;
 private:
 
     std::stack<std::function<void(EGLCxt&)>> task_stack;

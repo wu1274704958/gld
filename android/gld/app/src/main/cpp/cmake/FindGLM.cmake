@@ -1,6 +1,6 @@
 message( "finding GLM!"  )
 
-if(WIN32)
+if(WIN32 OR ANDROID)
 
     message("Is Windows")
     set(GLM_PATH $ENV{GLM_PATH})
@@ -16,8 +16,13 @@ if(WIN32)
             set( GLM_FOUND TRUE )
 
         else()
+            if(ANDROID)
+                set( GLM_INCLUDE_DIR ${GLM_PATH})
+                set( GLM_FOUND TRUE )
+            else()
+                set( GLM_FOUND FALSE )
+            endif()
 
-            set( GLM_FOUND FALSE )
 
         endif()
 

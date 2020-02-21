@@ -40,9 +40,11 @@ int RenderDemo::initWindow(int w,int h,const char *title)
     return 0;
 }
 #else
-    void  RenderDemo::set_egl_cxt(int w,int h,std::weak_ptr<EGLCxt> cxt)
+    void  RenderDemo::set_egl_cxt(int w,int h,std::shared_ptr<EGLCxt> cxt)
     {
-
+        this->m_window = std::move(cxt);
+        width = w;
+        height = h;
     }
 #endif
 
@@ -53,6 +55,10 @@ int RenderDemo::init()
     glfwSetWindowSizeCallback(m_window, WindowResizeCallBack);
     glfwSetMouseButtonCallback(m_window,MouseButtonCallBack);
     glfwSetCursorPosCallback(m_window,MouseMoveCallBack);
+#else
+    m_window->set_window_size_callback(WindowResizeCallBack);
+    m_window->set_mouse_button_callback(MouseButtonCallBack);
+    m_window->set_cursor_pos_callback(MouseMoveCallBack);
 #endif
     return 0;
 }

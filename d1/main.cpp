@@ -17,6 +17,11 @@
 #include "view1.hpp"
 #include "view2.hpp"
 
+#ifdef PF_ANDROID
+#include <android/log.h>
+#define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
+#endif
+
 using namespace gld;
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
@@ -25,6 +30,39 @@ using namespace gld;
 #define DELS_GL(what,num,id) if(id != 0) glDelete##what(num,&id)
 #define DELS_GL_vertex_arr(id,num) DELS_GL(VertexArrays,num,id)
 #define DELS_GL_buffer(id,num) DELS_GL(Buffers,num,id)
+
+#ifdef PF_ANDROID
+
+BuildStr(shader_base,vs,#version 320 es\n
+    uniform mat4 perspective; \n
+    uniform mat4 world; \n
+    uniform mat4 model; \n
+    uniform float offsetZ;
+    layout(location =0) in vec3 vposition; \n
+    layout(location =1) in vec4 color; \n
+    out vec4 outColor; \n
+    void main() \n
+    { \n
+        gl_Position = perspective * world * model * vec4(vposition.x,vposition.y,vposition.z + offsetZ,1.0f);\n
+        outColor = color;\n
+    }
+)
+
+BuildStr(shader_base,fs,#version 320 es\n
+    precision mediump float;
+    in vec4 outColor; \n
+    out vec4 color; \n
+    uniform float alpha;
+    void main() \n
+    { \n
+        float self_alpha = alpha;
+        if(self_alpha > 1.0f || self_alpha < 0.0f ) self_alpha = 1.0f;
+        float a = self_alpha * outColor.a;
+        color = vec4(vec3(outColor),a);\n
+    }
+)
+
+#else
 
 BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 perspective; \n
@@ -54,6 +92,8 @@ BuildStr(shader_base,fs,#version 330 core\n
     }
 )
 
+#endif
+
 
 
 class Demo1 : public RenderDemoRotate{
@@ -71,9 +111,15 @@ public:
             
         }catch(sundry::CompileError e)
         {
+#ifdef PF_ANDROID
+            Loge("compile failed %s",e.what());
+#endif
              std::cout << "compile failed " << e.what()  <<std::endl;
         }catch(std::exception e)
         {
+#ifdef PF_ANDROID
+            Loge("unknow error %s",e.what());
+#endif
              std::cout << e.what()  <<std::endl;
         }
         
@@ -264,6 +310,7 @@ private:
     std::vector<std::unique_ptr<View2>> cxts;
 };
 
+#ifndef PF_ANDROID
 
 int main()
 {
@@ -278,3 +325,6 @@ int main()
 
     return 0;
 }
+#else
+#undef Loge
+#endif

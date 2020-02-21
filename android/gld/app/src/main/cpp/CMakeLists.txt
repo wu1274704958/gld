@@ -13,11 +13,13 @@ cmake_minimum_required(VERSION 3.4.1)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 find_package(MINI_TEST)
+find_package(GLM)
 
 include_directories(
         "include"
         "${CMAKE_ANDROID_NDK}/sources/android"
         ${MINI_TEST_INCLUDE_DIR}
+        ${GLM_INCLUDE_DIR}
         "../../../../../../include"
         "../../../../../../"
 )
