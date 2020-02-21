@@ -16,6 +16,12 @@
 #include <functional>
 #include <stack>
 
+struct EGLCxt;
+
+typedef void (* WindowResizeFuncTy)(std::weak_ptr<EGLCxt>,int,int);
+typedef void (* MouseButtonFunTy)(std::weak_ptr<EGLCxt>,int,int,int);
+typedef void (* CursorPosFunTy)(std::weak_ptr<EGLCxt>,double,double);
+
 template <typename F,typename ...Args>
 std::string link_str_ex(std::string &str,F &&f,Args&& ...args){
     str += wws::to_string(std::forward<F>(f));
@@ -165,8 +171,8 @@ struct EGLCxt{
     {
         if(surface)
         {
-            clear_current();
             eglDestroySurface(display, surface);
+            clear_current();
         }
 
     }
@@ -188,10 +194,41 @@ struct EGLCxt{
 
     ~EGLCxt()
     {
-        destroy();
+        if(display && context)
+            eglDestroyContext(display, context);
     }
 
+    void set_window_size_callback(WindowResizeFuncTy ty)
+    {
+        windowResizeFunc = ty;
+    }
+    void set_mouse_button_callback(MouseButtonFunTy ty)
+    {
+        mouseButtonFun = ty;
+    }
+    void set_cursor_pos_callback(CursorPosFunTy ty)
+    {
+        cursorPosFun = ty;
+    }
+
+    bool is_runing()
+    {
+        return running;
+    }
+
+    void quit()
+    {
+        running = false;
+    }
+
+public:
+    WindowResizeFuncTy windowResizeFunc = nullptr;
+    MouseButtonFunTy mouseButtonFun = nullptr;
+    CursorPosFunTy cursorPosFun = nullptr;
+protected:
+    bool running = true;
 private:
+
     std::stack<std::function<void(EGLCxt&)>> task_stack;
 };
 
