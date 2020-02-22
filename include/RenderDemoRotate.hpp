@@ -21,12 +21,13 @@ namespace gld{
             {
                 if(action == GLFW_PRESS)
                 {
+                    mouse_key_left_press_first = true;
                     mouse_key_left_press = true;
                 }
                 else if(action == GLFW_RELEASE)
                 {
                     mouse_key_left_press = false;
-                    last_mouse_pos = glm::vec2(-1.0f,-1.0f);
+                    mouse_key_left_press_first = false;
                 }
             }
         }
@@ -50,8 +51,9 @@ namespace gld{
         {
             if(mouse_key_left_press)
             {
-                if(last_mouse_pos.x == -1 && last_mouse_pos.y == -1)
+                if(mouse_key_left_press_first)
                 {
+                    mouse_key_left_press_first = false;
                     last_mouse_pos.x = static_cast<float>(x);
                     last_mouse_pos.y = static_cast<float>(y);
                 }
@@ -81,6 +83,7 @@ namespace gld{
         }
     protected:
         bool mouse_key_left_press = false;
+        bool mouse_key_left_press_first = false;
         glm::vec3 rotate;
         glm::vec2 last_mouse_pos,rotate_factor;
     };
