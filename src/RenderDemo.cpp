@@ -1,8 +1,11 @@
 
 #ifndef PF_ANDROID
 #include <glad/glad.h>
+#define Loge(...)
 #else
 #include <EGLCxt.h>
+#include <android/log.h>
+#define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"RenderDemo @V@",f,##__VA_ARGS__)
 #endif
 
 #include <RenderDemo.h>
@@ -66,6 +69,8 @@ int RenderDemo::init()
 void RenderDemo::destroy()
 {
     unregOnWindowResizeListener(this);
+    unregOnMouseMoveListener(this);
+    unregOnMouseButtonListener(this);
     if(error_c < 0)
         return;
 #ifndef PF_ANDROID

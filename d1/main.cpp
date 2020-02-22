@@ -240,7 +240,9 @@ public:
     }
 
     ~Demo1(){
-        
+#ifdef PF_ANDROID
+        Loge("~Demo1()");
+#endif
     }
 
     std::vector<Vertex> generate_vertices(int density,float w)

@@ -67,7 +67,7 @@ extern "C" {
                 // Check if we are exiting.
                 if (app->destroyRequested != 0) {
                     Loge("destroy requested!");
-                    return;
+                    cxt_p->quit();
                 }
             }
 
@@ -81,6 +81,7 @@ extern "C" {
             }
         }
         cxt_p->destroy_surface();
+        Loge("exit!!!");
     }
 
     static void ProcessAndroidCmd(struct android_app* app, int32_t cmd) {
@@ -134,9 +135,11 @@ extern "C" {
             case AINPUT_EVENT_TYPE_MOTION:
                 Loge("motion event %d \n %f  %f",EventMap::map_ex(
                         static_cast<size_t>(AMotionEvent_getAction(event))),AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
-                cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1, EventMap::map_ex(
+                if(cxt_p->mouseButtonFun)
+                    cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1, EventMap::map_ex(
                         static_cast<size_t>(AMotionEvent_getAction(event))), 0);
-                cxt_p->cursorPosFun(cxt_p,AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
+                if(cxt_p->cursorPosFun)
+                    cxt_p->cursorPosFun(cxt_p,AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
                 break;
         }
         return 1;

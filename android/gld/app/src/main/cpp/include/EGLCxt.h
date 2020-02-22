@@ -19,6 +19,9 @@
 #include <android/native_window.h>
 #include <atomic>
 #include <mutex>
+#include <android/log.h>
+
+#define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"EGLCxt @V@",f,##__VA_ARGS__)
 
 struct RenderDemo;
 struct EGLCxt;
@@ -232,6 +235,7 @@ struct EGLCxt{
     {
         if(display && context)
             eglDestroyContext(display, context);
+        Loge("~EGLCxt()");
     }
 
     void set_window_size_callback(WindowResizeFuncTy ty)
@@ -298,6 +302,6 @@ private:
     std::stack<std::function<void(EGLCxt&)>> task_stack;
 };
 
-
+#undef Loge
 
 #endif //GLD_EGLCXT_H

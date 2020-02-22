@@ -41,7 +41,7 @@ namespace gld{
 #ifndef PF_ANDROID
             rotate_factor = glm::vec2(width / 30000.f,height / 30000.f);
 #else
-            rotate_factor = glm::vec2(width / 900000.f,height / 900000.f);
+            rotate_factor = glm::vec2(width / 30000.f,height / 30000.f);
 #endif
         }
     
@@ -65,10 +65,13 @@ namespace gld{
                     rotate.y -= 360.f;    
                 if(rotate.y < 0)
                     rotate.y += 360.f;
-            }
 #ifndef PF_ANDROID
+            }
+#endif
             last_mouse_pos.x = static_cast<float>(x);
             last_mouse_pos.y = static_cast<float>(y);
+#ifdef PF_ANDROID  
+            }
 #endif
         }
 
