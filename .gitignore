@@ -3,3 +3,5 @@
 /cmake-build-debug/**
 /.idea/**
 /out/**
+android/gld/app/release/app-release.apk
+android/gld/app/release/output.json

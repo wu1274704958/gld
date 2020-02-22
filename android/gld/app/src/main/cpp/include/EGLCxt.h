@@ -196,6 +196,7 @@ struct EGLCxt{
         {
             eglDestroySurface(display, surface);
             clear_current();
+            surface = nullptr;
         }
 
     }
@@ -251,6 +252,25 @@ struct EGLCxt{
         return first_inited;
     }
 
+    bool is_pause()
+    {
+        return m_pause;
+    }
+
+    void pause()
+    {
+        m_pause = true;
+    }
+
+    void resume()
+    {
+        m_pause = false;
+    }
+
+    bool has_surface()
+    {
+        return surface != nullptr;
+    }
 
 public:
     WindowResizeFuncTy windowResizeFunc = nullptr;
@@ -259,6 +279,7 @@ public:
 protected:
     bool running = true;
     bool first_inited = false;
+    bool m_pause = false;
 private:
 
     std::stack<std::function<void(EGLCxt&)>> task_stack;

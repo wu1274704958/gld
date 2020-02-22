@@ -4,6 +4,8 @@
 #include <pthread.h>
 #include <memory>
 
+#include <MapEvent.h>
+
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
@@ -16,6 +18,7 @@
 #include <RenderDemo.h>
 #include <d1/main.cpp>
 
+using namespace gld;
 
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
 
@@ -56,9 +59,9 @@ extern "C" {
             int events;
             struct android_poll_source *source;
 
-            while (ALooper_pollAll(0, NULL, &events, (void **) &source) >= 0) {
+            while (ALooper_pollAll(0, nullptr, &events, (void **) &source) >= 0) {
                 // Process this event.
-                if (source != NULL) {
+                if (source != nullptr) {
                     source->process(app, source);
                 }
                 // Check if we are exiting.
@@ -71,7 +74,7 @@ extern "C" {
             cxt_p->run_task();
 
             //（3）TODO：画帧
-            if(cxt_p->has_init())
+            if(cxt_p->has_init() && !cxt_p->is_pause() && cxt_p->has_surface())
             {
                 cxt_p->renderDemo->draw();
                 eglSwapBuffers(cxt_p->display, cxt_p->surface);
@@ -107,6 +110,12 @@ extern "C" {
                 case APP_CMD_DESTROY:
                     cxt_p->quit();
                     break;
+                case APP_CMD_PAUSE:
+                    cxt_p->pause();
+                    break;
+                case APP_CMD_RESUME:
+                    cxt_p->resume();
+                    break;
             }
         }catch (std::runtime_error& e)
         {
@@ -116,11 +125,19 @@ extern "C" {
 
     static int32_t onEvent(struct android_app* app, AInputEvent* event)
     {
+        std::shared_ptr<EGLCxt> cxt_p = *reinterpret_cast<std::shared_ptr<EGLCxt>*>(app->userData);
+        if(!EventMap::is_init())
+            EventMap::init_runtime_map();
         auto ty = AInputEvent_getType(event);
-        Loge("on event %d",ty);
         switch (ty)
         {
-
+            case AINPUT_EVENT_TYPE_MOTION:
+                Loge("motion event %d \n %f  %f",EventMap::map_ex(
+                        static_cast<size_t>(AMotionEvent_getAction(event))),AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
+                cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1, EventMap::map_ex(
+                        static_cast<size_t>(AMotionEvent_getAction(event))), 0);
+                cxt_p->cursorPosFun(cxt_p,AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
+                break;
         }
         return 1;
     }

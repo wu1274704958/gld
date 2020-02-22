@@ -293,6 +293,7 @@ public:
 
     void onWindowResize(int w, int h) override
     {
+        RenderDemoRotate::onWindowResize(w,h);
         glViewport(0, 0, w, h);
     }
 private:
