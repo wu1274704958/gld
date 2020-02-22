@@ -17,6 +17,8 @@
 #include <stack>
 #include <memory>
 #include <android/native_window.h>
+#include <atomic>
+#include <mutex>
 
 struct RenderDemo;
 struct EGLCxt;
@@ -203,6 +205,7 @@ struct EGLCxt{
 
     void run_ui_thread(std::function<void(EGLCxt&)> f)
     {
+        std::lock_guard guard(task_mutex);
         task_stack.push(f);
     }
 
@@ -210,9 +213,18 @@ struct EGLCxt{
     {
         while(!task_stack.empty())
         {
-            auto f = std::move(task_stack.top());
+            std::function<void(EGLCxt&)> f;
+            {
+                std::lock_guard guard(task_mutex);
+                f = std::move(task_stack.top());
+            }
+
             if(f) f(*this);
-            task_stack.pop();
+
+            {
+                std::lock_guard guard(task_mutex);
+                task_stack.pop();
+            }
         }
     }
 
@@ -277,9 +289,10 @@ public:
     MouseButtonFunTy mouseButtonFun = nullptr;
     CursorPosFunTy cursorPosFun = nullptr;
 protected:
-    bool running = true;
-    bool first_inited = false;
-    bool m_pause = false;
+    std::atomic<bool> running = true;
+    std::atomic<bool> first_inited = false;
+    std::atomic<bool> m_pause = false;
+    std::mutex task_mutex;
 private:
 
     std::stack<std::function<void(EGLCxt&)>> task_stack;
