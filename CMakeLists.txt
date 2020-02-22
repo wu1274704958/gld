@@ -42,35 +42,39 @@ if(GLM_FOUND AND GLFW3_FOUND)
     ${ASSIMP_INCLUDE_DIR}
     )
 
-    add_executable(d1 d1/main.cpp  glad.c src/RenderDemo.cpp)
+    aux_source_directory("src" ALL_SOURCE_FILES)
+
+    message(${ALL_SOURCE_FILES})
+
+    add_executable(d1 d1/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(d1 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_1 lighting/lighting_1.cpp  glad.c src/RenderDemo.cpp)
+    add_executable(lighting_1 lighting/lighting_1.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_1 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_2 lighting_2/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(lighting_2 lighting_2/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_2 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_3 lighting_3/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(lighting_3 lighting_3/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_3 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_4 lighting_4/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(lighting_4 lighting_4/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_4 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_5 lighting_5/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(lighting_5 lighting_5/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_5 ${GLFW3_LIBRARY} )
 
-    add_executable(lighting_6 lighting_6/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(lighting_6 lighting_6/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(lighting_6 ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 
-    add_executable(load_model load_model/main.cpp  glad.c src/RenderDemo.cpp src/resource_mgr.cpp src/glsl_preprocess.cpp)
+    add_executable(load_model load_model/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(load_model ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 

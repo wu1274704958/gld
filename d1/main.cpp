@@ -16,6 +16,7 @@
 #include <vertex_arr.hpp>
 #include "view1.hpp"
 #include "view2.hpp"
+#include <log.hpp>
 
 #ifdef PF_ANDROID
 #include <android/log.h>
@@ -161,7 +162,7 @@ public:
         dbg(model);
         dbg(alpha);
         GLenum err = glGetError();
-        dbg(err);
+        dbg::log << "err = " << err <<std::endl;
 
         //bg = std::unique_ptr<View1>(new View1(program, va2, vertices, glm::vec4(0.f, 1.0f, 0.f, 0.4f)));
         //bg->init();
