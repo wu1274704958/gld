@@ -93,8 +93,10 @@ extern "C" {
                         cxt.create_surface(app->window);
                         cxt.make_current();
                         if(cxt.has_init())
-                            cxt.windowResizeFunc(std::move(cxt_p),cxt.width,cxt.height);
-                        else
+                        {
+                            if(cxt.windowResizeFunc)
+                                cxt.windowResizeFunc(std::move(cxt_p), cxt.width, cxt.height);
+                        }else
                             cxt.first_init(std::move(cxt_p));
                         Loge("Create surface success!! %d %d",cxt.width,cxt.height);
                     });
