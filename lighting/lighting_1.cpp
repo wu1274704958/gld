@@ -17,9 +17,63 @@
 #include "model.hpp"
 #include <uniform.hpp>
 #include "light.hpp"
-
+#ifdef PF_ANDROID
+#include <android/log.h>
+#define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
+#endif
 using namespace gld;
+#ifdef PF_ANDROID
+BuildStr(shader_base,vs,#version 320 es\n
+    precision mediump float;
+    uniform mat4 perspective; \n
+    uniform mat4 world; \n
+    uniform mat4 model; \n
+    layout(location =0) in vec3 vposition; \n
+    layout(location =1) in vec3 vnormal; \n
+    out vec3 oNormal; \n
+    out vec3 oVpos; \n
+    void main() \n
+    { \n
+        gl_Position = perspective * world * model * vec4(vposition,1.0f);\n
+        oVpos = vec3(world * model * vec4(vposition,1.0f));\n
+        mat3 nor_mat = mat3(world * model);\n
+        oNormal = normalize(nor_mat * vnormal);\n
+    }
+)
 
+BuildStr(shader_base,fs,#version 320 es\n
+    precision mediump float;
+    in vec3 oNormal; \n
+    in vec3 oVpos; \n
+    out vec4 color; \n
+    uniform vec3 obj_color;\n
+    uniform vec3 light_color;\n
+    uniform float ambient_strength;\n
+    uniform float specular_strength;\n
+    uniform float shininess;\n
+
+    uniform vec3 light_pos; \n
+    uniform vec3 view_pos;\n
+    void main() \n
+    { \n
+        vec3 light_dir = normalize(light_pos - oVpos);\n
+    
+        vec3 view_dir = normalize(view_pos - oVpos);\n
+
+        vec3 ambient = light_color * ambient_strength;\n
+
+        vec3 diffuse = obj_color * max(dot(light_dir,oNormal),0.0f);
+
+        vec3 light_reflect = reflect(-light_dir,oNormal);
+
+        float spec = pow(max(dot(view_dir,light_reflect),0.0f),shininess);
+
+        vec3 specular = specular_strength * spec * light_color;
+
+        color = vec4( (ambient + diffuse + specular),1.0f);\n
+    }
+)
+#else
 BuildStr(shader_base,vs,#version 330 core\n
     uniform mat4 perspective; \n
     uniform mat4 world; \n
@@ -68,7 +122,7 @@ BuildStr(shader_base,fs,#version 330 core\n
         color = vec4( (ambient + diffuse + specular),1.0f);\n
     }
 )
-
+#endif
 
 
 class Demo1 : public RenderDemoRotate{
@@ -247,6 +301,7 @@ private:
 };
 
 
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -260,3 +315,4 @@ int main()
 
     return 0;
 }
+#endif
