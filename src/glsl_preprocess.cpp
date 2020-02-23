@@ -16,6 +16,7 @@ namespace gld::glsl{
         return self;
     }
 
+#ifndef PF_ANDROID
     std::optional<std::string> IncludePreprocess::handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(std::filesystem::path,std::string&&)> process_f)
     {
         std::string ps = path.string();
@@ -50,6 +51,6 @@ namespace gld::glsl{
             }
         }
     }
-
+#endif
 
 }

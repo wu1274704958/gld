@@ -24,6 +24,8 @@ include_directories(
         "../../../../../../"
 )
 
+aux_source_directory(../../../../../../src GLD_SOURCE_FILES)
+
 add_library( # Sets the name of the library.
         native-lib
 
@@ -34,6 +36,7 @@ add_library( # Sets the name of the library.
         # Provides a relative path to your source file(s).
         ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
         NativeActivity.cpp
+        ${GLD_SOURCE_FILES}
         )
 
 # Searches for a specified prebuilt library and stores the path as a

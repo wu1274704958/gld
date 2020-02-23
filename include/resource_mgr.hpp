@@ -13,14 +13,20 @@ namespace gld{
         model
     };
 
+#ifndef PF_ANDROID
+    using PathTy = std::filesystem::path;
+#else
+    using PathTy = std::string;
+#endif
+
     template <class T,typename ...Args>											
-    using has_load_func_t = decltype(T::load(std::declval<std::filesystem::path>(),std::declval<Args>()...));
+    using has_load_func_t = decltype(T::load(std::declval<PathTy>(),std::declval<Args>()...));
 
     template <typename T,typename ...Args>
     using has_load_func_vt = wws::is_detected<has_load_func_t,T,Args...>;
 
     template <class T>
-    using has_load_func2_t = decltype(T::load(std::declval<std::filesystem::path>()));
+    using has_load_func2_t = decltype(T::load(std::declval<PathTy>()));
 
     template <typename T>
     using has_load_func2_vt = wws::is_detected<has_load_func2_t, T>;
@@ -94,16 +100,16 @@ namespace gld{
                 throw std::runtime_error("This root not exists!!!");
         }
 
-        ResourceMgr(std::filesystem::path _root) : root(_root)
+        ResourceMgr(PathTy _root) : root(_root)
         {
             if(!std::filesystem::exists(root))
                 throw std::runtime_error("This root not exists!!!");
         }
 
-        std::filesystem::path to_path(std::string& uri) const
+        PathTy to_path(std::string& uri) const
         {
             int b = 0,i = 0;
-            std::filesystem::path res = root;
+            PathTy res = root;
             for(;i < uri.size();++i)
             {
                 if(uri[i] == Separator)
@@ -125,13 +131,13 @@ namespace gld{
             return res;
         }
 
-        std::filesystem::path to_path(const char* uri) const
+        PathTy to_path(const char* uri) const
         {
             std::string str(uri);
             return to_path(str);
         }
 
-        std::filesystem::path to_path(std::string&& uri) const
+        PathTy to_path(std::string&& uri) const
         {
             return to_path(uri);
         }
@@ -156,21 +162,21 @@ namespace gld{
             return Ty::load(to_path(std::forward<Uri>(uri)));
         }
     protected:
-        std::filesystem::path root;
+        PathTy root;
     };
 
     struct LoadText
     {
         using RetTy = std::unique_ptr<std::string>;
         using ArgsTy = void;
-        static std::unique_ptr<std::string> load(std::filesystem::path p);
+        static std::unique_ptr<std::string> load(PathTy p);
     };
 
     struct LoadTextWithGlslPreprocess
     {
         using RetTy = std::unique_ptr<std::string>;
         using ArgsTy = void;
-        static std::unique_ptr<std::string> load(std::filesystem::path p);
+        static std::unique_ptr<std::string> load(PathTy p);
     };
 
     struct StbImage {
@@ -186,7 +192,7 @@ namespace gld{
     {
         using RetTy = std::unique_ptr<StbImage>;
         using ArgsTy = int;
-        static std::unique_ptr<StbImage> load(std::filesystem::path p,int req_comp);
+        static std::unique_ptr<StbImage> load(PathTy p,int req_comp);
     };
 
     typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,ResLoadPlugTy<ResType::image,LoadImage>> DefResMgr;

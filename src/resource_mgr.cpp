@@ -7,9 +7,36 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <3rd_party/stb/stb_image.h>
 #include <glsl_preprocess.hpp>
-
-namespace fs = std::filesystem;
 using namespace std;
+
+unsigned int gld::StbImage::gl_format()
+{
+	GLenum format;
+	switch (channel)
+	{
+		case 1:
+			format = GL_RED;
+			break;
+		case 3:
+			format = GL_RGB;
+			break;
+		case 4:
+			format = GL_RGBA;
+			break;
+	} 
+	return static_cast<unsigned int>(format);
+}
+
+gld::StbImage::~StbImage()
+{
+	if (data)
+		stbi_image_free(data);
+}
+
+
+#ifndef PF_ANDROID
+namespace fs = std::filesystem;
+
 
 std::unique_ptr<std::string> gld::LoadText::load(fs::path p)
 {
@@ -47,30 +74,6 @@ std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(fs::path p)
 		return std::unique_ptr<std::string>();
 }
 
-unsigned int gld::StbImage::gl_format()
-{
-	GLenum format;
-	switch (channel)
-	{
-		case 1:
-			format = GL_RED;
-			break;
-		case 3:
-			format = GL_RGB;
-			break;
-		case 4:
-			format = GL_RGBA;
-			break;
-	} 
-	return static_cast<unsigned int>(format);
-}
-
-gld::StbImage::~StbImage()
-{
-	if (data)
-		stbi_image_free(data);
-}
-
 #ifdef LoadImage
 #undef LoadImage
 #endif
@@ -91,3 +94,7 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int 
 	else
 		return std::unique_ptr<gld::StbImage>();
 }
+
+#else
+
+#endif

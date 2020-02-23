@@ -9,7 +9,12 @@
 #include <memory>
 
 namespace gld::glsl{
-    
+#ifndef PF_ANDROID
+    using PathTy = std::filesystem::path;
+#else
+    using PathTy = std::string;
+#endif
+
     struct IncludeCatche{
 
         IncludeCatche(){}
@@ -35,7 +40,7 @@ namespace gld::glsl{
 
         virtual ~Preprocess(){}
         virtual bool interest(const std::vector<token::Token>& ts,int b,int e) = 0;
-        virtual std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(std::filesystem::path,std::string&&)> process_f) = 0; 
+        virtual std::optional<std::string> handle(PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) = 0; 
     };
 
     struct GlslPreprocessErr : std::runtime_error{
@@ -58,7 +63,7 @@ namespace gld::glsl{
             }
         }
 
-        std::string process(std::filesystem::path path,std::string&& str) const
+        std::string process(PathTy path,std::string&& str) const
         {
             token::TokenStream<std::string> tos(std::move(str));
             tos.analyse();
@@ -79,7 +84,7 @@ namespace gld::glsl{
                     {
                         if(proc->interest(ts,i,e))
                         {
-                            std::function<std::string(std::filesystem::path,std::string&&)> process_f = [this](std::filesystem::path path,std::string&& str)->std::string
+                            std::function<std::string(PathTy,std::string&&)> process_f = [this](PathTy path,std::string&& str)->std::string
                             {
                                 return this->process(std::move(path),std::move(str));
                             };
@@ -117,6 +122,6 @@ namespace gld::glsl{
             return str.empty() && str[0] == ' ';
         }
 
-        std::optional<std::string> handle(std::filesystem::path path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(std::filesystem::path,std::string&&)> process_f) override;
+        std::optional<std::string> handle(PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) override;
     };
 }
