@@ -16,8 +16,9 @@
 #include <GLES2/gl2ext.h>
 
 #include <RenderDemo.h>
-#include <d1/main.cpp>
+//#include <d1/main.cpp>
 //#include <lighting/lighting_1.cpp>
+#include <lighting_2/main.cpp>
 using namespace gld;
 
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)

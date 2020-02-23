@@ -146,7 +146,7 @@ namespace gld{
     template<TexType Tt>
     class Texture{
     public:
-        using TexOpLimitLsTy = typename TexOpLimitList<
+        using TexOpLimitLsTy = TexOpLimitList<
             TexOpLimit<TexOption::MIN_FILTER,
                 TexOpVal::NEAREST,               
                 TexOpVal::LINEAR,                
