@@ -122,4 +122,30 @@ std::unique_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::s
 		return std::unique_ptr<std::string>();
 }
 
+std::unique_ptr<gld::StbImage> gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::string path,int req_comp)
+{
+
+	int width, height, nrComponents;
+	//dbg::log << "res mgr @V@"_E;
+	AAssetManager* mgr = cxt->app->activity->assetManager;
+	//dbg::log << (mgr == nullptr) << dbg::endl;
+	AAsset* asset = AAssetManager_open(mgr,path.c_str(),AASSET_MODE_BUFFER);
+
+	if (asset)
+	{
+		off_t len = AAsset_getLength(asset);
+		unsigned char* data = stbi_load_from_memory(static_cast<const stbi_uc *>(AAsset_getBuffer(asset)),
+							  static_cast<int>(len), &width, &height, &nrComponents, req_comp);
+
+		auto res = new gld::StbImage();
+		res->data = data;
+		res->width = width;
+		res->height = height;
+		res->channel = nrComponents;
+		return std::unique_ptr<gld::StbImage>(res);
+	}
+	else
+		return std::unique_ptr<gld::StbImage>();
+}
+
 #endif
