@@ -4,6 +4,7 @@
 #include <serialization.hpp>
 #ifdef PF_ANDROID
 #include <android/log.h>
+#define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"log.hpp @V@",f,##__VA_ARGS__)
 #endif
 #ifdef ERROR
 #undef ERROR
@@ -51,11 +52,16 @@ namespace dbg{
         template<typename T>
         ALogStream& operator<<(T&& t)
         {
-            if constexpr(std::is_same_v<std::remove_cv_t<T>,TagWarp>)
+            if constexpr(std::is_same_v<std::remove_reference_t<std::remove_cv_t<T>>,TagWarp>)
             {
-                //__android_log_print(static_cast<int>(LogPriority::ERROR),"@V@","asjhdgvajhsd");
                 tw = std::move(t);
-            }else{
+            }else if constexpr (std::is_same_v<std::string,std::remove_reference_t<std::remove_cv_t<T>>>)
+            {
+                cache += std::forward<T>(t);
+            }else if constexpr (std::is_same_v<const char*,std::decay_t<T>>)
+            {
+                cache += std::forward<T>(t);
+            } else{
                 cache += wws::to_string(std::forward<T>(t));
             }
             return *this;
@@ -142,3 +148,5 @@ namespace dbg{
 
 #endif
 }
+
+#undef Loge
