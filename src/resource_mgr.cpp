@@ -115,6 +115,7 @@ std::unique_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::s
 		off_t len = AAsset_getLength(asset);
 		res->resize(len);
 		std::memcpy(res->data(), AAsset_getBuffer(asset), static_cast<size_t>(len));
+		AAsset_close(asset);
 		return std::unique_ptr<std::string>(res);
 	}
 	else
