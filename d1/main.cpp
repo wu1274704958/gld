@@ -162,7 +162,7 @@ public:
         dbg(model);
         dbg(alpha);
         GLenum err = glGetError();
-        dbg::log << "err = " << err <<std::endl;
+        dbg::log << "err = " << err << dbg::endl;
 
         //bg = std::unique_ptr<View1>(new View1(program, va2, vertices, glm::vec4(0.f, 1.0f, 0.f, 0.4f)));
         //bg->init();

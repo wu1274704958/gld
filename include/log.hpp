@@ -4,30 +4,43 @@
 
 namespace dbg{
 
-    template<typename Stream>
-    struct Log
+    template<typename T>
+    struct Log;
+
+    template<
+        typename _Elem,typename _Traits,template <class T1,class T2> class Stream
+    >
+    struct Log<Stream<_Elem,_Traits>>
     {
-        Log(Stream& stream):stream(stream){}
+        Log(Stream<_Elem,_Traits>& stream):stream(stream){}
         template<typename T>
-        Log<Stream>& operator<<(T&& t)
+        Log<Stream<_Elem,_Traits>>& operator<<(T&& t)
         {
             stream << std::forward<T>(t);
             return *this;
         }
 
-        Log<Stream>& operator<<(
-            std::basic_ostream<char, std::char_traits<char>>& (__cdecl *_Pfn)(std::basic_ostream<char, std::char_traits<char>>&)
+        Log<Stream<_Elem,_Traits>>& operator<<(
+            Stream<_Elem,_Traits>& (__cdecl *_Pfn)(Stream<_Elem,_Traits>&)
         ){ 
             stream << _Pfn;
             return *this;
         }
 
-        operator Stream& ()
+        operator Stream<_Elem,_Traits>& ()
         {
             return stream;
         }
            
-        Stream& stream;
+        Stream<_Elem,_Traits>& stream;
     };
     extern Log<std::ostream> log;
+
+    template <class _Elem, class _Traits>
+    std::basic_ostream<_Elem, _Traits>& __CLRCALL_OR_CDECL endl(
+    std::basic_ostream<_Elem, _Traits>& _Ostr) { // insert newline and flush stream
+        _Ostr.put(_Ostr.widen('\n'));
+        _Ostr.flush();
+        return _Ostr;
+    }
 }
