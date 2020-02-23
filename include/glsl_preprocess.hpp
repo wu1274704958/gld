@@ -13,6 +13,7 @@ namespace gld::glsl{
     using PathTy = std::filesystem::path;
 #else
     using PathTy = std::string;
+    using AndroidCxtPtrTy = std::shared_ptr<EGLCxt>;
 #endif
 
     struct IncludeCatche{
@@ -40,7 +41,11 @@ namespace gld::glsl{
 
         virtual ~Preprocess(){}
         virtual bool interest(const std::vector<token::Token>& ts,int b,int e) = 0;
-        virtual std::optional<std::string> handle(PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) = 0; 
+#ifndef PF_ANDROID        
+        virtual std::optional<std::string> handle(PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) = 0;
+#else
+        virtual std::optional<std::string> handle(AndroidCxtPtrTy,PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) = 0; 
+#endif
     };
 
     struct GlslPreprocessErr : std::runtime_error{
@@ -50,11 +55,17 @@ namespace gld::glsl{
     template<char Symbol,typename ...Args>
     class PreprocessMgr{
     public:
+#ifndef PF_ANDROID
         PreprocessMgr()
         {
             (procs.push_back(new Args()),...);
         }
-
+#else
+        PreprocessMgr(AndroidCxtPtrTy cxt) : cxt(std::move(cxt))
+        {
+            (procs.push_back(new Args()),...);
+        }
+#endif
         ~PreprocessMgr()
         {
             for(auto v : procs)
@@ -88,7 +99,11 @@ namespace gld::glsl{
                             {
                                 return this->process(std::move(path),std::move(str));
                             };
+#ifndef PF_ANDROID        
                             auto res = proc->handle(path,ts,i,e,process_f);
+#else
+                            auto res = proc->handle(cxt,path,ts,i,e,process_f);
+#endif
                             if(res)
                             {
                                 ts.erase(ts.begin() + i,ts.begin() + (e + 1));
@@ -105,7 +120,10 @@ namespace gld::glsl{
             return os.str();
         }
     protected:
-        std::vector<Preprocess*> procs;    
+        std::vector<Preprocess*> procs;  
+#ifdef PF_ANDROID   
+        AndroidCxtPtrTy cxt;
+#endif
     };
 
     class IncludePreprocess : public Preprocess
@@ -121,7 +139,10 @@ namespace gld::glsl{
         {
             return str.empty() && str[0] == ' ';
         }
-
+#ifndef PF_ANDROID        
         std::optional<std::string> handle(PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) override;
+#else
+        std::optional<std::string> handle(AndroidCxtPtrTy,PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f) override;
+#endif
     };
 }
