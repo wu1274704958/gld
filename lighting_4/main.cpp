@@ -1,5 +1,7 @@
 #include <resource_mgr.hpp>
+#ifndef PF_ANDROID
 #include <FindPath.hpp>
+#endif
 #include <glad/glad.h>
 #include <RenderDemoRotate.hpp>
 #include <cstdio>
@@ -25,6 +27,10 @@
 #include <random>
 #include <uniform_buf.hpp>
 
+#include <log.hpp>
+
+using namespace dbg::literal;
+
 using namespace gld;
 namespace fs = std::filesystem;
 
@@ -39,9 +45,13 @@ public:
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
 
+#ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
         ResMgrWithGlslPreProcess res_mgr(std::move(root));
-
+#else
+        ResMgrWithGlslPreProcess res_mgr(m_window);
+#endif
+        dbg::log << "lighting 4 @V@"_E;
         auto vs_str = res_mgr.load<ResType::text>("lighting_4/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_4/base_fg_better.glsl");
         auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
@@ -61,14 +71,14 @@ public:
         }
         catch (sundry::CompileError e)
         {
-            std::cout << "compile failed " << e.what() << std::endl;
+            dbg::log << "compile failed " << e.what() << dbg::endl;
         }
         catch (std::exception e)
         {
-            std::cout << e.what() << std::endl;
+            dbg::log << e.what() << dbg::endl;
         }
 
-        std::cout << vertex.get_id() << " " << frag.get_id() << std::endl;
+        dbg::log << vertex.get_id() << " " << frag.get_id() << dbg::endl;
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -122,7 +132,7 @@ public:
         }
 
         GLenum err = glGetError();
-        dbg(err);
+        dbg::log << "err = " << err << dbg::endl;
 
         light.init(GL_STATIC_DRAW);
         
@@ -305,7 +315,7 @@ private:
     float pl_angle = 0.0f;
 };
 
-
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -319,3 +329,4 @@ int main()
 
     return 0;
 }
+#endif

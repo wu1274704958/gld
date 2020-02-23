@@ -3,8 +3,11 @@
 #include <resource_mgr.hpp>
 #ifndef PF_ANDROID
 namespace fs = std::filesystem;
+#else
 #include <vector>
 #include <stack>
+#include <log.hpp>
+using namespace dbg::literal;
 #endif
 
 namespace gld::glsl{
@@ -91,10 +94,16 @@ namespace gld::glsl{
                         throw std::runtime_error("Bad path for func to_absolute!!");
                     sta.pop();
                 }else{
-                    sta.push(str);
+                    str += '/';
+                    sta.push(std::move(str));
                 }
                 b = i + 1;++i;
             }
+        }
+        if(b < path.size() - 1)
+        {
+            auto str = path.substr(b,path.size() - b);
+            sta.push(std::move(str));
         }
         std::string res;
         while (!sta.empty())
@@ -113,8 +122,12 @@ namespace gld::glsl{
     std::optional<std::string> IncludePreprocess::handle(AndroidCxtPtrTy cxt,PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f)
     {
         auto in_path = get_parent(path);
+        in_path += "/";
         in_path += ts[b + 1].body.c_str();
         auto in_ps = to_absolute(in_path);
+
+        dbg::log << "glsl perprocess @V@"_E;
+        dbg::log << "to_absolute = " << in_path << " "<< in_ps << dbg::endl;
 
         if(IncludeCatche::get_instance()->has(in_ps))
         {
