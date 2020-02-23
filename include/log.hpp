@@ -1,8 +1,83 @@
 #pragma once
 
 #include <iostream>
-
+#include <serialization.hpp>
+#ifdef PF_ANDROID
+#include <android/log.h>
+#endif
+#ifdef ERROR
+#undef ERROR
+#endif
 namespace dbg{
+
+    enum class LogPriority : int
+    {
+        UNKNOWN = 0,
+        DEFAULT,
+        VERBOSE,
+        DEBUG,
+        INFO,
+        WARN,
+        ERROR,
+        FATAL,
+        SILENT
+    };
+
+    struct TagWarp{
+        std::string tag;
+        LogPriority prior;
+
+        TagWarp()
+        {
+            prior = LogPriority::VERBOSE;
+        }
+    };
+    
+    namespace literal{
+        TagWarp operator "" _E(const char *col, size_t n);
+        TagWarp operator "" _DE(const char *col, size_t n);
+        TagWarp operator "" _V(const char *col, size_t n);
+        TagWarp operator "" _D(const char *col, size_t n);
+        TagWarp operator "" _I(const char *col, size_t n);
+        TagWarp operator "" _W(const char *col, size_t n);
+        TagWarp operator "" _F(const char *col, size_t n);
+        TagWarp operator "" _S(const char *col, size_t n);
+    }
+
+    template<typename Tw,typename Unuse>
+    struct ALogStream{
+        using U = Unuse;
+
+        template<typename T>
+        ALogStream& operator<<(T&& t)
+        {
+            if constexpr(std::is_same_v<std::remove_cv_t<T>,TagWarp>)
+            {
+                //__android_log_print(static_cast<int>(LogPriority::ERROR),"@V@","asjhdgvajhsd");
+                tw = std::move(t);
+            }else{
+                cache += wws::to_string(std::forward<T>(t));
+            }
+            return *this;
+        }
+
+        ALogStream& operator<<(ALogStream& (__cdecl *_Pfn)(ALogStream&))
+        {
+            return _Pfn(*this);
+        }
+
+        ALogStream& flush()
+        {
+#ifdef PF_ANDROID
+            __android_log_print(static_cast<int>(tw.prior),tw.tag.c_str(),"%s",cache.c_str());
+            cache = "";
+            return *this;
+#endif
+        }
+
+        Tw tw;
+        std::string cache;
+    };
 
     template<typename T>
     struct Log;
@@ -16,8 +91,15 @@ namespace dbg{
         template<typename T>
         Log<Stream<_Elem,_Traits>>& operator<<(T&& t)
         {
-            stream << std::forward<T>(t);
-            return *this;
+            if constexpr(
+                std::is_same_v<Stream<_Elem,_Traits>,std::basic_ostream<_Elem, _Traits>> && 
+                std::is_same_v<std::remove_cv_t<T>,TagWarp>)
+            {
+                return *this;
+            }else{
+                stream << std::forward<T>(t);
+                return *this;
+            }
         }
 
         Log<Stream<_Elem,_Traits>>& operator<<(
@@ -34,6 +116,9 @@ namespace dbg{
            
         Stream<_Elem,_Traits>& stream;
     };
+
+#ifndef PF_ANDROID
+
     extern Log<std::ostream> log;
 
     template <class _Elem, class _Traits>
@@ -43,4 +128,17 @@ namespace dbg{
         _Ostr.flush();
         return _Ostr;
     }
+
+#else
+
+    extern Log<ALogStream<TagWarp,int>> log;
+
+    template <class _Elem, class _Traits>
+    ALogStream<_Elem, _Traits>& __cdecl endl(
+    ALogStream<_Elem, _Traits>& _Ostr) { // insert newline and flush stream
+        _Ostr.flush();
+        return _Ostr;
+    }
+
+#endif
 }

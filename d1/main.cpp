@@ -24,6 +24,7 @@
 #endif
 
 using namespace gld;
+using namespace dbg::literal;
 
 #define DEL_GL(what,id,...) if(id != 0) glDelete##what(id,__VA_ARGS__)
 #define DEL_GL_shader(id) DEL_GL(Shader,id)
@@ -101,6 +102,9 @@ class Demo1 : public RenderDemoRotate{
 public:
     int init() override
     {
+
+        dbg::log << "@V@"_E;
+
         RenderDemoRotate::init();
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;

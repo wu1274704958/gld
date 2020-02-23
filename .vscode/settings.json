@@ -63,6 +63,11 @@
         "fstream": "cpp",
         "random": "cpp",
         "deque": "cpp",
-        "stack": "cpp"
+        "stack": "cpp",
+        "atomic": "cpp",
+        "codecvt": "cpp",
+        "map": "cpp",
+        "mutex": "cpp",
+        "xtree": "cpp"
     }
 }
