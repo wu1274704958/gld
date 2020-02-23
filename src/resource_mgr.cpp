@@ -97,4 +97,28 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int 
 
 #else
 
+#include <android/asset_manager.h>
+#include <native_app_glue/android_native_app_glue.h>
+#include <log.hpp>
+using  namespace dbg::literal;
+
+std::unique_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::string path)
+{
+
+    //dbg::log << "res mgr @V@"_E;
+	AAssetManager* mgr = cxt->app->activity->assetManager;
+    //dbg::log << (mgr == nullptr) << dbg::endl;
+    AAsset* asset = AAssetManager_open(mgr,path.c_str(),AASSET_MODE_BUFFER);
+	if (asset)
+	{
+		std::string *res = new string();
+		off_t len = AAsset_getLength(asset);
+		res->resize(len);
+		std::memcpy(res->data(), AAsset_getBuffer(asset), static_cast<size_t>(len));
+		return std::unique_ptr<std::string>(res);
+	}
+	else
+		return std::unique_ptr<std::string>();
+}
+
 #endif

@@ -48,6 +48,7 @@ add_library( # Sets the name of the library.
 
 
 add_definitions(-DPF_ANDROID)
+add_definitions(-D__glad_h_)
 
 find_library( # Sets the name of the path variable.
         log-lib

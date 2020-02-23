@@ -135,11 +135,11 @@ extern "C" {
         switch (ty)
         {
             case AINPUT_EVENT_TYPE_MOTION:
-                Loge("motion event %d \n %f  %f",EventMap::map_ex(
+                Loge("motion event %zu \n %f  %f",EventMap::map_ex(
                         static_cast<size_t>(AMotionEvent_getAction(event))),AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
                 if(cxt_p->mouseButtonFun)
-                    cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1, EventMap::map_ex(
-                        static_cast<size_t>(AMotionEvent_getAction(event))), 0);
+                    cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1,
+                     static_cast<int>(EventMap::map_ex(static_cast<size_t>(AMotionEvent_getAction(event)))), 0);
                 if(cxt_p->cursorPosFun)
                     cxt_p->cursorPosFun(cxt_p,AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
                 break;

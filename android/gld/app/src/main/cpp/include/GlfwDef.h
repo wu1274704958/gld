@@ -5,7 +5,6 @@
 #ifndef GLD_GLFWDEF_H
 #define GLD_GLFWDEF_H
 
-#define __glad_h_
 
 #define GLFW_MOUSE_BUTTON_1         0
 #define GLFW_MOUSE_BUTTON_2         1
