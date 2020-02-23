@@ -1,5 +1,7 @@
 #include <resource_mgr.hpp>
+#ifndef PF_ANDROID
 #include <FindPath.hpp>
+#endif
 #include <glad/glad.h>
 #include <RenderDemoRotate.hpp>
 #include <cstdio>
@@ -33,9 +35,12 @@ public:
         RenderDemoRotate::init();
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
-
+#ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
         DefResMgr res_mgr(std::move(root));
+#else
+        DefResMgr res_mgr(m_window);
+#endif
 
         auto vs_str = res_mgr.load<ResType::text>("lighting_2/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_3/base_fg.glsl");
@@ -251,7 +256,7 @@ private:
     Texture<TexType::D2> diffuseTex,specularTex;
 };
 
-
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -265,3 +270,4 @@ int main()
 
     return 0;
 }
+#endif

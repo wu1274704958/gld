@@ -8,6 +8,10 @@
 #include <sstream>
 #include <memory>
 
+#ifdef PF_ANDROID
+#include <EGLCxt.h>
+#endif
+
 namespace gld::glsl{
 #ifndef PF_ANDROID
     using PathTy = std::filesystem::path;

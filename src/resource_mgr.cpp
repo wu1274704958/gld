@@ -151,13 +151,13 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std
 
 std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
-	auto ptr = LoadText::load(cxt,p);
+	auto ptr = LoadText::load(cxt,path);
 	
 	if (ptr)
 	{
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess(cxt);
 
-		std::string res = preprocess.process(std::move(p),std::move(*ptr));
+		std::string res = preprocess.process(std::move(path),std::move(*ptr));
 		return std::unique_ptr<std::string>(new std::string(std::move(res)));
 	}
 	else

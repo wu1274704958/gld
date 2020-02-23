@@ -99,7 +99,7 @@ namespace gld::glsl{
         std::string res;
         while (!sta.empty())
         {
-            res.insert(res.begin(), sta.top);
+            res.insert(0,sta.top().c_str());
             sta.pop();
         }
         return res;
