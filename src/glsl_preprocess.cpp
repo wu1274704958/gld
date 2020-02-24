@@ -4,9 +4,8 @@
 #ifndef PF_ANDROID
 namespace fs = std::filesystem;
 #else
-#include <vector>
-#include <stack>
 #include <log.hpp>
+#include <fileop.hpp>
 using namespace dbg::literal;
 #endif
 
@@ -58,61 +57,7 @@ namespace gld::glsl{
         }
     }
 #else
-    std::string get_parent(const std::string& path)
-    {
-        if(path.empty()) return path;
-        for(int i = path.size() - 1;i >= 0; --i)
-        {
-            if(path[i] == '/')
-            {
-                return path.substr(0,i);
-            }
-        }
-        return path;
-    }
-
-    bool is_absolute(const std::string& path)
-    {
-        
-    }
-
-    std::string to_absolute(const std::string& path)
-    {
-        if(path.empty()) return path;
-        int b = 0;
-        std::stack<std::string> sta;
-        for(int i = 0;i < path.size();++i)
-        {
-            if(path[i] == '/' && b < i)
-            {
-                auto str = path.substr(b,i - b);
-                if(str == ".")
-                {}else 
-                if(str == "..")
-                {
-                    if(sta.empty())
-                        throw std::runtime_error("Bad path for func to_absolute!!");
-                    sta.pop();
-                }else{
-                    str += '/';
-                    sta.push(std::move(str));
-                }
-                b = i + 1;++i;
-            }
-        }
-        if(b < path.size() - 1)
-        {
-            auto str = path.substr(b,path.size() - b);
-            sta.push(std::move(str));
-        }
-        std::string res;
-        while (!sta.empty())
-        {
-            res.insert(0,sta.top().c_str());
-            sta.pop();
-        }
-        return res;
-    }
+    
 
     bool is_exists(std::string& path)
     {
@@ -121,10 +66,10 @@ namespace gld::glsl{
 
     std::optional<std::string> IncludePreprocess::handle(AndroidCxtPtrTy cxt,PathTy path,const std::vector<token::Token>& ts,int b,int e,std::function<std::string(PathTy,std::string&&)> process_f)
     {
-        auto in_path = get_parent(path);
+        auto in_path = wws::get_parent(path);
         in_path += "/";
         in_path += ts[b + 1].body.c_str();
-        auto in_ps = to_absolute(in_path);
+        auto in_ps = wws::to_absolute(in_path);
 
         dbg::log << "glsl perprocess @V@"_E;
         dbg::log << "to_absolute = " << in_path << " "<< in_ps << dbg::endl;
