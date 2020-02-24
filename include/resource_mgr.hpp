@@ -101,11 +101,12 @@ namespace gld{
                 return ResCacheMgr<Plugs...>::instance()->get<static_cast<size_t>(Rt)>(absolute_path);
             }
 #ifndef PF_ANDROID
-            auto res = Ty::load(path,std::forward<typename Ty::ArgsTy>(args));
+            auto [success,res] = Ty::load(path,std::forward<typename Ty::ArgsTy>(args));
 #else
-            auto res = Ty::load(mgr,path,std::forward<typename Ty::ArgsTy>(args));
+            auto [success,res] = Ty::load(mgr,path,std::forward<typename Ty::ArgsTy>(args));
 #endif
-            ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
+            if(success)
+                ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
         }
 
@@ -130,11 +131,12 @@ namespace gld{
                 return ResCacheMgr<Plugs...>::instance()->get<static_cast<size_t>(Rt)>(absolute_path);
             }
 #ifndef PF_ANDROID
-            auto res = Ty::load(path);
+            auto [success,res] = Ty::load(path);
 #else
-            auto res = Ty::load(mgr,path);
+            auto [success,res] = Ty::load(mgr,path);
 #endif
-            ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
+            if(success)
+                ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
         }
     protected:
@@ -149,10 +151,11 @@ namespace gld{
     {
         using RetTy = std::shared_ptr<std::string>;
         using ArgsTy = void;
+        using RealRetTy = std::tuple<bool,RetTy>;
 #ifndef PF_ANDROID
-        static std::shared_ptr<std::string> load(PathTy p);
+        static RealRetTy load(PathTy p);
 #else
-        static std::shared_ptr<std::string> load(AndroidCxtPtrTy,PathTy p);
+        static RealRetTy load(AndroidCxtPtrTy,PathTy p);
 #endif
     };
 
@@ -160,10 +163,11 @@ namespace gld{
     {
         using RetTy = std::shared_ptr<std::string>;
         using ArgsTy = void;
+        using RealRetTy = std::tuple<bool,RetTy>;
 #ifndef PF_ANDROID
-        static std::shared_ptr<std::string> load(PathTy p);
+        static RealRetTy load(PathTy p);
 #else
-        static std::shared_ptr<std::string> load(AndroidCxtPtrTy,PathTy p);
+        static RealRetTy load(AndroidCxtPtrTy,PathTy p);
 #endif
     };
 
@@ -180,10 +184,11 @@ namespace gld{
     {
         using RetTy = std::shared_ptr<StbImage>;
         using ArgsTy = int;
+        using RealRetTy = std::tuple<bool,RetTy>;
 #ifndef PF_ANDROID
-        static std::shared_ptr<StbImage> load(PathTy p,int req_comp);
+        static RealRetTy load(PathTy p,int req_comp);
 #else
-        static std::shared_ptr<StbImage> load(AndroidCxtPtrTy,PathTy p,int req_comp);
+        static RealRetTy load(AndroidCxtPtrTy,PathTy p,int req_comp);
 #endif
     };
 

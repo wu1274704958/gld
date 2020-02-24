@@ -35,8 +35,8 @@ namespace gld::glsl{
         }else{
             if(fs::exists(in_path))
             {
-                auto res = LoadText::load(in_path);
-                if(res)
+                auto [success,res] = LoadText::load(in_path);
+                if(success)
                 {
                     std::string process_res = process_f(in_path,std::move(*res));
                     IncludeCatche::get_instance()->set(in_ps,process_res);
@@ -80,8 +80,8 @@ namespace gld::glsl{
         }else{
             if(is_exists(in_path))
             {
-                auto res = LoadText::load(cxt,in_ps);
-                if(res)
+                auto [success,res] = LoadText::load(cxt,in_ps);
+                if(success)
                 {
                     std::string process_res = process_f(in_path,std::move(*res));
                     IncludeCatche::get_instance()->set(in_ps,process_res);
