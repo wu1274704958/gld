@@ -1,0 +1,120 @@
+#pragma once
+
+#include <filesystem>
+
+namespace gld
+{
+    
+    enum class ResType{
+        text = 0x0,
+        image,
+        model
+    };
+
+#ifndef PF_ANDROID
+    using PathTy = std::filesystem::path;
+#else
+    using AndroidCxtPtrTy = std::shared_ptr<EGLCxt>;
+    using PathTy = std::string;
+#endif
+
+#ifndef PF_ANDROID
+    template <class T,typename ...Args>											
+    using has_load_func_t = decltype(T::load(std::declval<PathTy>(),std::declval<Args>()...));
+#else
+    template <class T,typename ...Args>
+    using has_load_func_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<PathTy>(),std::declval<Args>()...));
+#endif
+    template <typename T,typename ...Args>
+    using has_load_func_vt = wws::is_detected<has_load_func_t,T,Args...>;
+#ifndef PF_ANDROID
+    template <class T>
+    using has_load_func2_t = decltype(T::load(std::declval<PathTy>()));
+#else
+    template <class T>
+    using has_load_func2_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<PathTy>()));
+#endif
+    template <typename T>
+    using has_load_func2_vt = wws::is_detected<has_load_func2_t, T>;
+
+    template <class T>											
+    using has_ret_type_t = typename T::RetTy;
+
+    template <typename T>
+    using has_ret_type_vt = wws::is_detected<has_ret_type_t,T>;
+
+     template <class T>											
+    using has_args_type_t = typename T::ArgsTy;
+
+    template <typename T>
+    using has_args_type_vt = wws::is_detected<has_args_type_t,T>;
+
+    template<ResType ty,typename T>
+    struct ResLoadPlugTy
+    {
+        constexpr static size_t res_type = static_cast<size_t>(ty);
+        using type = T;
+
+        static_assert(has_ret_type_vt<T>::value,"this type must has RetTy!!!");
+        static_assert(has_args_type_vt<T>::value,"this type must has ArgsTy!!!");
+        
+        using Ret = typename T::RetTy;
+        using Args = typename T::ArgsTy;
+        static_assert(
+            has_load_func_vt<T,Args>::value || (has_load_func2_vt<T>::value && std::is_same_v<Args,void>),
+            "this type must has load func!!!");
+    };
+
+    template<size_t Rt,typename ...Ts>
+    struct MapResPlug;
+
+    template<size_t Rt,typename Fir,typename ...Ts>
+    struct MapResPlug<Rt,Fir,Ts...>
+    {
+        constexpr static decltype(auto) func()
+        {
+            if constexpr (Rt == Fir::res_type)
+            {
+                using T = typename Fir::type;
+                return std::declval<T>();
+            }
+            else
+            {
+                using T = typename MapResPlug<Rt, Ts...>::type;
+                if constexpr (std::is_same_v<T, void>)
+                {
+                    static_assert("Error Type!!!");
+                }
+                return std::declval<T>();
+            }
+        }
+        using type = typename std::remove_reference_t<decltype(func())>;
+    };
+
+    template<size_t Rt>
+    struct MapResPlug<Rt>
+    {
+        using type = void;
+    };
+
+    template<size_t Rt,size_t Idx,typename Fir,typename ...Ts>
+    constexpr size_t get_res_idx_inside()
+    {
+        if constexpr(Rt == Fir::res_type)
+        {
+            return Idx;
+        }else{
+            if constexpr( sizeof...(Ts) > 0 )
+            {
+                return get_res_idx_inside<Rt,Idx + 1,Ts...>();
+            }
+        }
+    }
+
+    template<size_t Rt,typename ...Ts>
+    constexpr size_t get_res_idx()
+    {
+        return get_res_idx_inside<Rt,0,Ts...>();
+    }
+
+} // namespace gld

@@ -38,7 +38,7 @@ gld::StbImage::~StbImage()
 namespace fs = std::filesystem;
 
 
-std::unique_ptr<std::string> gld::LoadText::load(fs::path p)
+std::shared_ptr<std::string> gld::LoadText::load(fs::path p)
 {
 	std::string path = p.string();
 	std::ifstream f(path.c_str(), std::ios::binary);
@@ -53,13 +53,13 @@ std::unique_ptr<std::string> gld::LoadText::load(fs::path p)
 			f.read(buf, wws::arrLen(buf) - 1);
 			res->append(buf);
 		}
-		return std::unique_ptr<std::string>(res);
+		return std::shared_ptr<std::string>(res);
 	}
 	else
-		return std::unique_ptr<std::string>();
+		return std::shared_ptr<std::string>();
 }
 
-std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(fs::path p)
+std::shared_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(fs::path p)
 {
 	auto ptr = LoadText::load(p);
 	
@@ -68,16 +68,16 @@ std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(fs::path p)
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
 
 		std::string res = preprocess.process(std::move(p),std::move(*ptr));
-		return std::unique_ptr<std::string>(new std::string(std::move(res)));
+		return std::shared_ptr<std::string>(new std::string(std::move(res)));
 	}
 	else
-		return std::unique_ptr<std::string>();
+		return std::shared_ptr<std::string>();
 }
 
 #ifdef LoadImage
 #undef LoadImage
 #endif
-std::unique_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int req_comp)
+std::shared_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int req_comp)
 {
 	std::string path = p.string();
 	int width, height, nrComponents;
@@ -89,10 +89,10 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int 
 		res->width = width;
 		res->height = height;
 		res->channel = nrComponents;
-		return std::unique_ptr<gld::StbImage>(res);
+		return std::shared_ptr<gld::StbImage>(res);
 	}
 	else
-		return std::unique_ptr<gld::StbImage>();
+		return std::shared_ptr<gld::StbImage>();
 }
 
 #else
@@ -102,7 +102,7 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(std::filesystem::path p,int 
 #include <log.hpp>
 using  namespace dbg::literal;
 
-std::unique_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::string path)
+std::shared_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
 
     //dbg::log << "res mgr @V@"_E;
@@ -116,13 +116,13 @@ std::unique_ptr<std::string> gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::s
 		res->resize(len);
 		std::memcpy(res->data(), AAsset_getBuffer(asset), static_cast<size_t>(len));
 		AAsset_close(asset);
-		return std::unique_ptr<std::string>(res);
+		return std::shared_ptr<std::string>(res);
 	}
 	else
-		return std::unique_ptr<std::string>();
+		return std::shared_ptr<std::string>();
 }
 
-std::unique_ptr<gld::StbImage> gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::string path,int req_comp)
+std::shared_ptr<gld::StbImage> gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::string path,int req_comp)
 {
 
 	int width, height, nrComponents;
@@ -142,14 +142,14 @@ std::unique_ptr<gld::StbImage> gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std
 		res->width = width;
 		res->height = height;
 		res->channel = nrComponents;
-		return std::unique_ptr<gld::StbImage>(res);
+		return std::shared_ptr<gld::StbImage>(res);
 	}
 	else
-		return std::unique_ptr<gld::StbImage>();
+		return std::shared_ptr<gld::StbImage>();
 }
 
 
-std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
+std::shared_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
 	auto ptr = LoadText::load(cxt,path);
 	
@@ -158,10 +158,10 @@ std::unique_ptr<std::string> gld::LoadTextWithGlslPreprocess::load(gld::AndroidC
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess(cxt);
 
 		std::string res = preprocess.process(std::move(path),std::move(*ptr));
-		return std::unique_ptr<std::string>(new std::string(std::move(res)));
+		return std::shared_ptr<std::string>(new std::string(std::move(res)));
 	}
 	else
-		return std::unique_ptr<std::string>();
+		return std::shared_ptr<std::string>();
 }
 
 #endif
