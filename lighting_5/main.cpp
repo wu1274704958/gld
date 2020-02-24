@@ -39,8 +39,12 @@ public:
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
 
+#ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
         ResMgrWithGlslPreProcess res_mgr(std::move(root));
+#else
+        ResMgrWithGlslPreProcess res_mgr(m_window);
+#endif
 
         auto vs_str = res_mgr.load<ResType::text>("lighting_5/base_vs.glsl");
         auto fg_str = res_mgr.load<ResType::text>("lighting_5/base_fg.glsl");
@@ -320,7 +324,7 @@ private:
     float pl_angle = 0.0f;
 };
 
-
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -334,3 +338,4 @@ int main()
 
     return 0;
 }
+#endif

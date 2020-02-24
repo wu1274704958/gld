@@ -6,6 +6,7 @@
 
 namespace wws {
 
+#ifndef PF_ANDROID
 
 	std::tuple<bool,std::vector<std::filesystem::path>> find_paths_ex(std::filesystem::path& dir, std::function<bool(const std::filesystem::path&)> interest)
 	{
@@ -73,4 +74,6 @@ namespace wws {
     	FINDED:
     	return res;
     }
+
+	#endif
 }

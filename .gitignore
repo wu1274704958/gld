@@ -5,3 +5,5 @@
 /out/**
 android/gld/app/release/app-release.apk
 android/gld/app/release/output.json
+android/gld/.idea/misc.xml
+android/gld/.idea/gradle.xml

@@ -135,7 +135,7 @@ namespace gld::glsl{
         }else{
             if(is_exists(in_path))
             {
-                auto res = LoadText::load(cxt,in_path);
+                auto res = LoadText::load(cxt,in_ps);
                 if(res)
                 {
                     std::string process_res = process_f(in_path,std::move(*res));
