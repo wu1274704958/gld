@@ -96,9 +96,9 @@ namespace gld{
 #else
             absolute_path = wws::to_absolute(path);
 #endif
-            if(ResCacheMgr<Plugs...>::instance()->has<static_cast<size_t>(Rt)>(absolute_path))
+            if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
             {
-                return ResCacheMgr<Plugs...>::instance()->get<static_cast<size_t>(Rt)>(absolute_path);
+                return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
             }
 #ifndef PF_ANDROID
             auto [success,res] = Ty::load(path,std::forward<typename Ty::ArgsTy>(args));
@@ -106,7 +106,7 @@ namespace gld{
             auto [success,res] = Ty::load(mgr,path,std::forward<typename Ty::ArgsTy>(args));
 #endif
             if(success)
-                ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
+                ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
         }
 
@@ -126,9 +126,9 @@ namespace gld{
 #else
             absolute_path = wws::to_absolute(path);
 #endif
-            if(ResCacheMgr<Plugs...>::instance()->has<static_cast<size_t>(Rt)>(absolute_path))
+            if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
             {
-                return ResCacheMgr<Plugs...>::instance()->get<static_cast<size_t>(Rt)>(absolute_path);
+                return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
             }
 #ifndef PF_ANDROID
             auto [success,res] = Ty::load(path);
@@ -136,7 +136,7 @@ namespace gld{
             auto [success,res] = Ty::load(mgr,path);
 #endif
             if(success)
-                ResCacheMgr<Plugs...>::instance()->cache<static_cast<size_t>(Rt)>(absolute_path,res);
+                ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
         }
     protected:
