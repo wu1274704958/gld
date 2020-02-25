@@ -336,7 +336,7 @@ private:
     float pl_angle = 0.0f;
 };
 
-
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -350,3 +350,4 @@ int main()
 
     return 0;
 }
+#endif
