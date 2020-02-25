@@ -1,4 +1,5 @@
-#version 450 core
+#version 320 es
+precision mediump float;
 
 #include "../lighting_4/light.glsl"
 #include "comm.glsl"

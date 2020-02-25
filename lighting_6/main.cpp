@@ -24,9 +24,11 @@
 #include <comm.hpp>
 #include <random>
 #include <uniform_buf.hpp>
+#include <log.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
+using namespace dbg::literal;
 
 
 class Demo1 : public RenderDemoRotate {
@@ -57,6 +59,8 @@ public:
         dbg(vs_p);
         dbg(fg_p);
 
+        dbg::log << "lighting 6 @V@"_E;
+
         try {
             sundry::compile_shaders<100>(
                 GL_VERTEX_SHADER, &vs_p, 1, (GLuint*)vertex,
@@ -65,14 +69,14 @@ public:
         }
         catch (sundry::CompileError e)
         {
-            std::cout << "compile failed " << e.what() << std::endl;
+            dbg::log << "compile failed " << e.what() << dbg::endl;
         }
         catch (std::exception e)
         {
-            std::cout << e.what() << std::endl;
+            dbg::log << e.what() << dbg::endl;
         }
 
-        std::cout << vertex.get_id() << " " << frag.get_id() << std::endl;
+        dbg::log << vertex.get_id() << " " << frag.get_id() << dbg::endl;
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
