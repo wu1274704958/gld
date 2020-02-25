@@ -19,26 +19,6 @@ namespace gld{
     template<char Separator,typename ...Plugs>
     class ResourceMgr{
     public:
-#ifndef PF_ANDROID
-        ResourceMgr(const char* _root) : root(_root)
-        {
-            if(!std::filesystem::exists(root))
-                throw std::runtime_error("This root not exists!!!");
-        }
-
-        ResourceMgr(PathTy _root) : root(_root)
-        {
-            if(!std::filesystem::exists(root))
-                throw std::runtime_error("This root not exists!!!");
-        }
-#else
-        ResourceMgr(std::shared_ptr<EGLCxt> mgr)
-        {
-            if(!mgr)
-                throw std::runtime_error("EGLCxt is nullptr!!!");
-            this->mgr = std::move(mgr);
-        }
-#endif
 
 #ifndef PF_ANDROID
         PathTy to_path(std::string& uri) const
@@ -139,11 +119,45 @@ namespace gld{
                 ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
         }
+
+        inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> instance()
+        {
+            return self;
+        }
+        template<typename T>
+        inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> create_instance(T&& t)
+        {
+            self = std::shared_ptr<ResourceMgr<Separator,Plugs...>>(new ResourceMgr<Separator,Plugs...>(std::forward<T>(t)));
+            return self;
+        }
     protected:
 #ifndef PF_ANDROID
         PathTy root;
 #else
         std::shared_ptr<EGLCxt> mgr;
+#endif
+
+private:    
+    inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> self;
+#ifndef PF_ANDROID
+        ResourceMgr<Separator,Plugs...>(const char* _root) : root(_root)
+        {
+            if(!std::filesystem::exists(root))
+                throw std::runtime_error("This root not exists!!!");
+        }
+
+        ResourceMgr<Separator,Plugs...>(PathTy _root) : root(std::move(_root))
+        {
+            if(!std::filesystem::exists(root))
+                throw std::runtime_error("This root not exists!!!");
+        }
+#else
+        ResourceMgr<Separator,Plugs...>(std::shared_ptr<EGLCxt> mgr)
+        {
+            if(!mgr)
+                throw std::runtime_error("EGLCxt is nullptr!!!");
+            this->mgr = std::move(mgr);
+        }
 #endif
     };
 

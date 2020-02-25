@@ -10,6 +10,8 @@ namespace gld{
     template<typename T,typename Key = std::string>
     struct ResCache{
 
+        using CacheTy = typename T::RetTy;
+
         bool has(const Key& k)
         {
             return map.find(k) != map.end();
@@ -20,19 +22,28 @@ namespace gld{
             return has(k);
         }
 
-        T get(Key& k)
+        CacheTy get(Key& k)
         {
             if(!has(k))
                 throw std::runtime_error("Not cached this key!!!");
             return map[k];
         }
 
-        void cache(Key& k,T t)
+        void cache(Key& k,CacheTy t)
         {
             map[k] = t;
         }
 
-        std::unordered_map<Key,T> map;
+        std::unordered_map<Key,CacheTy> map;
+
+        inline static std::shared_ptr<ResCache<T,Key>> instance()
+        {
+            if(!self) self = std::shared_ptr<ResCache<T,Key>>(new ResCache<T,Key>());
+            return self;
+        }
+    private:    
+        inline static std::shared_ptr<ResCache<T,Key>> self;
+        ResCache<T,Key>(){}
     };
 
     template<typename ... Plugs>
@@ -42,22 +53,23 @@ namespace gld{
         template<size_t Rt,typename K>
         bool has(K&& k)
         {
-            return std::get<get_res_idx<Rt,Plugs...>()>(tup).has(std::forward<K>(k));
+            return ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->has(std::forward<K>(k)); //std::get<get_res_idx<Rt,Plugs...>()>(tup).has(std::forward<K>(k));
         }
 
         template<size_t Rt,typename Key>
         decltype(auto) get(Key&& k)
         {
-            return std::get<get_res_idx<Rt,Plugs...>()>(tup).get(std::forward<Key>(k));
+            return ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->get(std::forward<Key>(k));//std::get<get_res_idx<Rt,Plugs...>()>(tup).get(std::forward<Key>(k));
         }
 
         template<size_t Rt,typename Key,typename T>
         void cache(Key&& k,T&& t)
         {
-            std::get<get_res_idx<Rt,Plugs...>()>(tup).cache(std::forward<Key>(k),std::forward<T>(t));
+            //std::get<get_res_idx<Rt,Plugs...>()>(tup).cache(std::forward<Key>(k),std::forward<T>(t));
+            ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->cache(std::forward<Key>(k),std::forward<T>(t));
         }
 
-        std::tuple<ResCache<typename Plugs::Ret> ...> tup;
+        //std::tuple<ResCache<typename Plugs::Ret> ...> tup;
 
         inline static std::shared_ptr<ResCacheMgr<Plugs...>> instance()
         {
@@ -66,5 +78,6 @@ namespace gld{
         }
     private:    
         inline static std::shared_ptr<ResCacheMgr<Plugs...>> self;
+        ResCacheMgr<Plugs...>(){}
     };
 }

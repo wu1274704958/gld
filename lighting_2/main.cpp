@@ -35,16 +35,17 @@ public:
         RenderDemoRotate::init();
         Shader<ShaderType::VERTEX> vertex;
         Shader<ShaderType::FRAGMENT> frag;
+
 #ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
-        DefResMgr res_mgr(std::move(root));
+        auto res_mgr = DefResMgr::create_instance(std::move(root));
 #else
-        DefResMgr res_mgr(m_window);
+        auto res_mgr = DefResMgr::create_instance(m_window);
 #endif
 
-        auto vs_str = res_mgr.load<ResType::text>("lighting_2/base_vs.glsl");
-        auto fg_str = res_mgr.load<ResType::text>("lighting_2/base_fg.glsl");
-        auto box = res_mgr.load<ResType::image>("lighting_2/container2.png",0);
+        auto vs_str = res_mgr->load<ResType::text>("lighting_2/base_vs.glsl");
+        auto fg_str = res_mgr->load<ResType::text>("lighting_2/base_fg.glsl");
+        auto box = res_mgr->load<ResType::image>("lighting_2/container2.png",0);
 
         auto vs_p = vs_str.get()->c_str();
         auto fg_p = fg_str.get()->c_str();
