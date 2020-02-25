@@ -3,17 +3,23 @@ precision mediump float;
 
 #include "../lighting_4/light.glsl"
 #include "comm.glsl"
+
 in vec3 oNormal; 
 in vec3 oVpos; 
 in vec2 oUv;
-in PointLight o_pl[PL_LEN];
+in mat3 oWorld;
 in SpotLight o_spl;
-flat in uint o_pl_len;
 out vec4 color;
 
 layout (std140,binding = 0) uniform DL{
     DirctLight dirct_light;
 };
+
+layout (std140,binding = 1) uniform PL{
+    PointLight pointLight[PL_LEN];
+    int pl_len;
+};
+
 
 uniform sampler2D diffuseTex;
 uniform sampler2D specularTex;
@@ -36,9 +42,11 @@ void main()
 
     vec3 pl_color = vec3(0.0f,0.0f,0.0f);
 
-    for(uint i = 0;i < o_pl_len;++i)
+    for(int i = 0;i < pl_len;++i)
     {
-        pl_color += calc_point_light(obj_color,view_dir,o_pl[i]);
+        PointLight temp = pointLight[i];
+        temp.pos = oWorld * pointLight[i].pos;
+        pl_color += calc_point_light(obj_color,view_dir,temp);
     }
 
     color = vec4( (

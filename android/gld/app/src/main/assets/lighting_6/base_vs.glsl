@@ -4,11 +4,6 @@ precision mediump float;
 #include "../lighting_4/light.glsl"
 #include "comm.glsl"
 
-layout (std140,binding = 1) uniform PL{
-    PointLight pointLight[PL_LEN];
-    uint pl_len;
-};
-
 layout (std140,binding = 2) uniform SPL{
     SpotLight spotLight;
 };
@@ -23,9 +18,8 @@ layout(location = 2) in vec2 vuv;
 out vec3 oNormal; 
 out vec3 oVpos;
 out vec2 oUv;
-out PointLight o_pl[PL_LEN];
+out mat3 oWorld;
 out SpotLight o_spl;
-out uint o_pl_len;
 void main() 
 { 
     oUv = vuv;
@@ -33,19 +27,9 @@ void main()
     oVpos = vec3(world * model * vec4(vposition,1.0f));
     mat3 nor_mat = mat3(world * model);
     oNormal = normalize(nor_mat * vnormal);
-    
-    uint len = pl_len; 
-    if(len > PL_LEN)
-        len = PL_LEN;
 
-    
-    for(uint i = 0;i < len;++i)
-    {
-        o_pl[i] = pointLight[i];
-        o_pl[i].pos = (world * vec4(pointLight[i].pos,0.0f)).xyz;
-    }
 
-    o_pl_len = len;
+    oWorld = mat3( world );
 
     o_spl = spotLight;
     o_spl.pos = (world * vec4(spotLight.pos,0.0f)).xyz;
