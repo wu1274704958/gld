@@ -7,3 +7,7 @@ android/gld/app/release/app-release.apk
 android/gld/app/release/output.json
 android/gld/.idea/misc.xml
 android/gld/.idea/gradle.xml
+android/3rd_library/assimp/arm64-v8a/*.a
+android/3rd_library/assimp/armeabi-v7a/*.a
+android/3rd_library/assimp/x86/*.a
+android/3rd_library/assimp/x86_64/*.a

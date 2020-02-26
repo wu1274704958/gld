@@ -10,6 +10,10 @@ cmake_minimum_required(VERSION 3.4.1)
 # You can define multiple libraries, and CMake builds them for you.
 # Gradle automatically packages shared libraries with your APK.
 
+set(NEED_ASSIMP ON)
+set(ThridLibrary "../../../../../3rd_library")
+set(ABThridLibrary "C:/Users/admin/Desktop/go/gld/android/3rd_library")
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 find_package(MINI_TEST)
@@ -23,6 +27,10 @@ include_directories(
         "../../../../../../include"
         "../../../../../../"
 )
+
+if(NEED_ASSIMP)
+    include_directories(${ThridLibrary}/assimp)
+endif()
 
 aux_source_directory(../../../../../../src GLD_SOURCE_FILES)
 
@@ -62,19 +70,45 @@ find_library(GLESv3-lib GLESv3)
 find_library(GLESv2-lib GLESv2)
 find_library(EGL-lib EGL)
 
-message("go ${log-lib}")
+set(assimp-lib ${ABThridLibrary}/assimp/${ANDROID_ABI}/libassimp.a)
+set(android_jniiosystem-lib ${ABThridLibrary}/assimp/${ANDROID_ABI}/libandroid_jniiosystem.a)
+set(IrrXML-lib ${ABThridLibrary}/assimp/${ANDROID_ABI}/libIrrXML.a)
+set(zlibstatic-lib ${ABThridLibrary}/assimp/${ANDROID_ABI}/libzlibstatic.a)
+
+message("go ${log-lib}  ${ANDROID_ABI}" ${assimp-lib})
 
 # Specifies libraries CMake should link to your target library. You
 # can link multiple libraries, such as libraries you define in this
 # build script, prebuilt third-party libraries, or system libraries.
 
-target_link_libraries( # Specifies the target library.
-        native-lib
+if(NEED_ASSIMP)
+    target_link_libraries( # Specifies the target library.
+            native-lib
 
-        # Links the target library to the log library
-        # included in the NDK.
-        ${log-lib}
-        ${android-lib}
-        ${GLESv3-lib}
-        ${GLESv2-lib}
-        ${EGL-lib})
+            # Links the target library to the log library
+            # included in the NDK.
+            ${log-lib}
+            ${android-lib}
+            ${GLESv3-lib}
+            ${GLESv2-lib}
+            ${EGL-lib}
+
+            ${assimp-lib}
+            ${android_jniiosystem-lib}
+            ${IrrXML-lib}
+            ${zlibstatic-lib}
+        )
+else()
+    target_link_libraries( # Specifies the target library.
+            native-lib
+
+            # Links the target library to the log library
+            # included in the NDK.
+            ${log-lib}
+            ${android-lib}
+            ${GLESv3-lib}
+            ${GLESv2-lib}
+            ${EGL-lib}
+
+            )
+endif()

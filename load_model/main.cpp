@@ -24,10 +24,15 @@
 #include <comm.hpp>
 #include <random>
 #include <uniform_buf.hpp>
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <log.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
 
+using  namespace dbg::literal;
 
 class Demo1 : public RenderDemoRotate {
 public:
@@ -54,6 +59,8 @@ public:
         auto vs_p = vs_str.get()->c_str();
         auto fg_p = fg_str.get()->c_str();
 
+        dbg::log << "load model @V@"_E;
+
         dbg(vs_p);
         dbg(fg_p);
 
@@ -65,12 +72,14 @@ public:
         }
         catch (sundry::CompileError e)
         {
-            std::cout << "compile failed " << e.what() << std::endl;
+            dbg::log <<  "compile failed " << e.what() << dbg::endl;
         }
         catch (std::exception e)
         {
-            std::cout << e.what() << std::endl;
+            dbg::log <<  e.what() << dbg::endl;
         }
+
+        loadModel("asdas");
 
         std::cout << vertex.get_id() << " " << frag.get_id() << std::endl;
 
@@ -265,6 +274,24 @@ public:
         return 0;
     }
 
+    void loadModel(std::string path)
+    {
+        Assimp::Importer import;
+
+        const aiScene* scene = import.ReadFileFromMemory("asdsadasdasd",10,aiProcess_Triangulate | aiProcess_FlipUVs); //import.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
+
+        if(!scene || scene->mFlags == AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+        {
+            dbg::log << "ERROR::ASSIMP::" << import.GetErrorString() << dbg::endl;
+            return;
+        }
+
+        dbg::log << "load success " << scene->mNumMeshes << dbg::endl;
+        //this->directory = path.substr(0, path.find_last_of('/'));
+
+        //this->processNode(scene->mRootNode, scene);
+    }
+
     float rd_0_1()
     {
         std::random_device r;
@@ -336,7 +363,7 @@ private:
     float pl_angle = 0.0f;
 };
 
-
+#ifndef PF_ANDROID
 int main()
 {
     Demo1 d;
@@ -350,3 +377,5 @@ int main()
 
     return 0;
 }
+
+#endif
