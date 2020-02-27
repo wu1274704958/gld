@@ -38,7 +38,7 @@ namespace gld::glsl{
                 auto res = DefResMgr::instance()->load<gld::ResType::text>(in_path.string());
                 if(res)
                 {
-                    std::string process_res = process_f(in_path,std::move(*res));
+                    std::string process_res = process_f(in_path,std::string(*res));
                     IncludeCatche::get_instance()->set(in_ps,process_res);
                     return std::optional<std::string>( std::move(process_res) );
                 }else{
@@ -83,7 +83,7 @@ namespace gld::glsl{
                 auto res = DefResMgr::instance()->load<gld::ResType::text>(in_ps);
                 if(res)
                 {
-                    std::string process_res = process_f(in_path,std::move(*res));
+                    std::string process_res = process_f(in_path,std::string(*res));
                     IncludeCatche::get_instance()->set(in_ps,process_res);
                     return std::optional<std::string>( std::move(process_res) );
                 }else{

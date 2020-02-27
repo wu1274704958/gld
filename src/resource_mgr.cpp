@@ -79,7 +79,7 @@ gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load
 	{
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
 
-		std::string res = preprocess.process(std::move(p),std::move(*ptr));
+		std::string res = preprocess.process(std::move(p),std::string(*ptr));
 		return std::make_tuple(true,std::shared_ptr<std::string>(new std::string(std::move(res))));
 	}
 	else
@@ -191,13 +191,13 @@ gld::LoadImage::RealRetTy gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::str
 
 gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
-	auto ptr = DefResMgr::instance()->load<ResType::text>(path);
-	
+	auto ptr = DefResMgr::instance()->load<ResType::text>(std::string(path));
+	dbg::log << "res mgr @V@"_E << "LoadTextWithGlslPreprocess " << path.c_str() << dbg::endl;
 	if (ptr)
 	{
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess(cxt);
 
-		std::string res = preprocess.process(std::move(path),std::move(*ptr));
+		std::string res = preprocess.process(std::move(path),std::string(*ptr));
 		return std::make_tuple(true,std::shared_ptr<std::string>(new std::string(std::move(res))));
 	}
 	else

@@ -75,6 +75,7 @@ public:
         catch (sundry::CompileError e)
         {
             dbg::log <<  "compile failed " << e.what() << dbg::endl;
+            dbg::log << fg_p << dbg::endl;
         }
         catch (std::exception e)
         {
