@@ -41,6 +41,11 @@ std::string gld::LoadScene::format_args(unsigned int flag)
     return wws::to_string(flag);
 }
 
+gld::LoadScene::ArgsTy gld::LoadScene::default_args()
+{
+	return aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace;
+}
+
 #ifndef PF_ANDROID
 namespace fs = std::filesystem;
 

@@ -111,26 +111,39 @@ namespace gld{
             load(Uri&& uri)
             ->typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::RetTy
         {
-            static_assert(std::is_same_v<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::ArgsTy, void>,
-                "Load plug args type must be void!!!");
+
+            static_assert(std::is_same_v<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::ArgsTy, void> || 
+                has_default_args_func_vt<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type>::value,"Load plug args type must be void!!!");
+
             using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+            using ARGS_T = typename Ty::ArgsTy;
+            using RET_T = typename Ty::RetTy;
 
-            auto path = to_path(std::forward<Uri>(uri));
-
-            auto absolute_path = to_absolute_path(path);
-
-            if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
+            if constexpr(!std::is_same_v<ARGS_T,void>)
             {
-                return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
+                if constexpr( has_default_args_func_vt<Ty>::value)
+                {
+                    return load<Rt>(std::forward<Uri>(uri),Ty::default_args());
+                }
+            }else{
+
+                auto path = to_path(std::forward<Uri>(uri));
+    
+                auto absolute_path = to_absolute_path(path);
+    
+                if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
+                {
+                    return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
+                }
+    #ifndef PF_ANDROID
+                auto [success,res] = Ty::load(path);
+    #else
+                auto [success,res] = Ty::load(mgr,path);
+    #endif
+                if(success)
+                    ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
+                return res;
             }
-#ifndef PF_ANDROID
-            auto [success,res] = Ty::load(path);
-#else
-            auto [success,res] = Ty::load(mgr,path);
-#endif
-            if(success)
-                ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
-            return res;
         }
         template<ResType Rt,typename Uri>
         decltype(auto) rm_cache(Uri&& uri)
@@ -236,6 +249,7 @@ private:
         using ArgsTy = unsigned int;
         using RealRetTy = std::tuple<bool,RetTy>;
         static std::string format_args(ArgsTy flag);
+        static ArgsTy default_args();
 #ifndef PF_ANDROID
         static RealRetTy load(PathTy p,ArgsTy flag);
 #else

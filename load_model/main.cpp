@@ -278,9 +278,7 @@ public:
 
     void loadModel()
     {
-        
-        auto res = ResMgrWithGlslPreProcess::instance()->load<ResType::model>("model/nanosuit/nanosuit.obj",
-            aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
+        auto res = ResMgrWithGlslPreProcess::instance()->load<ResType::model>("model/nanosuit/nanosuit.obj");
         if(res)
         {
             dbg::log << "load success " << res->GetScene()->mNumMeshes << dbg::endl;

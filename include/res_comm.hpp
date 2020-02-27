@@ -55,6 +55,12 @@ namespace gld
     template <typename T,typename Args>
     using has_format_args_func_vt = wws::is_detected<has_format_args_func_t,T,Args>;
 
+    template <class T>											
+    using has_default_args_func_t = decltype(T::default_args());
+
+    template <typename T>
+    using has_default_args_func_vt = wws::is_detected<has_default_args_func_t,T>;
+
     template<ResType ty,typename T>
     struct ResLoadPlugTy
     {
