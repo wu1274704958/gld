@@ -63,7 +63,7 @@ namespace gld{
             return to_path(uri);
         }
 
-        std::string to_absolute_path(const PathTy& path)
+        std::string to_absolute_path(const PathTy& path) const
         {
 #ifndef PF_ANDROID 
             return std::filesystem::absolute(path).string();

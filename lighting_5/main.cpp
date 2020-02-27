@@ -43,6 +43,7 @@ public:
 #ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
         auto res_mgr = ResMgrWithGlslPreProcess::create_instance(std::move(root));
+        DefResMgr::create_instance(root);
 #else
         auto res_mgr = ResMgrWithGlslPreProcess::create_instance(m_window);
 #endif

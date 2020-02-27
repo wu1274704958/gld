@@ -61,9 +61,9 @@ gld::LoadText::RealRetTy gld::LoadText::load(fs::path p)
 
 gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load(fs::path p)
 {
-	auto [success,ptr] = LoadText::load(p);
+	auto ptr = DefResMgr::instance()->load<ResType::text>(p.string());
 	
-	if (success)
+	if (ptr)
 	{
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess;
 
@@ -151,9 +151,9 @@ gld::LoadImage::RealRetTy gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::str
 
 gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
-	auto [success,ptr] = LoadText::load(cxt,path);
+	auto ptr = DefResMgr::instance()->load<ResType::text>(cxt,path);
 	
-	if (success)
+	if (ptr)
 	{
 		glsl::PreprocessMgr<'#',glsl::IncludePreprocess> preprocess(cxt);
 
