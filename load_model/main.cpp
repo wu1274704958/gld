@@ -282,8 +282,8 @@ public:
         if(res)
         {
             dbg::log << "load success " << res->GetScene()->mNumMeshes << dbg::endl;
-        }
-        dbg::log << "load model failed" << dbg::endl;
+        }else
+            dbg::log << "load model failed" << dbg::endl;
     }
 
     float rd_0_1()
