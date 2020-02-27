@@ -34,6 +34,15 @@ namespace gld{
             map[k] = t;
         }
 
+        bool rm_cache(Key& k)
+        {
+            if(has(k))
+            {
+                return map.erase(k) >= 1;
+            }
+            return false;
+        }
+
         std::unordered_map<Key,CacheTy> map;
 
         inline static std::shared_ptr<ResCache<T,Key>> instance()
@@ -67,6 +76,12 @@ namespace gld{
         {
             //std::get<get_res_idx<Rt,Plugs...>()>(tup).cache(std::forward<Key>(k),std::forward<T>(t));
             ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->cache(std::forward<Key>(k),std::forward<T>(t));
+        }
+
+        template<size_t Rt,typename Key>
+        decltype(auto) rm_cache(Key&& k)
+        {
+            return ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->rm_cache(std::forward<Key>(k));
         }
 
         //std::tuple<ResCache<typename Plugs::Ret> ...> tup;

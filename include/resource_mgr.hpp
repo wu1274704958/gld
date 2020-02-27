@@ -63,19 +63,26 @@ namespace gld{
             return to_path(uri);
         }
 
+        std::string to_absolute_path(const PathTy& path)
+        {
+#ifndef PF_ANDROID 
+            return std::filesystem::absolute(path).string();
+#else
+            return wws::to_absolute(path);
+#endif
+        }
+
         template<ResType Rt,typename Uri>
         auto
             load(Uri&& uri,typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::ArgsTy args)
             ->typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::RetTy
         {
             using Ty = typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type;
-            std::string absolute_path;
+            
             auto path = to_path(std::forward<Uri>(uri));
-#ifndef PF_ANDROID 
-            absolute_path = std::filesystem::absolute(path).string();
-#else
-            absolute_path = wws::to_absolute(path);
-#endif
+
+            auto absolute_path = to_absolute_path(path);
+
             if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
             {
                 return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
@@ -99,13 +106,10 @@ namespace gld{
                 "Load plug args type must be void!!!");
             using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
 
-            std::string absolute_path;
             auto path = to_path(std::forward<Uri>(uri));
-#ifndef PF_ANDROID 
-            absolute_path = std::filesystem::absolute(path).string();
-#else
-            absolute_path = wws::to_absolute(path);
-#endif
+
+            auto absolute_path = to_absolute_path(path);
+
             if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
             {
                 return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(absolute_path);
@@ -118,6 +122,17 @@ namespace gld{
             if(success)
                 ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(absolute_path,res);
             return res;
+        }
+        template<ResType Rt,typename Uri>
+        decltype(auto) rm_cache(Uri&& uri)
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+
+            auto path = to_path(std::forward<Uri>(uri));
+
+            auto absolute_path = to_absolute_path(path);
+
+            return ResCacheMgr<Plugs...>::instance()->template rm_cache<static_cast<size_t>(Rt)>(absolute_path);
         }
 
         inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> instance()
