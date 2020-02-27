@@ -13,6 +13,8 @@
 
 #include <res_comm.hpp>
 #include <res_cache_mgr.hpp>
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
 
 namespace gld{    
 
@@ -78,10 +80,17 @@ namespace gld{
             ->typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::RetTy
         {
             using Ty = typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type;
+            using ARGS_T = typename Ty::ArgsTy;
+            using RET_T = typename Ty::RetTy;
             
             auto path = to_path(std::forward<Uri>(uri));
 
             auto absolute_path = to_absolute_path(path);
+
+            if constexpr(!std::is_same_v<ARGS_T,void> && has_format_args_func_vt<Ty,ARGS_T>::value)
+            {
+                absolute_path += Ty::format_args(std::forward<ARGS_T>(args));
+            }
 
             if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(absolute_path))
             {
@@ -221,8 +230,25 @@ private:
 #endif
     };
 
-    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,ResLoadPlugTy<ResType::image,LoadImage>> DefResMgr;
-    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadTextWithGlslPreprocess>,ResLoadPlugTy<ResType::image,LoadImage>> ResMgrWithGlslPreProcess;
+    struct LoadScene
+    {
+        using RetTy = std::shared_ptr<Assimp::Importer>;
+        using ArgsTy = unsigned int;
+        using RealRetTy = std::tuple<bool,RetTy>;
+        static std::string format_args(ArgsTy flag);
+#ifndef PF_ANDROID
+        static RealRetTy load(PathTy p,ArgsTy flag);
+#else
+        static RealRetTy load(AndroidCxtPtrTy,PathTy p,ArgsTy flag);
+#endif
+    };
+
+    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,
+        ResLoadPlugTy<ResType::image,LoadImage>,
+        ResLoadPlugTy<ResType::model,LoadScene>> DefResMgr;
+    typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadTextWithGlslPreprocess>,
+        ResLoadPlugTy<ResType::image,LoadImage>,
+        ResLoadPlugTy<ResType::model,LoadScene>> ResMgrWithGlslPreProcess;
 }
 
 #ifdef PF_ANDROID

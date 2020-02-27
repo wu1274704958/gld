@@ -7,6 +7,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <3rd_party/stb/stb_image.h>
 #include <glsl_preprocess.hpp>
+#include <serialization.hpp>
+
+#include <assimp/scene.h>
 using namespace std;
 
 unsigned int gld::StbImage::gl_format()
@@ -33,6 +36,10 @@ gld::StbImage::~StbImage()
 		stbi_image_free(data);
 }
 
+std::string gld::LoadScene::format_args(unsigned int flag)
+{
+    return wws::to_string(flag);
+}
 
 #ifndef PF_ANDROID
 namespace fs = std::filesystem;
@@ -95,6 +102,21 @@ gld::LoadImage::RealRetTy gld::LoadImage::load(std::filesystem::path p,int req_c
 		return std::make_tuple(false,std::shared_ptr<gld::StbImage>());
 }
 
+
+gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::ArgsTy flag)
+{
+	std::string path = p.string();
+	Assimp::Importer* importer = new Assimp::Importer();
+    const aiScene* scene = importer->ReadFile(path, flag);
+	if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) // if is Not Zero
+    {
+        delete importer;
+		return std::make_tuple(false,std::shared_ptr<Assimp::Importer>());
+    }else{
+		return std::make_tuple(true,std::shared_ptr<Assimp::Importer>(importer));
+	}
+}
+
 #else
 
 #include <android/asset_manager.h>
@@ -102,20 +124,33 @@ gld::LoadImage::RealRetTy gld::LoadImage::load(std::filesystem::path p,int req_c
 #include <log.hpp>
 using  namespace dbg::literal;
 
+std::tuple<std::unique_ptr<char[]>,std::uint64_t> load_byte(gld::AndroidCxtPtrTy cxt,std::string& uri)
+{
+	AAssetManager* mgr = cxt->app->activity->assetManager;
+
+	AAsset* asset = AAssetManager_open(mgr,uri.c_str(),AASSET_MODE_BUFFER);
+	if (asset)
+	{
+		off_t len = AAsset_getLength(asset);
+		if(len > 0) {
+			char *res = new char[len];
+			std::memcpy(res, AAsset_getBuffer(asset), static_cast<size_t>(len));
+			AAsset_close(asset);
+			return std::make_tuple(std::unique_ptr<char[]>(res), static_cast<std::uint64_t>(len));
+		}
+	}
+	return std::make_tuple(std::unique_ptr<char[]>(),0L);
+}
+
 gld::LoadText::RealRetTy gld::LoadText::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
 
-    //dbg::log << "res mgr @V@"_E;
-	AAssetManager* mgr = cxt->app->activity->assetManager;
-    //dbg::log << (mgr == nullptr) << dbg::endl;
-    AAsset* asset = AAssetManager_open(mgr,path.c_str(),AASSET_MODE_BUFFER);
-	if (asset)
+	auto [ptr,len] = load_byte(cxt,path);
+	if (ptr)
 	{
 		std::string *res = new string();
-		off_t len = AAsset_getLength(asset);
 		res->resize(len);
-		std::memcpy(res->data(), AAsset_getBuffer(asset), static_cast<size_t>(len));
-		AAsset_close(asset);
+		std::memcpy(res->data(), ptr.get(), static_cast<size_t>(len));
 		return std::make_tuple(true,std::shared_ptr<std::string>(res));
 	}
 	else
@@ -151,7 +186,7 @@ gld::LoadImage::RealRetTy gld::LoadImage::load(gld::AndroidCxtPtrTy cxt,std::str
 
 gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load(gld::AndroidCxtPtrTy cxt,std::string path)
 {
-	auto ptr = DefResMgr::instance()->load<ResType::text>(cxt,path);
+	auto ptr = DefResMgr::instance()->load<ResType::text>(path);
 	
 	if (ptr)
 	{
@@ -162,6 +197,24 @@ gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load
 	}
 	else
 		return std::make_tuple(false,std::shared_ptr<std::string>());
+}
+
+gld::LoadScene::RealRetTy gld::LoadScene::load(gld::AndroidCxtPtrTy cxt,gld::PathTy p,gld::LoadScene::ArgsTy flag)
+{
+	auto [ptr,len] = load_byte(cxt,p);
+	if(ptr)
+	{
+		Assimp::Importer* importer = new Assimp::Importer();
+		const aiScene* scene = importer->ReadFileFromMemory(ptr.get(),len,flag);
+		if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) // if is Not Zero
+		{
+			delete importer;
+			return std::make_tuple(false,std::shared_ptr<Assimp::Importer>());
+		}else{
+			return std::make_tuple(true,std::shared_ptr<Assimp::Importer>(importer));
+		}
+	}
+	return std::make_tuple(false,std::shared_ptr<Assimp::Importer>());
 }
 
 #endif

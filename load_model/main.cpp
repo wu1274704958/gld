@@ -24,10 +24,8 @@
 #include <comm.hpp>
 #include <random>
 #include <uniform_buf.hpp>
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
 #include <log.hpp>
+#include <assimp/scene.h>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -46,15 +44,19 @@ public:
 
 #ifndef PF_ANDROID
         fs::path root = wws::find_path(3, "res", true);
+        DefResMgr::create_instance(root);
         auto res_mgr = ResMgrWithGlslPreProcess::create_instance(std::move(root));
 #else
         auto res_mgr = ResMgrWithGlslPreProcess::create_instance(m_window);
+        DefResMgr::create_instance(m_window);
 #endif
 
         auto vs_str = res_mgr->load<ResType::text>("lighting_6/base_vs.glsl");
         auto fg_str = res_mgr->load<ResType::text>("lighting_6/base_fg.glsl");
         auto box = res_mgr->load<ResType::image>("lighting_2/container2.png",0);
         auto box_spec = res_mgr->load<ResType::image>("lighting_3/container2_specular.png",0);
+
+        loadModel();
 
         auto vs_p = vs_str.get()->c_str();
         auto fg_p = fg_str.get()->c_str();
@@ -79,7 +81,7 @@ public:
             dbg::log <<  e.what() << dbg::endl;
         }
 
-        loadModel("asdas");
+        
 
         std::cout << vertex.get_id() << " " << frag.get_id() << std::endl;
 
@@ -274,22 +276,16 @@ public:
         return 0;
     }
 
-    void loadModel(std::string path)
+    void loadModel()
     {
-        Assimp::Importer import;
-
-        const aiScene* scene = import.ReadFileFromMemory("asdsadasdasd",10,aiProcess_Triangulate | aiProcess_FlipUVs); //import.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
-
-        if(!scene || scene->mFlags == AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+        
+        auto res = ResMgrWithGlslPreProcess::instance()->load<ResType::model>("model/nanosuit/nanosuit.obj",
+            aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
+        if(res)
         {
-            dbg::log << "ERROR::ASSIMP::" << import.GetErrorString() << dbg::endl;
-            return;
+            dbg::log << "load success " << res->GetScene()->mNumMeshes << dbg::endl;
         }
-
-        dbg::log << "load success " << scene->mNumMeshes << dbg::endl;
-        //this->directory = path.substr(0, path.find_last_of('/'));
-
-        //this->processNode(scene->mRootNode, scene);
+        dbg::log << "load model failed" << dbg::endl;
     }
 
     float rd_0_1()

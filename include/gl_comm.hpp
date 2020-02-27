@@ -1,5 +1,7 @@
 #pragma once
 
+#include <comm.hpp>
+
 namespace gld
 {
     typedef unsigned int Glid;
@@ -117,5 +119,80 @@ namespace gld
                 Pair<float, 0x1406>,
                 Pair<double, 0x140A>>();
     };
-        
+
+
+    template <class T,class T2>											
+    using has_need_clean_t = decltype( std::declval<T>().need_clean( std::declval<T2*>() ) );
+
+    template <typename T,typename T2>
+    using has_need_clean_vt = wws::is_detected<has_need_clean_t,T,T2>;
+
+    template <class T,class T2>											
+    using has_clean_func_t = decltype(std::declval<T>().clean( std::declval<T2*>() ) );
+
+    template <typename T,typename T2>
+    using has_clean_func_vt = wws::is_detected<has_clean_func_t,T,T2>;
+
+    template<typename T>
+    class PtrDefCleaner{
+    public:
+        void clean(T* t)
+        {
+            if(need_clean(t)) delete t;
+        }
+        bool need_clean(T* t)
+        {
+            return t != nullptr;
+        }
+    };
+
+    template<typename T,template <typename T1> class Cleaner = PtrDefCleaner>
+    struct PtrWarp{
+        static_assert(has_need_clean_vt<Cleaner<T>,T>::value && has_clean_func_vt<Cleaner<T>,T>::value,"Must has `need_clean` and `clean` function!!");
+        PtrWarp(T* t) : ptr(t) {}
+
+        PtrWarp(const PtrWarp&) = delete;
+        PtrWarp(PtrWarp&& oth){
+            ptr = oth.ptr;
+            oth.ptr = nullptr;
+        }
+
+        PtrWarp& operator=(const PtrWarp&) = delete;
+        PtrWarp& operator=(PtrWarp&& oth){
+            cleaner.clean(ptr);
+
+            ptr = oth.ptr;
+            oth.ptr = nullptr;
+
+            return *this;
+        }
+
+        operator T*()
+        {
+            return ptr;
+        }
+
+        T& operator*()
+        {
+            return *ptr;
+        }
+
+        operator bool()
+        {
+            return ptr != nullptr;
+        }
+
+        T* operator->()
+        {
+            return ptr;
+        }
+
+        ~PtrWarp()
+        {
+            cleaner.clean(ptr);
+        }
+
+        T* ptr;
+        Cleaner<T> cleaner;
+    };
 }

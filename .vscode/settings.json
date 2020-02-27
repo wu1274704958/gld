@@ -68,6 +68,7 @@
         "codecvt": "cpp",
         "map": "cpp",
         "mutex": "cpp",
-        "xtree": "cpp"
+        "xtree": "cpp",
+        "set": "cpp"
     }
 }

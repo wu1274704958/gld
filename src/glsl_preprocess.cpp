@@ -80,7 +80,7 @@ namespace gld::glsl{
         }else{
             if(is_exists(in_path))
             {
-                auto res = DefResMgr::instance()->load<gld::ResType::text>(cxt,in_ps);
+                auto res = DefResMgr::instance()->load<gld::ResType::text>(in_ps);
                 if(res)
                 {
                     std::string process_res = process_f(in_path,std::move(*res));
