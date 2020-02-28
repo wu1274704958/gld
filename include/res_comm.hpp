@@ -39,6 +39,16 @@ namespace res_ck{
     template <typename T>
     using has_load_func2_vt = wws::is_detected<has_load_func2_t, T>;
 
+#ifndef PF_ANDROID
+    template <class T,class ... Args>
+    using has_load_func3_t = decltype(T::load(std::declval<PathTy>(),std::declval<std::tuple<Args...>>()));
+#else
+    template <class T,class ... Args>
+    using has_load_func3_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<PathTy>(),std::declval<std::tuple<Args...>>()));
+#endif
+    template <typename T,class ...Args>
+    using has_load_func3_vt = wws::is_detected<has_load_func2_t, T,Args ...>;
+
     template <class T>											
     using has_ret_type_t = typename T::RetTy;
 

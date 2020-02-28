@@ -145,6 +145,20 @@ namespace gld{
                 return res;
             }
         }
+
+        template<ResType Rt,typename Uri,typename ...Args>
+        decltype(auto)
+            load(Uri&& uri,Args&&... args)
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type;
+            using ARGS_T = typename Ty::ArgsTy;
+            using RET_T = typename Ty::RetTy;
+
+            static_assert(res_ck::has_load_func3_vt<Ty,Args...>::value,"This load plug not has tuple load function!!!");
+
+            load(std::forward<Uri>(uri),std::make_tuple(std::forward<Args>(args)...));
+        }
+
         template<ResType Rt,typename Uri>
         decltype(auto) rm_cache(Uri&& uri)
         {
