@@ -24,6 +24,8 @@ find_package(GLFW3)
 find_package(MINI_TEST)
 find_package(ASSIMP)
 
+add_definitions(-DNOMINMAX)
+
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR} 

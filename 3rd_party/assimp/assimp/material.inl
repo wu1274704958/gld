@@ -46,9 +46,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef AI_MATERIAL_INL_INC
 #define AI_MATERIAL_INL_INC
 
-#ifdef min
-#undef min
-#endif
 //! @cond never
 
 // ---------------------------------------------------------------------------
