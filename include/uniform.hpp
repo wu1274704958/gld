@@ -150,7 +150,7 @@ namespace gld
             
         }
         template<typename ...Args>
-        CustomUniform(std::string key,Program& p,Args&& ...args) : 
+        CustomUniform(std::string key,std::shared_ptr<Program> p,Args&& ...args) :
             key(std::move(key)),program(p),
             data(std::forward<Args>(args)...)
         {

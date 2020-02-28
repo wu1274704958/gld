@@ -2,7 +2,9 @@
 
 #include <filesystem>
 #include <comm.hpp>
-
+#ifdef PF_ANDROID
+struct EGLCxt;
+#endif
 namespace gld
 {
     
@@ -15,6 +17,7 @@ namespace gld
 #ifndef PF_ANDROID
     using PathTy = std::filesystem::path;
 #else
+
     using AndroidCxtPtrTy = std::shared_ptr<EGLCxt>;
     using PathTy = std::string;
 #endif

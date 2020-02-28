@@ -124,6 +124,7 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::Arg
 
 #else
 
+#include <EGLCxt.h>
 #include <android/asset_manager.h>
 #include <native_app_glue/android_native_app_glue.h>
 #include <log.hpp>

@@ -9,6 +9,7 @@
 #endif
 
 #include <RenderDemo.h>
+#include <resource_mgr.hpp>
 
 std::vector<RenderDemo*> RenderDemo::WindowResizeListeners = std::vector<RenderDemo*>();
 std::vector<RenderDemo*> RenderDemo::MouseButtonListeners = std::vector<RenderDemo*>();
@@ -49,8 +50,8 @@ int RenderDemo::initWindow(int w,int h,const char *title)
         width = w;
         height = h;
 
-        ResMgrWithGlslPreProcess::create_instance(m_window);
-        DefResMgr::create_instance(m_window);
+        gld::ResMgrWithGlslPreProcess::create_instance(m_window);
+        gld::DefResMgr::create_instance(m_window);
     }
 #endif
 
