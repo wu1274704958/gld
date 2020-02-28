@@ -87,7 +87,7 @@ namespace gld{
 
             auto absolute_path = to_absolute_path(path);
 
-            if constexpr(!std::is_same_v<ARGS_T,void> && has_format_args_func_vt<Ty,ARGS_T>::value)
+            if constexpr(!std::is_same_v<ARGS_T,void> && res_ck::has_format_args_func_vt<Ty,ARGS_T>::value)
             {
                 absolute_path += Ty::format_args(std::forward<ARGS_T>(args));
             }
@@ -113,7 +113,7 @@ namespace gld{
         {
 
             static_assert(std::is_same_v<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type::ArgsTy, void> || 
-                has_default_args_func_vt<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type>::value,"Load plug args type must be void!!!");
+                res_ck::has_default_args_func_vt<typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type>::value,"Load plug args type must be void!!!");
 
             using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
             using ARGS_T = typename Ty::ArgsTy;
@@ -121,7 +121,7 @@ namespace gld{
 
             if constexpr(!std::is_same_v<ARGS_T,void>)
             {
-                if constexpr( has_default_args_func_vt<Ty>::value)
+                if constexpr( res_ck::has_default_args_func_vt<Ty>::value)
                 {
                     return load<Rt>(std::forward<Uri>(uri),Ty::default_args());
                 }

@@ -18,6 +18,8 @@ namespace gld
     using PathTy = std::string;
 #endif
 
+namespace res_ck{
+
 #ifndef PF_ANDROID
     template <class T,typename ...Args>											
     using has_load_func_t = decltype(T::load(std::declval<PathTy>(),std::declval<Args>()...));
@@ -60,6 +62,7 @@ namespace gld
 
     template <typename T>
     using has_default_args_func_vt = wws::is_detected<has_default_args_func_t,T>;
+}
 
     template<ResType ty,typename T>
     struct ResLoadPlugTy
@@ -67,13 +70,13 @@ namespace gld
         constexpr static size_t res_type = static_cast<size_t>(ty);
         using type = T;
 
-        static_assert(has_ret_type_vt<T>::value,"this type must has RetTy!!!");
-        static_assert(has_args_type_vt<T>::value,"this type must has ArgsTy!!!");
+        static_assert(res_ck::has_ret_type_vt<T>::value,"this type must has RetTy!!!");
+        static_assert(res_ck::has_args_type_vt<T>::value,"this type must has ArgsTy!!!");
         
         using Ret = typename T::RetTy;
         using Args = typename T::ArgsTy;
         static_assert(
-            has_load_func_vt<T,Args>::value || (has_load_func2_vt<T>::value && std::is_same_v<Args,void>),
+            res_ck::has_load_func_vt<T,Args>::value || (res_ck::has_load_func2_vt<T>::value && std::is_same_v<Args,void>),
             "this type must has load func!!!");
     };
 
