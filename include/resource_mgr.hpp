@@ -171,6 +171,48 @@ namespace gld{
             return ResCacheMgr<Plugs...>::instance()->template rm_cache<static_cast<size_t>(Rt)>(absolute_path);
         }
 
+        template<ResType Rt,typename Uri>
+        decltype(auto) rm_cache(Uri&& uri,typename MapResPlug<static_cast<size_t>(Rt),Plugs...>::type::ArgsTy args)
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+            using ARGS_T = typename Ty::ArgsTy;
+            using RET_T = typename Ty::RetTy;
+
+            auto path = to_path(std::forward<Uri>(uri));
+
+            auto absolute_path = to_absolute_path(path);
+
+            if constexpr(!std::is_same_v<ARGS_T,void> && res_ck::has_format_args_func_vt<Ty,ARGS_T>::value)
+            {
+                absolute_path += Ty::format_args(std::forward<ARGS_T>(args));
+            }
+
+            return ResCacheMgr<Plugs...>::instance()->template rm_cache<static_cast<size_t>(Rt)>(absolute_path);
+        }
+
+        template<ResType Rt,typename Uri,typename ...Args>
+        decltype(auto) rm_cache(Uri&& uri,Args&&... args)
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+            using ARGS_T = typename Ty::ArgsTy;
+            using RET_T = typename Ty::RetTy;
+            if constexpr(!std::is_same_v<ARGS_T,void> && res_ck::has_format_args_func_vt<Ty,ARGS_T>::value)
+            {
+                return rm_cache(std::forward<Uri>(uri),std::make_tuple(std::forward<Args>(args)...));
+            }
+
+            return rm_cache(std::forward<Uri>(uri));
+        }
+
+        template<ResType Rt,typename Uri>
+        decltype(auto) rm_cache_def(Uri&& uri)
+        {
+            using Ty = typename MapResPlug<static_cast<size_t>(Rt), Plugs...>::type;
+            static_assert(res_ck::has_default_args_func_vt<Ty>::value , "must has default_args function!!!");
+
+            return rm_cache(std::forward<Uri>(uri),Ty::default_args());
+        }
+
         inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> instance()
         {
             return self;
