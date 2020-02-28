@@ -208,10 +208,15 @@ gld::LoadTextWithGlslPreprocess::RealRetTy gld::LoadTextWithGlslPreprocess::load
 gld::LoadScene::RealRetTy gld::LoadScene::load(gld::AndroidCxtPtrTy cxt,gld::PathTy p,gld::LoadScene::ArgsTy flag)
 {
 	auto [ptr,len] = load_byte(cxt,p);
+	dbg::log << "res mgr @V@"_E << "LoadSceneWithGlslPreprocess " << (bool)ptr << " len = " << len << dbg::endl;
 	if(ptr)
 	{
 		Assimp::Importer* importer = new Assimp::Importer();
-		const aiScene* scene = importer->ReadFileFromMemory(ptr.get(),len,flag);
+		auto suff = wws::get_suffix(p);
+		const aiScene* scene = importer->ReadFileFromMemory(ptr.get(),len,flag,suff.c_str());
+
+		dbg::log << "(scene == nullptr) " << (scene == nullptr) << "  " << suff << dbg::endl;
+		dbg::log << "msg " << importer->GetErrorString() << dbg::endl;
 		if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) // if is Not Zero
 		{
 			delete importer;

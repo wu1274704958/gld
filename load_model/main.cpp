@@ -56,6 +56,8 @@ public:
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
+        loadModel();
+
         program->use();
 
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
