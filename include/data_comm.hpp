@@ -12,35 +12,26 @@ namespace gld{
 
     namespace data_ck{
 
-#ifndef PF_ANDROID
+
     template <class T,typename ...Args>											
     using has_load_func_t = decltype(T::load(std::declval<Args>()...));
-#else
-    template <class T,typename ...Args>
-    using has_load_func_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<Args>()...));
-#endif
+
     template <typename T,typename ...Args>
     using has_load_func_vt = wws::is_detected<has_load_func_t,T,Args...>;
 
-#ifndef PF_ANDROID
+
     template <class T>
     using has_load_func2_t = decltype(T::load());
-#else
-    template <class T>
-    using has_load_func2_t = decltype(T::load(std::declval<AndroidCxtPtrTy>()));
-#endif
+
     template <typename T>
     using has_load_func2_vt = wws::is_detected<has_load_func2_t, T>;
 
-#ifndef PF_ANDROID
+
     template <class T,class ... Args>
-    using has_load_func3_t = decltype(T::load(std::declval<std::tuple<Args...>>()));
-#else
-    template <class T,class ... Args>
-    using has_load_func3_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<std::tuple<Args...>>()));
-#endif
+    using has_load_func3_t = decltype(T::load( std::declval<std::tuple<Args...>>() ));
+
     template <typename T,class ...Args>
-    using has_load_func3_vt = wws::is_detected<has_load_func2_t, T,Args ...>;
+    using has_load_func3_vt = wws::is_detected<has_load_func3_t, T,std::decay_t<Args> ...>;
 
     template <class T>											
     using has_ret_type_t = typename T::RetTy;

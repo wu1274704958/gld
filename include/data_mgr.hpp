@@ -1,7 +1,7 @@
 #pragma once
 
 #include <data_comm.hpp>
-
+#include <res_cache_mgr.hpp>
 
 namespace gld
 {
@@ -24,11 +24,9 @@ namespace gld
             {
                 return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(key);
             }
-#ifndef PF_ANDROID
+
             auto [success,res] = Ty::load(std::forward<typename Ty::ArgsTy>(args));
-#else
-            auto [success,res] = Ty::load(mgr,std::forward<typename Ty::ArgsTy>(args));
-#endif
+
             if(success)
                 ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(key,res);
             return res;
@@ -59,7 +57,18 @@ namespace gld
 
             static_assert(data_ck::has_load_func3_vt<Ty,Args...>::value,"This load plug not has tuple load function!!!");
 
-            load(std::make_tuple(std::forward<Args>(args)...));
+            auto key = Ty::key_from_args(std::make_tuple(std::forward<Args>(args)...));
+
+            if(ResCacheMgr<Plugs...>::instance()->template has<static_cast<size_t>(Rt)>(key))
+            {
+                return ResCacheMgr<Plugs...>::instance()->template get<static_cast<size_t>(Rt)>(key);
+            }
+
+            auto [success,res] = Ty::load(std::make_tuple(std::forward<Args>(args)...));
+
+            if(success)
+                ResCacheMgr<Plugs...>::instance()->template cache<static_cast<size_t>(Rt)>(key,res);
+            return res;
         }
 
         template<DataType Rt>
@@ -91,10 +100,9 @@ namespace gld
 
         inline static std::shared_ptr<DataMgr<Plugs...>> instance()
         {
-#ifndef PF_ANDROID
+
             if(!self) 
                 self = std::shared_ptr<DataMgr<Plugs...>>(new DataMgr<Plugs...>());
-#endif
             return self;
         }
         template<typename T>
@@ -103,22 +111,24 @@ namespace gld
             self = std::shared_ptr<DataMgr<Plugs...>>(new DataMgr<Plugs...>(std::forward<T>(t)));
             return self;
         }
-    protected:
-#ifdef PF_ANDROID
-        std::shared_ptr<EGLCxt> mgr;
-#endif
-
+protected:
 private:    
     inline static std::shared_ptr<DataMgr<Plugs...>> self;
-#ifndef PF_ANDROID
+
         DataMgr<Plugs...>() {}
-#else
-        DataMgr<Plugs...>(std::shared_ptr<EGLCxt> mgr)
-        {
-            if(!mgr)
-                throw std::runtime_error("EGLCxt is nullptr!!!");
-            this->mgr = std::move(mgr);
-        }
-#endif
     };
+
+    class Program;
+
+    struct LoadProgram{
+        using RetTy = std::shared_ptr<Program>;
+        using ArgsTy = std::tuple<std::string,std::string>;
+        using RealRetTy = std::tuple<bool,RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static std::string key_from_args(std::tuple<const char*,const char*> args);
+        static RealRetTy load(ArgsTy args);
+        static RealRetTy load(std::tuple<const char*,const char*> args);
+    };
+
+    typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>> DefDataMgr;
 } // namespace gld

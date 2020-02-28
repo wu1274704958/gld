@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <comm.hpp>
 
 namespace gld
 {
@@ -47,7 +48,7 @@ namespace res_ck{
     using has_load_func3_t = decltype(T::load(std::declval<AndroidCxtPtrTy>(),std::declval<PathTy>(),std::declval<std::tuple<Args...>>()));
 #endif
     template <typename T,class ...Args>
-    using has_load_func3_vt = wws::is_detected<has_load_func2_t, T,Args ...>;
+    using has_load_func3_vt = wws::is_detected<has_load_func3_t, T,std::decay_t<Args> ...>;
 
     template <class T>											
     using has_ret_type_t = typename T::RetTy;
@@ -140,6 +141,13 @@ namespace res_ck{
     constexpr size_t get_res_idx()
     {
         return get_res_idx_inside<Rt,0,Ts...>();
+    }
+
+
+    template<typename ...T>
+    std::tuple<bool,T...> make_result(bool s,T&& ...t)
+    {
+        return std::make_tuple(s,std::forward<T>(t)...);
     }
 
 } // namespace gld

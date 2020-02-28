@@ -25,6 +25,7 @@
 #include <random>
 #include <uniform_buf.hpp>
 #include <log.hpp>
+#include <data_mgr.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -32,50 +33,25 @@ using namespace dbg::literal;
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos", program), perspective("perspective", program), world("world", program)
+    Demo1() : 
+                view_pos("view_pos"), perspective("perspective"), world("world")
         {}
     int init() override
     {
         RenderDemoRotate::init();
-        Shader<ShaderType::VERTEX> vertex;
-        Shader<ShaderType::FRAGMENT> frag;
 
-#ifndef PF_ANDROID
-        fs::path root = wws::find_path(3, "res", true);
-        auto res_mgr = ResMgrWithGlslPreProcess::create_instance(root);
-        DefResMgr::create_instance(std::move(root));
-#else
-        auto res_mgr = ResMgrWithGlslPreProcess::create_instance(m_window);
-        DefResMgr::create_instance(m_window);
-#endif
+        program = DefDataMgr::instance()->load<DataType::Program>(
+        "lighting_5/base_vs.glsl","lighting_5/base_fg.glsl");
 
-        auto vs_str = res_mgr->load<ResType::text>("lighting_5/base_vs.glsl");
-        auto fg_str = res_mgr->load<ResType::text>("lighting_5/base_fg.glsl");
-        auto box = res_mgr->load<ResType::image>("lighting_2/container2.png",0);
-        auto box_spec = res_mgr->load<ResType::image>("lighting_3/container2_specular.png",0);
+        view_pos.attach_program(program);
+        perspective.attach_program(program);
+        world.attach_program(program);
 
-        auto vs_p = vs_str.get()->c_str();
-        auto fg_p = fg_str.get()->c_str();
+        auto box = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_2/container2.png",0);
+        auto box_spec = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_3/container2_specular.png",0);
 
         dbg::log << "lighting 5 @V@"_E;// << vs_p << dbg::endl;
         //dbg::log << fg_p << dbg::endl;
-
-        try {
-            sundry::compile_shaders<100>(
-                GL_VERTEX_SHADER, &vs_p, 1, (GLuint*)vertex,
-                GL_FRAGMENT_SHADER, &fg_p, 1, (GLuint*)frag
-            );
-        }
-        catch (sundry::CompileError e)
-        {
-            dbg::log << "compile failed " << e.what() << dbg::endl;
-        }
-        catch (std::exception e)
-        {
-            dbg::log << e.what() << dbg::endl;
-        }
-
-        dbg::log << vertex.get_id() << " " << frag.get_id() << dbg::endl;
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -83,14 +59,10 @@ public:
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
-        program.cretate();
-        program.attach_shader(std::move(vertex));
-        program.attach_shader(std::move(frag));
-        program.link();
+      
+        program->use();
 
-        program.use();
-
-        program.locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
+        program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
             "shininess","specularTex"
@@ -268,7 +240,7 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        program.use();
+        program->use();
 
         perspective.sync();
         world.sync();
@@ -279,7 +251,7 @@ public:
         update();
         update_matrix();
 
-        program.unuse();
+        program->unuse();
     }
 
     void update_matrix()
@@ -314,7 +286,7 @@ public:
         glViewport(0, 0, w, h);
     }
 private:
-    Program program;
+    std::shared_ptr<Program> program;
     VertexArr va1, va2;
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
@@ -330,6 +302,11 @@ private:
 #ifndef PF_ANDROID
 int main()
 {
+    
+    fs::path root = wws::find_path(3, "res", true);
+    ResMgrWithGlslPreProcess::create_instance(root);
+    DefResMgr::create_instance(std::move(root));
+
     Demo1 d;
     if (d.initWindow(800, 800, "Demo1"))
     {

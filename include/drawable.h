@@ -13,7 +13,7 @@ namespace gld{
     class Drawable{
     public:
         
-        Drawable(Program& program,std::string model_key) :
+        Drawable(std::shared_ptr<Program> program,std::string model_key) :
             program(program),
             model(std::move(model_key),program)
         {
@@ -53,7 +53,7 @@ namespace gld{
 
         virtual void update_matrix(glm::mat4 mat)
         {
-            program.use();
+            program->use();
             model = glm::value_ptr(mat);
         }
 
@@ -85,7 +85,7 @@ namespace gld{
         
         bool visible = true;
     protected:
-        Program& program;
+        std::shared_ptr<Program> program;
         Uniform<UT::Matrix4> model;
     };
 }

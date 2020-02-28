@@ -48,6 +48,9 @@ int RenderDemo::initWindow(int w,int h,const char *title)
         this->m_window = std::move(cxt);
         width = w;
         height = h;
+
+        ResMgrWithGlslPreProcess::create_instance(m_window);
+        DefResMgr::create_instance(m_window);
     }
 #endif
 

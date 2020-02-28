@@ -86,15 +86,19 @@ namespace gld
             UTData<UT::Sampler2D,int>
         >::type>;
 
-        Uniform(std::string key, Program& program) :
+        Uniform(std::string key, std::shared_ptr<Program> program) :
             key(key),
-            program(program)
+            program(std::move(program))
+        {}
+
+        Uniform(std::string key) :
+            key(key)
         {}
 
         UTDataMapTy operator=(UTDataMapTy data)
         {
             const std::string& key_r = key;
-            int id = program.uniform_id(key_r);
+            int id = program->uniform_id(key_r);
             if (id < 0)
                 throw UniformNotFound::create(key_r);
             if constexpr (Ut == UT::Float)
@@ -123,16 +127,25 @@ namespace gld
             }
             return data;
         }
+
+        void attach_program(std::shared_ptr<Program> p)
+        {
+            program = std::move(p);
+        }
     protected:
         std::string key;
-        Program& program;
+        std::shared_ptr<Program> program;
     };
 
     template<typename  T>
     struct CustomUniform{
         using UTDataMapTy = T;
 
-        CustomUniform(std::string key,Program& p) : key(std::move(key)),program(p)
+        CustomUniform(std::string key,std::shared_ptr<Program> p) : key(std::move(key)),program(std::move(p))
+        {
+            
+        }
+        CustomUniform(std::string key) : key(std::move(key))
         {
             
         }
@@ -164,9 +177,14 @@ namespace gld
 
         virtual ~CustomUniform(){}
 
+        void attach_program(std::shared_ptr<Program> p)
+        {
+            program = std::move(p);
+        }
+    protected:
         UTDataMapTy data;
         std::string key;
-        Program& program;
+        std::shared_ptr<Program> program;
     };
     
 } // namespace gld

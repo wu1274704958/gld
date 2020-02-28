@@ -17,7 +17,11 @@ namespace gld
             UTData<UT::Sampler2D, int>
         >::type>;
 
-        GlmUniform(std::string key,Program& p) : uniform(std::move(key),p)
+        GlmUniform(std::string key,std::shared_ptr<Program> ptr) : uniform(std::move(key),std::move(ptr))
+        {
+
+        }
+        GlmUniform(std::string key) : uniform(std::move(key))
         {
 
         }
@@ -54,6 +58,11 @@ namespace gld
             else {
                 uniform = data;
             }
+        }
+        
+        void attach_program(std::shared_ptr<Program> ptr)
+        {
+            uniform.attach_program(std::move(ptr));
         }
 
         UTDataMapTy data;
