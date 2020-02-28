@@ -5,17 +5,22 @@
 
 namespace gld{
     struct Light{
-        Light(Program& p):
-            color("light_color",p),
-            pos("light_pos",p)
+        Light():
+            color("light_color"),
+            pos("light_pos")
              {}
+        void attach_program(std::shared_ptr<Program> p)
+        {
+            color.attach_program(p);
+            pos.attach_program(p);
+        }
 
         Uniform<UT::Vec3> color;
         Uniform<UT::Vec3> pos;
     };
 
     struct Material {
-        Material(Program& p):
+        Material(std::shared_ptr<Program> p):
             color("obj_color",p),
             ambient_strength("ambient_strength",p),
             specular_strength("specular_strength",p),

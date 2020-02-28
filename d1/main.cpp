@@ -143,21 +143,21 @@ public:
 
         va2.create();
         va2.create_arr<ArrayBufferType::VERTEX>();
+        program = std::make_shared<Program>();
+		program->cretate();
+		program->attach_shader(std::move(vertex));
+		program->attach_shader(std::move(frag));
+		program->link();
 
-		program.cretate();
-		program.attach_shader(std::move(vertex));
-		program.attach_shader(std::move(frag));
-		program.link();
+		program->use();
 
-		program.use();
+        program->locat_uniforms("perspective","world","model","alpha","offsetZ");
 
-        program.locat_uniforms("perspective","world","model","alpha","offsetZ");
-
-        perspective =   program.uniform_id("perspective");
-        world =         program.uniform_id("world");
-        model =         program.uniform_id("model");
-        alpha =         program.uniform_id("alpha");
-        offsetZ =       program.uniform_id("offsetZ");
+        perspective =   program->uniform_id("perspective");
+        world =         program->uniform_id("world");
+        model =         program->uniform_id("model");
+        alpha =         program->uniform_id("alpha");
+        offsetZ =       program->uniform_id("offsetZ");
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -212,7 +212,7 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
-		program.use();
+		program->use();
 
         glUniformMatrix4fv(perspective, 1, GL_FALSE, glm::value_ptr(perspective_m));
         glUniformMatrix4fv(world, 1, GL_FALSE, glm::value_ptr(world_m));
@@ -304,7 +304,7 @@ public:
         glViewport(0, 0, w, h);
     }
 private:
-    Program program;
+    std::shared_ptr<Program> program;
     GLuint perspective = 0,
     world = 0,
     model = 0,

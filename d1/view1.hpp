@@ -10,7 +10,7 @@
 class View1 : public gld::Drawable
 {
 public:
-	View1(gld::Program& p,gld::VertexArr& va,std::vector<Vertex> vertices,glm::vec4 color) : 
+	View1(std::shared_ptr<gld::Program> p,gld::VertexArr& va,std::vector<Vertex> vertices,glm::vec4 color) : 
 		Drawable(p,"model"),
 		va(va),
 		vertices(std::move(vertices))
@@ -30,8 +30,8 @@ public:
 
 	void onPreDraw()override 
 	{
-		glUniform1f(program.uniform_id("alpha"), alpha);
-		glUniform1f(program.uniform_id("offsetZ"), offsetZ);
+		glUniform1f(program->uniform_id("alpha"), alpha);
+		glUniform1f(program->uniform_id("offsetZ"), offsetZ);
 	}
 	void onDraw()override 
 	{

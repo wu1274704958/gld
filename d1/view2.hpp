@@ -6,7 +6,7 @@
 class View2 : public View1
 {
 public:
-	View2(gld::Program& p, gld::VertexArr& va, std::vector<Vertex> vertices, glm::vec4 color) :
+	View2(std::shared_ptr<gld::Program> p, gld::VertexArr& va, std::vector<Vertex> vertices, glm::vec4 color) :
 		View1(p,va,std::move(vertices), color)
 	{
 		vertex_size = static_cast<int>( this->vertices.size());

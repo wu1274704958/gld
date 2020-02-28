@@ -28,7 +28,7 @@ namespace gld{
     };
 
     struct Material {
-        Material(Program& p):
+        Material(std::shared_ptr<Program> p):
             diffuseTex("diffuseTex",p),
             specularTex("specularTex",p),
             ambient_strength("ambient_strength",p),

@@ -127,7 +127,7 @@ BuildStr(shader_base,fs,#version 330 core\n
 
 class Demo1 : public RenderDemoRotate{
 public:
-    Demo1() : light(program),view_pos("view_pos",program),perspective("perspective",program),world("world",program) {}
+    Demo1() : view_pos("view_pos"),perspective("perspective"),world("world") {}
     int init() override
     {
         RenderDemoRotate::init();
@@ -155,17 +155,24 @@ public:
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
-		program.cretate();
-		program.attach_shader(std::move(vertex));
-		program.attach_shader(std::move(frag));
-		program.link();
+        program = std::make_shared<Program>();
 
-		program.use();
+		program->cretate();
+		program->attach_shader(std::move(vertex));
+		program->attach_shader(std::move(frag));
+		program->link();
 
-        program.locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength",
+		program->use();
+
+        program->locat_uniforms("perspective","world","model","light_pos","obj_color","light_color","ambient_strength",
             "specular_strength",
             "view_pos",
             "shininess");
+
+        view_pos.attach_program(program);
+        perspective.attach_program(program);
+        world.attach_program(program);
+        light.attach_program(program);
 
         glClearColor(0.0f,0.0f,0.0f,1.0f);
 
@@ -251,7 +258,7 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
-		program.use();
+		program->use();
 
         perspective.sync();
         world.sync();
@@ -262,7 +269,7 @@ public:
         update();
         update_matrix();
 
-		program.unuse();
+		program->unuse();
     }
 
     void update_matrix()
@@ -291,7 +298,7 @@ public:
         glViewport(0, 0, w, h);
     }
 private:
-    Program program;
+    std::shared_ptr<Program> program;
     VertexArr va1,va2;
     Light light;
     Uniform<UT::Vec3> view_pos;

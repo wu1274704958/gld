@@ -14,7 +14,7 @@ namespace gld{
 class Model : public gld::Drawable
 {
 public:
-	Model(gld::Program& p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
+	Model(std::shared_ptr<Program> p,gld::VertexArr& va,glm::vec3 color,uint32_t triangle_count) : 
 		Drawable(p,"model"),
 		material(p),
 		va(va),

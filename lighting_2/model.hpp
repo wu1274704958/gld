@@ -15,7 +15,7 @@ namespace gld{
 class Model : public gld::Drawable
 {
 public:
-	Model(gld::Program& p,gld::VertexArr& va,uint32_t triangle_count,Texture<TexType::D2> &texture) : 
+	Model(std::shared_ptr<Program> p,gld::VertexArr& va,uint32_t triangle_count,Texture<TexType::D2> &texture) : 
 		Drawable(p,"model"),
 		material(p),
 		va(va),
