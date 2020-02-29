@@ -16,6 +16,10 @@
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 
+#ifdef LoadImage
+#undef LoadImage
+#endif
+
 namespace gld{    
 
     template<char Separator,typename ...Plugs>

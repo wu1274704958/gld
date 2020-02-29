@@ -44,8 +44,9 @@ public:
         
         program = DefDataMgr::instance()->load<DataType::Program>("lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
 
-        auto box = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_2/container2.png",0);
-        auto box_spec = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_3/container2_specular.png",0);
+        diffuseTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_2/container2.png",0);
+        specularTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_3/container2_specular.png",0);
+
         dbg::log << "ty_name "<< typeid(int).name()  << dbg::endl;
 
         view_pos.attach_program(program);
@@ -70,31 +71,22 @@ public:
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-        if(box && box_spec)
+        if(diffuseTex && specularTex)
         {
-            diffuseTex.create();
-            diffuseTex.bind();
+            diffuseTex->bind();
+            diffuseTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+            diffuseTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
 
-            diffuseTex.tex_image(0,box->gl_format(),0,box->gl_format(),box->data,box->width,box->height);
-            diffuseTex.generate_mipmap();
+            diffuseTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
+            diffuseTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
 
-            diffuseTex.set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-            diffuseTex.set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
+            specularTex->bind();
 
-            diffuseTex.set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-            diffuseTex.set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+            specularTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+            specularTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
 
-            specularTex.create();
-            specularTex.bind();
-
-            specularTex.tex_image(0,box_spec->gl_format(),0,box_spec->gl_format(),box_spec->data,box_spec->width,box_spec->height);
-            specularTex.generate_mipmap();
-
-            specularTex.set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-            specularTex.set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
-
-            specularTex.set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-            specularTex.set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+            specularTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
+            specularTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
         }else{
             dbg("load texture failed!!");
             return -1;
@@ -218,7 +210,7 @@ public:
         };
         for(int i = 0;i < wws::arrLen(cubePositions);++i)
         {
-            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex,specularTex)));
+            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,*diffuseTex,*specularTex)));
 
             cxts[i]->scale = glm::vec3(1.f, 1.f, 1.f);
             auto ptr = dynamic_cast<Model*>(cxts[i].get());
@@ -315,7 +307,7 @@ private:
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
     std::vector<std::unique_ptr<Drawable>> cxts;
-    Texture<TexType::D2> diffuseTex,specularTex;
+    std::shared_ptr<Texture<TexType::D2>> diffuseTex,specularTex;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     float pl_angle = 0.0f;

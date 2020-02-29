@@ -10,7 +10,7 @@ namespace gld{
         template<typename T>
         T* get_comp()
         {
-            size_t ty_id = typeid(T);
+            size_t ty_id = typeid(T).hash_code();
             for(int i = 0;i < components.size();++i)
             {
                 if(comp_ty_id(i) == ty_id)

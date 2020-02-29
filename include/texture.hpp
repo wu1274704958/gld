@@ -1,5 +1,7 @@
 #pragma once
+
 #include <gl_comm.hpp>
+#include <glad/glad.h>
 
 namespace gld{
     enum class TexType

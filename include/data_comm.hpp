@@ -6,7 +6,7 @@
 namespace gld{
     enum class DataType{
         Program = 0x100,
-        Texture,
+        Texture2D,
         Scene
     };
 

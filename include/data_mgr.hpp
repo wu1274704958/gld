@@ -2,6 +2,7 @@
 
 #include <data_comm.hpp>
 #include <res_cache_mgr.hpp>
+#include <texture.hpp>
 
 namespace gld
 {
@@ -130,5 +131,15 @@ private:
         static RealRetTy load(std::tuple<const char*,const char*> args);
     };
 
-    typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>> DefDataMgr;
+    struct LoadTexture2D{
+        using RetTy = std::shared_ptr<Texture<TexType::D2>>;
+        using ArgsTy = std::tuple<std::string,int>;
+        using RealRetTy = std::tuple<bool,RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static std::string key_from_args(std::tuple<const char*,int> args);
+        static RealRetTy load(ArgsTy args);
+        static RealRetTy load(std::tuple<const char*,int> args);
+    };
+
+    typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>> DefDataMgr;
 } // namespace gld

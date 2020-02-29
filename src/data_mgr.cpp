@@ -3,6 +3,7 @@
 #include <log.hpp>
 #include <sundry.hpp>
 #include <program.hpp>
+#include <serialization.hpp>
 using namespace dbg::literal;
 
 std::string gld::LoadProgram::key_from_args(gld::LoadProgram::ArgsTy args)
@@ -69,4 +70,43 @@ gld::LoadProgram::RealRetTy gld::LoadProgram::load(gld::LoadProgram::ArgsTy args
         return make_result(s,std::move(res));
     }
     return make_result(s,std::move(res));
+}
+
+
+std::string gld::LoadTexture2D::key_from_args(gld::LoadTexture2D::ArgsTy args)
+{
+    std::string res = std::move(std::get<0>(args));
+    res += "#";
+    res += wws::to_string(std::get<1>(args));
+    return res;
+}
+std::string gld::LoadTexture2D::key_from_args(std::tuple<const char*,int> args)
+{
+    std::string res = std::get<0>(args);
+    res += "#";
+    res += wws::to_string(std::get<1>(args));
+    return res;
+}
+gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(gld::LoadTexture2D::ArgsTy args)
+{
+    auto [path,flag] = args;
+    auto image = ResMgrWithGlslPreProcess::instance()->load<ResType::image>(std::move(path),flag);
+    bool s = false;
+    std::shared_ptr<Texture<TexType::D2>> res;
+    if(image)
+    {
+        res = std::shared_ptr<Texture<TexType::D2>>(new Texture<TexType::D2>());
+
+        res->create();
+        res->bind();
+        res->tex_image(0,image->gl_format(),0,image->gl_format(),image->data,image->width,image->height);
+        res->unbind();
+        s = true;
+        return make_result(s,std::move(res));
+    }
+    return make_result(s,std::move(res));
+}
+gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(std::tuple<const char*,int> args)
+{
+    return load(std::make_tuple(std::string(std::get<0>(args)),std::get<1>(args)));
 }
