@@ -89,14 +89,16 @@ std::string gld::LoadTexture2D::key_from_args(std::tuple<const char*,int> args)
 }
 gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(gld::LoadTexture2D::ArgsTy args)
 {
+    dbg::log << "data mgr @V@"_E ;
     auto [path,flag] = args;
     auto image = ResMgrWithGlslPreProcess::instance()->load<ResType::image>(std::move(path),flag);
     bool s = false;
     std::shared_ptr<Texture<TexType::D2>> res;
+    dbg::log << "LoadTexture2D " << (bool)image <<dbg::endl;
     if(image)
     {
         res = std::shared_ptr<Texture<TexType::D2>>(new Texture<TexType::D2>());
-
+        dbg::log << "LoadTexture2D " << image->width <<" "<< image->height <<dbg::endl;
         res->create();
         res->bind();
         res->tex_image(0,image->gl_format(),0,image->gl_format(),image->data,image->width,image->height);

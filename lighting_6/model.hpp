@@ -15,7 +15,7 @@ namespace gld{
 class Model : public gld::Drawable
 {
 public:
-	Model(std::shared_ptr<gld::Program> p,gld::VertexArr& va,uint32_t triangle_count,Texture<TexType::D2> &texture,Texture<TexType::D2> &spec) : 
+	Model(std::shared_ptr<gld::Program> p,gld::VertexArr& va,uint32_t triangle_count,std::shared_ptr<Texture<TexType::D2>> texture,std::shared_ptr<Texture<TexType::D2>> spec) : 
 		Drawable(p,"model"),
 		material(p),
 		va(va),
@@ -33,8 +33,8 @@ public:
 
 	void onPreDraw()override 
 	{
-		diffuseTex.active<ActiveTexId::_0>();
-		specularTex.active<ActiveTexId::_1>();
+		diffuseTex->active<ActiveTexId::_0>();
+		specularTex->active<ActiveTexId::_1>();
 
 		material.specularTex.sync();
 		material.diffuseTex.sync();
@@ -57,8 +57,8 @@ public:
 		
 	}
 	Material material;
-	Texture<TexType::D2>& diffuseTex;
-	Texture<TexType::D2>& specularTex;
+	std::shared_ptr<Texture<TexType::D2>> diffuseTex;
+	std::shared_ptr<Texture<TexType::D2>> specularTex;
 protected:
 	gld::VertexArr& va;
     uint32_t draw_count;

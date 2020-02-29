@@ -47,7 +47,7 @@ public:
         diffuseTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_2/container2.png",0);
         specularTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_3/container2_specular.png",0);
 
-        dbg::log << "ty_name "<< typeid(int).name()  << dbg::endl;
+        dbg::log << "ty_name "<< typeid(int).name() << " " << diffuseTex->good() << " "<< specularTex->good()  << dbg::endl;
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
@@ -74,6 +74,7 @@ public:
         if(diffuseTex && specularTex)
         {
             diffuseTex->bind();
+            diffuseTex->generate_mipmap();
             diffuseTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
             diffuseTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
 
@@ -81,7 +82,7 @@ public:
             diffuseTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
 
             specularTex->bind();
-
+            specularTex->generate_mipmap();
             specularTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
             specularTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
 
@@ -210,7 +211,7 @@ public:
         };
         for(int i = 0;i < wws::arrLen(cubePositions);++i)
         {
-            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,*diffuseTex,*specularTex)));
+            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex,specularTex)));
 
             cxts[i]->scale = glm::vec3(1.f, 1.f, 1.f);
             auto ptr = dynamic_cast<Model*>(cxts[i].get());
