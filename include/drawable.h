@@ -66,7 +66,7 @@ namespace gld{
         void setRotateZ(float x) {
             rotate.z = glm::radians(x);
         }
-        void setRotateZ(glm::vec3 r) {
+        void setRotate(glm::vec3 r) {
             rotate.x = glm::radians(r.x);
             rotate.y = glm::radians(r.y);
             rotate.z = glm::radians(r.z);

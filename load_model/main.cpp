@@ -27,6 +27,7 @@
 #include <log.hpp>
 #include <assimp/scene.h>
 #include <data_mgr.hpp>
+#include <component.h>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -45,6 +46,7 @@ public:
 
         auto box = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_2/container2.png",0);
         auto box_spec = ResMgrWithGlslPreProcess::instance()->load<ResType::image>("lighting_3/container2_specular.png",0);
+        dbg::log << "ty_name "<< typeid(int).name()  << dbg::endl;
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
