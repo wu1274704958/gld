@@ -27,12 +27,38 @@ namespace gld::def{
         }
         bool init() override
         {
+            bool f = true;
+            if(diffuseTex)
+            {
+                diffuseTex->bind();
+                diffuseTex->generate_mipmap();
+                diffuseTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+                diffuseTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
+
+                diffuseTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
+                diffuseTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+                f = false;
+            }
+            if(specularTex)
+            {
+                specularTex->bind();
+                specularTex->generate_mipmap();
+                specularTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+                specularTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
+
+                specularTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
+                specularTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+                 f = false;
+            }
+
             auto render = get_node()->get_comp<Render>();
             udiffuseTex.attach_program(render->get());
             uspecularTex.attach_program(render->get());
             uambient_strength.attach_program(render->get());
             uspecular_strength.attach_program(render->get());
             ushininess.attach_program(render->get());
+
+            return true;
         }
         void on_draw() override
         {
@@ -64,8 +90,8 @@ namespace gld::def{
     struct Mesh : public Component
     {
         Mesh(
-            int index_size,
-            int vertex_size,
+            size_t index_size,
+            size_t vertex_size,
             std::shared_ptr<gld::VertexArr> vao)
             : index_size(index_size),
             vertex_size(vertex_size),
@@ -82,16 +108,16 @@ namespace gld::def{
             vao->bind();
             if(vao->buffs().get<ArrayBufferType::ELEMENT>().good())
             {
-                glDrawElements(GL_TRIANGLES,index_size,MapGlTypeEnum<unsigned int>::val,nullptr);
+                glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr);
             }else{
-                glDrawArrays(GL_TRIANGLES,0,vertex_size);
+                glDrawArrays(GL_TRIANGLES,0,static_cast<GLsizei>(vertex_size));
             }
 		    vao->unbind();
         }
         
         int64_t idx() override { return 100;}
-        int index_size;
-        int vertex_size;
+        size_t index_size;
+        size_t vertex_size;
         std::shared_ptr<gld::VertexArr> vao;
     };
 }

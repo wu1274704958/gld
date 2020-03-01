@@ -139,25 +139,98 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(std::tuple<const char*,un
     return load(std::make_tuple(std::string(a),b,std::string(c),std::string(d)));
 }
 
-std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiMesh* mesh,
-    std::string& parent_path)
+std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string parent,aiMaterial *material,aiTextureType ty,int i)
 {
-    return std::shared_ptr<gld::Node<gld::Component>>();
+    aiString path;
+    material->GetTexture(aiTextureType_DIFFUSE,0,&path);
+    if(path.C_Str())
+    {
+        parent += path.C_Str();
+        return gld::DefDataMgr::instance()->load<gld::DataType::Texture2D>(parent,0);
+    }
+    return std::shared_ptr<gld::Texture<gld::TexType::D2>>();
+}
+
+std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiMesh* mesh,
+    std::string& parent_path,std::string& vp,std::string& fp)
+{
+
+    std::shared_ptr<gld::Node<gld::Component>> res = std::make_shared<gld::Node<gld::Component>>();
+
+    std::vector<gld::def::Vertex> vertices;
+    std::vector<unsigned int> indices;
+
+    res->add_comp<gld::Render>(std::shared_ptr<gld::Render>(new gld::Render(vp,fp)));
+    res->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
+
+    for(unsigned int i = 0; i < mesh->mNumVertices; i++)
+    {
+        gld::def::Vertex vertex;
+        glm::vec3 vector; 
+        vertex.pos = glm::vec3(mesh->mVertices[i].x,
+            mesh->mVertices[i].y,
+            mesh->mVertices[i].z);
+        // normals
+        vertex.normal = glm::vec3(mesh->mNormals[i].x,
+            mesh->mNormals[i].y,
+            mesh->mNormals[i].z);
+        // texture coordinates
+        if(mesh->mTextureCoords[0]) // does the mesh contain texture coordinates?
+        {
+            glm::vec2 vec;
+            vertex.uv = glm::vec2(mesh->mTextureCoords[0][i].x,
+                mesh->mTextureCoords[0][i].y);
+        }
+        else
+            vertex.uv = glm::vec2(0.0f, 0.0f);
+        vertices.push_back(vertex);
+    }
+    for(unsigned int i = 0; i < mesh->mNumFaces; i++)
+    {
+        aiFace face = mesh->mFaces[i];
+        for(unsigned int j = 0; j < face.mNumIndices; j++)
+            indices.push_back(face.mIndices[j]);
+    }
+    auto vao = std::make_shared<gld::VertexArr>();
+    vao->create();
+    vao->create_arr<gld::ArrayBufferType::VERTEX>();
+    vao->create_arr<gld::ArrayBufferType::ELEMENT>();
+    vao->bind();
+    vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(vertices,GL_STATIC_DRAW);
+    vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+        gld::VAP_DATA<3,float,false>,
+        gld::VAP_DATA<3,float,false>,
+        gld::VAP_DATA<2,float,false>>();
+    vao->buffs().get<gld::ArrayBufferType::ELEMENT>().bind_data(indices,GL_STATIC_DRAW);
+    vao->unbind();
+    
+    std::shared_ptr<gld::def::Mesh> mesh_comp = std::shared_ptr<gld::def::Mesh>(new gld::def::Mesh(indices.size(),vertices.size(),std::move(vao)));
+    res->add_comp<gld::def::Mesh>(mesh_comp);
+
+    aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+    
+    auto diffuse = get_material_tex(parent_path,material,aiTextureType_DIFFUSE,0);
+    auto spec = get_material_tex(parent_path,material,aiTextureType_SPECULAR,0);
+    
+    res->add_comp<gld::def::Material>(std::shared_ptr<gld::def::Material>(
+        new gld::def::Material(std::move(diffuse),std::move(spec))));
+
+    return res;
 }
 
 std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const aiScene* scene,
-    std::string& parent_path)
+    std::string& parent_path,std::string& vp,std::string& fp)
 {
     auto node = std::shared_ptr<gld::Node<gld::Component>>(new gld::Node<gld::Component>());
     node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
     for(unsigned int i = 0;i < ai_node->mNumMeshes;++i)
     {
-        node->add_child(process_mesh(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path));
+        node->add_child(process_mesh(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp));
     }
 
     for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
     {
-        node->add_child(process_node(ai_node->mChildren[i],scene,parent_path));
+        node->add_child(process_node(ai_node->mChildren[i],scene,parent_path,vp,fp));
     }
     return node;
 }
@@ -172,7 +245,7 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsT
     std::string parent_path = wws::get_parent(path);
     if(ai)
     {   
-        if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path);node)
+        if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
         {
             return make_result(s,std::move(node));
         }
