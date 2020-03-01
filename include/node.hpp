@@ -24,7 +24,7 @@ namespace gld{
         bool add_comp(std::shared_ptr<T> comp)
         {
 #ifdef GLD_ADD_COMPONENTS_CK_REPEAT
-            size_t ty_id = typeid(T);
+            size_t ty_id = typeid(T).hash_code();
             for(int i = 0;i < components.size();++i)
             {
                 if(comp_ty_id(i) == ty_id)
@@ -39,7 +39,27 @@ namespace gld{
                 {
                     if(comp->idx() <= components[i]->idx())
                     {
+                        components.attach_node(weak_ptr());
                         components.insert(components.begin() + i,std::move(comp));
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        template<typename T>
+        bool remove_comp(std::shared_ptr<T> comp)
+        {
+            if(!comp) return false;
+            size_t ty_id = typeid(T).hash_code();
+            for(int i = 0;i < components.size();++i)
+            {
+                if(comp_ty_id(i) == ty_id && dynamic_cast<Comp*>(comp.get()) == components[i].get())
+                {
+                    auto it = components.erase(components.begin() + i);
+                    if(it != components.end())
+                    {
+                        (*it)->reset_node();
                         return true;
                     }
                 }

@@ -13,7 +13,8 @@ namespace gld{
     struct Component
     {
         virtual bool init(){return true;}
-        virtual void attach_node(std::shared_ptr<Node<Component>> n){ node = n; }
+        virtual void attach_node(std::weak_ptr<Node<Component>> n){ node = n; }
+        virtual void reset_node(){node.reset();}
         virtual void on_draw(){}
         virtual void draw(){}
         virtual void update(){}
@@ -60,10 +61,6 @@ namespace gld{
         glm::vec3 scale;
     protected:
         Uniform<UT::Matrix4> model;
-    };
-
-    struct Material : public Component {
-        
     };
     
 }

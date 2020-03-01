@@ -28,6 +28,7 @@
 #include <assimp/scene.h>
 #include <data_mgr.hpp>
 #include <component.h>
+#include <comps/Material.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
