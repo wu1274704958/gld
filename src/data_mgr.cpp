@@ -145,6 +145,7 @@ std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string par
     material->GetTexture(aiTextureType_DIFFUSE,0,&path);
     if(path.C_Str())
     {
+        parent += '/';
         parent += path.C_Str();
         return gld::DefDataMgr::instance()->load<gld::DataType::Texture2D>(parent,0);
     }
@@ -166,7 +167,6 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
     for(unsigned int i = 0; i < mesh->mNumVertices; i++)
     {
         gld::def::Vertex vertex;
-        glm::vec3 vector; 
         vertex.pos = glm::vec3(mesh->mVertices[i].x,
             mesh->mVertices[i].y,
             mesh->mVertices[i].z);
@@ -177,7 +177,6 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
         // texture coordinates
         if(mesh->mTextureCoords[0]) // does the mesh contain texture coordinates?
         {
-            glm::vec2 vec;
             vertex.uv = glm::vec2(mesh->mTextureCoords[0][i].x,
                 mesh->mTextureCoords[0][i].y);
         }

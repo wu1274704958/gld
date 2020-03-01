@@ -42,7 +42,7 @@ namespace gld{
     struct Transform : public Component
     {
         Transform(std::string model_key);
-        Transform() : model("model") {}
+        Transform();
 
         bool init() override ;
 
@@ -62,6 +62,7 @@ namespace gld{
         glm::vec3 scale;
     protected:
         Uniform<UT::Matrix4> model;
+        bool no_render = false;
     };
     
 }

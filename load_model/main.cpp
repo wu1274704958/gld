@@ -44,11 +44,14 @@ public:
         RenderDemoRotate::init();
         
         program = DefDataMgr::instance()->load<DataType::Program>("lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
+        program->use();
 
-        diffuseTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_2/container2.png",0);
-        specularTex = DefDataMgr::instance()->load<DataType::Texture2D>("lighting_3/container2_specular.png",0);
+        program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
+            "specular_strength",
+            "view_pos",
+            "shininess","specularTex"
+        );
 
-        dbg::log << "ty_name "<< typeid(int).name() << " " << diffuseTex->good() << " "<< specularTex->good()  << dbg::endl;
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
@@ -60,39 +63,18 @@ public:
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
-        loadModel();
+        auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
+            "lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
 
-        program->use();
+        auto trans = node->get_comp<Transform>();
+        trans->scale = glm::vec3(0.2f,0.2f,0.2f);
+        trans->pos.y = -10.f;
+        
+        cxts.push_back(std::move(node));
 
-        program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
-            "specular_strength",
-            "view_pos",
-            "shininess","specularTex"
-            );
+        
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-
-        if(diffuseTex && specularTex)
-        {
-            diffuseTex->bind();
-            diffuseTex->generate_mipmap();
-            diffuseTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-            diffuseTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
-
-            diffuseTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-            diffuseTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
-
-            specularTex->bind();
-            specularTex->generate_mipmap();
-            specularTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-            specularTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
-
-            specularTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-            specularTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
-        }else{
-            dbg("load texture failed!!");
-            return -1;
-        }
 
         GLenum err = glGetError();
         dbg(err);
@@ -142,95 +124,9 @@ public:
 
         spl.sync(GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
 
-        float vertices[] = {
-            // positions          // normals           // texture coords
-         -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
-          0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  0.0f,
-          0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-          0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-         -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  1.0f,
-         -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
-
-         -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-          0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  0.0f,
-          0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-          0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-         -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  1.0f,
-         -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-
-         -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-         -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-         -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-         -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-          0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-          0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-          0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-          0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-          0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-          0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-         -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-          0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  1.0f,
-          0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-          0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-         -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  0.0f,
-         -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-
-         -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,
-          0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  1.0f,
-          0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-          0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-         -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
-         -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
-        };
-        
-        va1.create();
-        va1.create_arr<ArrayBufferType::VERTEX>();
-
-        va1.bind();
-        va1.buffs().get<ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
-        va1.buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
-            VAP_DATA<3, float, false>, 
-            VAP_DATA<3, float, false>,
-            VAP_DATA<2,float,false>>();
-        va1.unbind();
-
-        glm::vec3 cubePositions[] = {
-            glm::vec3( 0.0f,  0.0f,  0.0f),
-            glm::vec3( 2.0f,  5.0f, -15.0f),
-            glm::vec3(-1.5f, -2.2f, -2.5f),
-            glm::vec3(-3.8f, -2.0f, -12.3f),
-            glm::vec3( 2.4f, -0.4f, -3.5f),
-            glm::vec3(-1.7f,  3.0f, -7.5f),
-            glm::vec3( 1.3f, -2.0f, -2.5f),
-            glm::vec3( 1.5f,  2.0f, -2.5f),
-            glm::vec3( 1.5f,  0.2f, -1.5f),
-            glm::vec3(-1.3f,  1.0f, -1.5f)
-        };
-        for(int i = 0;i < wws::arrLen(cubePositions);++i)
-        {
-            cxts.push_back(std::unique_ptr<Model>(new Model(program, va1, 12,diffuseTex,specularTex)));
-
-            cxts[i]->scale = glm::vec3(1.f, 1.f, 1.f);
-            auto ptr = dynamic_cast<Model*>(cxts[i].get());
-            ptr->material.shininess = 32.f;
-            ptr->material.specular_strength = 0.7f;
-            ptr->material.ambient_strength = 0.1f;
-            ptr->material.diffuseTex = 0;
-            ptr->material.specularTex = 1;
-            ptr->pos = cubePositions[i];
-
-            ptr->rotate = glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
-        }
-
-        update_matrix();
-
         for (auto& p : cxts)
             p->init();
-
+        update_matrix();
         return 0;
     }
 
@@ -256,10 +152,12 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        program->use();
-
+      
         perspective.sync();
         world.sync();
+
+        for (auto& p : cxts)
+            p->on_draw();
 
         for (auto& p : cxts)
             p->draw();
@@ -267,7 +165,6 @@ public:
         update();
         update_matrix();
 
-        program->unuse();
     }
 
     void update_matrix()
@@ -303,13 +200,11 @@ public:
     }
 private:
     std::shared_ptr<Program> program;
-    VertexArr va1, va2;
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
-    std::vector<std::unique_ptr<Drawable>> cxts;
-    std::shared_ptr<Texture<TexType::D2>> diffuseTex,specularTex;
+    std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     float pl_angle = 0.0f;

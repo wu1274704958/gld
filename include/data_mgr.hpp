@@ -155,5 +155,7 @@ private:
         static RealRetTy load(std::tuple<const char*,unsigned int,const char*,const char*> args);
     };
 
-    typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>> DefDataMgr;
+    typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,
+        DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>,
+        DataLoadPlugTy<DataType::Scene,LoadSceneNode>> DefDataMgr;
 } // namespace gld

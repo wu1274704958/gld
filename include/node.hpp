@@ -33,6 +33,7 @@ namespace gld{
 #endif
             if(components.empty() || components.back()->idx() <= comp->idx())
             {
+                comp->attach_node(weak_ptr());
                 components.push_back(std::move(comp));
             }else{
                 for(int i = 0;i < components.size();++i)
@@ -131,7 +132,7 @@ namespace gld{
         bool init()
         {
             bool res = true;
-            for(auto &comp : children)
+            for(auto &comp : components)
                 res = comp->init();
             for(auto &ch : children)
                 res = ch->init();
@@ -139,21 +140,21 @@ namespace gld{
         }
         void on_draw()
         {
-            for(auto &comp : children)
+            for(auto &comp : components)
                 comp->on_draw();
             for(auto &ch : children)
                 ch->on_draw();
         }
         void draw()
         {
-            for(auto &comp : children)
+            for(auto &comp : components)
                 comp->draw();
             for(auto &ch : children)
                 ch->draw();
         }
         void update()
         {
-            for(auto &comp : children)
+            for(auto &comp : components)
                 comp->update();
             for(auto &ch : children)
                 ch->update();

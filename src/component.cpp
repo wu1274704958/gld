@@ -23,24 +23,37 @@ namespace gld{
         scale = glm::vec3(1.f, 1.f, 1.f);
     }
 
+    Transform::Transform() : model("model")
+    {
+        rotate = pos = glm::vec3(0.f, 0.f, 0.f);
+        scale = glm::vec3(1.f, 1.f, 1.f);
+    }
+
     bool Transform::init() 
     {
-        auto render = get_node()->get_comp<Render>();
-        model.attach_program(render->get());
+        auto n_ptr = get_node();
+        auto render = n_ptr->get_comp<Render>();
+        if(render)
+            model.attach_program(render->get());
+        else
+            no_render = true;
         return true;
     }
 
     void Transform::on_draw()
     {
-        glm::mat4 mat = get_model();
-
-        auto n_ptr = get_node();
-        if(n_ptr && n_ptr->has_parent())
+        if(!no_render)
         {
-            mat = n_ptr->get_parent()->get_comp<Transform>()->get_model() * mat;
-        }
+            glm::mat4 mat = get_model();
 
-        update_matrix(mat);
+            auto n_ptr = get_node();
+            if(n_ptr && n_ptr->has_parent())
+            {
+                mat = n_ptr->get_parent()->get_comp<Transform>()->get_model() * mat;
+            }
+
+            update_matrix(mat);
+        }
     }
 
     glm::mat4 Transform::get_model()

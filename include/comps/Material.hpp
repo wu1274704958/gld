@@ -51,14 +51,15 @@ namespace gld::def{
                  f = false;
             }
 
-            auto render = get_node()->get_comp<Render>();
+            auto n_ptr = get_node();
+            auto render = n_ptr->get_comp<Render>();
             udiffuseTex.attach_program(render->get());
             uspecularTex.attach_program(render->get());
             uambient_strength.attach_program(render->get());
             uspecular_strength.attach_program(render->get());
             ushininess.attach_program(render->get());
 
-            return true;
+            return f;
         }
         void on_draw() override
         {
