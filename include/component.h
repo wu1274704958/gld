@@ -42,6 +42,7 @@ namespace gld{
     struct Transform : public Component
     {
         Transform(std::string model_key);
+        Transform() : model("model") {}
 
         bool init() override ;
 
