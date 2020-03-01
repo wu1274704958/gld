@@ -2,11 +2,13 @@
 
 #include <vector>
 #include <memory>
+#include <algorithm>
 
 namespace gld{
 
     template<typename Comp>
-    struct Node{
+    struct Node : public std::enable_shared_from_this<Node<Comp>>
+    {
         template<typename T>
         T* get_comp()
         {
@@ -54,7 +56,67 @@ namespace gld{
         {
             return components.size() > idx;
         }
+        std::shared_ptr<Node<Comp>> get_parent()
+        {
+            return parent.lock();
+        }
+        bool add_child(std::shared_ptr<Node<Comp>> ch)
+        {
+            if(ch)
+            {
+                if(auto pare = parent.lock();pare && pare == ch)
+                {
+                    return false;
+                }
+                bool independent = false;
+                if(ch->has_parent())
+                    independent = ch->get_parent()->remove_child(ch);
+                else
+                    independent = true;
+                if(independent)
+                {
+                    ch->parent = weak_ptr();
+                    children.push_back(ch);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool remove_child(std::shared_ptr<Node<Comp>> ch)
+        {
+            if(auto it = std::find(children.begin(),children.end(),ch);it != children.end())
+            {
+                auto child = children.erase(it);
+                (*child)->clear_parent();
+                return true;
+            }
+            return false;
+        }
+
+        bool has_parent()
+        {
+            auto pare = parent.lock();
+            return (bool)pare;
+        }
+
+        std::shared_ptr<Node<Comp>> ptr() 
+        {
+            return std::enable_shared_from_this<Node<Comp>>::shared_from_this();
+        }
+        std::shared_ptr<Node<Comp>> weak_ptr() 
+        {
+            return std::enable_shared_from_this<Node<Comp>>::weak_from_this();
+        }
+    protected:
+        void clear_parent()
+        {
+            parent.reset();
+        }
+
     protected:
         std::vector<std::shared_ptr<Comp>>  components;
+        std::vector<std::shared_ptr<Node<Comp>>> children;
+        std::weak_ptr<Node<Comp>> parent;
     };
 }
