@@ -12,8 +12,8 @@ cmake_minimum_required(VERSION 3.4.1)
 
 set(NEED_ASSIMP ON)
 set(ThridLibrary "../../../../../3rd_library")
-set(ABThridLibrary "C:/Users/admin/Desktop/go/gld/android/3rd_library")
-
+#set(ABThridLibrary "C:/Users/admin/Desktop/go/gld/android/3rd_library")
+set(ABThridLibrary "D:/cpp_project/gld/android/3rd_library")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 find_package(MINI_TEST)
