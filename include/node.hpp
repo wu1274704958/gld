@@ -39,7 +39,7 @@ namespace gld{
                 {
                     if(comp->idx() <= components[i]->idx())
                     {
-                        components.attach_node(weak_ptr());
+                        comp->attach_node(weak_ptr());
                         components.insert(components.begin() + i,std::move(comp));
                         return true;
                     }
@@ -124,9 +124,39 @@ namespace gld{
         {
             return std::enable_shared_from_this<Node<Comp>>::shared_from_this();
         }
-        std::shared_ptr<Node<Comp>> weak_ptr() 
+        std::weak_ptr<Node<Comp>> weak_ptr() 
         {
             return std::enable_shared_from_this<Node<Comp>>::weak_from_this();
+        }
+        bool init()
+        {
+            bool res = true;
+            for(auto &comp : children)
+                res = comp->init();
+            for(auto &ch : children)
+                res = ch->init();
+            return res;
+        }
+        void on_draw()
+        {
+            for(auto &comp : children)
+                comp->on_draw();
+            for(auto &ch : children)
+                ch->on_draw();
+        }
+        void draw()
+        {
+            for(auto &comp : children)
+                comp->draw();
+            for(auto &ch : children)
+                ch->draw();
+        }
+        void update()
+        {
+            for(auto &comp : children)
+                comp->update();
+            for(auto &ch : children)
+                ch->update();
         }
     protected:
         void clear_parent()

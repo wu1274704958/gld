@@ -1,5 +1,9 @@
+#pragma once
+
 #include <component.h>
 #include <gl_comm.hpp>
+#include <glm_uniform.hpp>
+#include <vertex_arr.hpp>
 
 namespace gld::def{
 

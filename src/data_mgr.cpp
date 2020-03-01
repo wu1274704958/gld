@@ -4,6 +4,11 @@
 #include <sundry.hpp>
 #include <program.hpp>
 #include <serialization.hpp>
+#include <component.h>
+#include <comps/Material.hpp>
+#include <assimp/scene.h>
+#include <fileop.hpp>
+
 using namespace dbg::literal;
 
 std::string gld::LoadProgram::key_from_args(gld::LoadProgram::ArgsTy args)
@@ -112,3 +117,66 @@ gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(std::tuple<const char*,
 {
     return load(std::make_tuple(std::string(std::get<0>(args)),std::get<1>(args)));
 }
+
+std::string gld::LoadSceneNode::key_from_args(gld::LoadSceneNode::ArgsTy args)
+{
+   std::string res = std::move(std::get<0>(args));
+   res += "#";
+   res += wws::to_string(std::get<1>(args));
+   return res;
+}
+std::string gld::LoadSceneNode::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args)
+{
+   std::string res = std::get<0>(args);
+   res += "#";
+   res += wws::to_string(std::get<1>(args));
+   return res;
+}
+
+gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(std::tuple<const char*,unsigned int,const char*,const char*> args)
+{
+    auto [a,b,c,d] = args;
+    return load(std::make_tuple(std::string(a),b,std::string(c),std::string(d)));
+}
+
+std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiMesh* mesh,
+    std::string& parent_path)
+{
+    return std::shared_ptr<gld::Node<gld::Component>>();
+}
+
+std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const aiScene* scene,
+    std::string& parent_path)
+{
+    auto node = std::shared_ptr<gld::Node<gld::Component>>(new gld::Node<gld::Component>());
+    node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
+    for(unsigned int i = 0;i < ai_node->mNumMeshes;++i)
+    {
+        node->add_child(process_mesh(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path));
+    }
+
+    for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
+    {
+        node->add_child(process_node(ai_node->mChildren[i],scene,parent_path));
+    }
+    return node;
+}
+
+gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsTy args)
+{
+    dbg::log << "LoadSceneNode @V@"_E ;
+    auto [path,flag,vp,fp] = args;
+    auto ai = ResMgrWithGlslPreProcess::instance()->load<ResType::model>(path,flag);
+    bool s = false;
+    std::shared_ptr<Node<Component>> res;
+    std::string parent_path = wws::get_parent(path);
+    if(ai)
+    {   
+        if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path);node)
+        {
+            return make_result(s,std::move(node));
+        }
+    }
+    return make_result(s,std::move(res));
+}
+

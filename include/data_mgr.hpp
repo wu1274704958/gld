@@ -141,5 +141,19 @@ private:
         static RealRetTy load(std::tuple<const char*,int> args);
     };
 
+    struct Component;
+    template<typename Comp>
+    struct Node;
+
+    struct LoadSceneNode{
+        using RetTy = std::shared_ptr<Node<Component>>;
+        using ArgsTy = std::tuple<std::string,unsigned int,std::string,std::string>;
+        using RealRetTy = std::tuple<bool,RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static std::string key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);
+        static RealRetTy load(ArgsTy args);
+        static RealRetTy load(std::tuple<const char*,unsigned int,const char*,const char*> args);
+    };
+
     typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>> DefDataMgr;
 } // namespace gld
