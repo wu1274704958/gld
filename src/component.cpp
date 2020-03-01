@@ -46,12 +46,6 @@ namespace gld{
         {
             glm::mat4 mat = get_model();
 
-            auto n_ptr = get_node();
-            if(n_ptr && n_ptr->has_parent())
-            {
-                mat = n_ptr->get_parent()->get_comp<Transform>()->get_model() * mat;
-            }
-
             update_matrix(mat);
         }
     }
@@ -67,6 +61,12 @@ namespace gld{
         mat = glm::rotate(mat, rotate.x, glm::vec3(1.f, 0.f, 0.f));
         mat = glm::rotate(mat, rotate.y, glm::vec3(0.f, 1.f, 0.f));
         mat = glm::rotate(mat, rotate.z, glm::vec3(0.f, 0.f, 1.f));
+
+        auto n_ptr = get_node();
+        if(n_ptr && n_ptr->has_parent())
+        {
+            mat = n_ptr->get_parent()->get_comp<Transform>()->get_model() * mat;
+        }
 
         return mat;
     }

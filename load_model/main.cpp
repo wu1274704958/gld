@@ -68,7 +68,7 @@ public:
 
         auto trans = node->get_comp<Transform>();
         trans->scale = glm::vec3(0.2f,0.2f,0.2f);
-        trans->pos.y = -10.f;
+        trans->pos.y = -1.6f;
         
         cxts.push_back(std::move(node));
 
