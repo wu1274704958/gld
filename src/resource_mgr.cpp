@@ -128,6 +128,7 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::Arg
 #include <android/asset_manager.h>
 #include <native_app_glue/android_native_app_glue.h>
 #include <log.hpp>
+#include <assimp_iosystem.h>
 using  namespace dbg::literal;
 
 std::tuple<std::unique_ptr<char[]>,std::uint64_t> load_byte(gld::AndroidCxtPtrTy cxt,const std::string& uri)
@@ -212,10 +213,10 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::AndroidCxtPtrTy cxt,gld::Pat
 	if(ptr)
 	{
 		Assimp::Importer* importer = new Assimp::Importer();
-		auto suff = wws::get_suffix(p);
-		const aiScene* scene = importer->ReadFileFromMemory(ptr.get(),len,flag,suff.c_str());
+		importer->SetIOHandler(new AAndIosSys(cxt));
+		const aiScene* scene = importer->ReadFile(p,flag);
 
-		dbg::log << "(scene == nullptr) " << (scene == nullptr) << "  " << suff << dbg::endl;
+		dbg::log << "(scene == nullptr) " << (scene == nullptr) << dbg::endl;
 		dbg::log << "msg " << importer->GetErrorString() << dbg::endl;
 		if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) // if is Not Zero
 		{
@@ -227,5 +228,87 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::AndroidCxtPtrTy cxt,gld::Pat
 	}
 	return std::make_tuple(false,std::shared_ptr<Assimp::Importer>());
 }
+
+
+
+bool gld::AAndIosSys::Exists( const char* pFile) const 
+{
+	auto mgr = cxt->app->activity->assetManager;
+	auto assets = AAssetManager_open(mgr,pFile,AASSET_MODE_BUFFER);
+	bool res = (assets != nullptr);
+	AAsset_close(assets);
+	return res;
+}
+
+char gld::AAndIosSys::getOsSeparator() const 
+{
+	return '/';
+}
+
+Assimp::IOStream* gld::AAndIosSys::Open(const char* pFile,const char* pMode) 
+{
+	AAssetManager* mgr = cxt->app->activity->assetManager;
+
+	AAsset* asset = AAssetManager_open(mgr,pFile,AASSET_MODE_STREAMING);
+	if (asset)
+	{
+		return new AAndIosStream(asset);
+	}
+	return nullptr;
+}
+
+void gld::AAndIosSys::Close( Assimp::IOStream* pFile) 
+{
+	delete pFile;
+}
+
+gld::AAndIosStream::AAndIosStream(AAsset* asset)
+{
+	this->asset = asset;
+	pos = 0;
+}
+gld::AAndIosStream::~AAndIosStream()
+{
+	if(asset)
+		AAsset_close(asset);
+}
+size_t gld::AAndIosStream::Read(void* pvBuffer,size_t pSize,size_t pCount)
+{
+	size_t p = static_cast<size_t>(AAsset_read(asset, pvBuffer, pSize * pCount));
+	if(p > 0)
+		pos += p;
+	return p;
+}
+size_t gld::AAndIosStream::Write(const void* pvBuffer,size_t pSize,size_t pCount)
+{
+	return 0;
+}
+aiReturn gld::AAndIosStream::Seek(size_t pOffset,aiOrigin pOrigin)
+{
+	off64_t p = -1;
+	if((p = AAsset_seek64(asset,pOffset,pOrigin)) == -1)
+	{
+		return AI_FAILURE;
+	}else
+	{
+		pos = static_cast<size_t>(p);
+		return AI_SUCCESS;
+	}
+}
+size_t gld::AAndIosStream::Tell() const
+{
+	return pos;
+}
+
+size_t gld::AAndIosStream::FileSize() const
+{
+	return static_cast<size_t>(AAsset_getLength(asset));
+}
+
+void gld::AAndIosStream::Flush()
+{
+
+}
+
 
 #endif
