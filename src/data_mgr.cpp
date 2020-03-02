@@ -142,11 +142,13 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(std::tuple<const char*,un
 std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string parent,aiMaterial *material,aiTextureType ty,int i)
 {
     aiString path;
-    material->GetTexture(aiTextureType_DIFFUSE,0,&path);
-    if(path.C_Str())
+    material->GetTexture(ty,i,&path);
+    dbg::log << "get_material_tex @V@"_E <<"path " << path.C_Str() << " count " << material->GetTextureCount(ty) << dbg::endl;
+    if(path.length > 0)
     {
         parent += '/';
         parent += path.C_Str();
+        dbg::log <<"parent " << parent << dbg::endl;
         return gld::DefDataMgr::instance()->load<gld::DataType::Texture2D>(parent,0);
     }
     return std::shared_ptr<gld::Texture<gld::TexType::D2>>();
@@ -236,12 +238,13 @@ std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const ai
 
 gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsTy args)
 {
-    dbg::log << "LoadSceneNode @V@"_E ;
     auto [path,flag,vp,fp] = args;
-    auto ai = ResMgrWithGlslPreProcess::instance()->load<ResType::model>(path,flag);
+    dbg::log << "LoadSceneNode @V@"_E << "path " << path << dbg::endl;
+    auto ai = ResMgrWithGlslPreProcess::instance()->load<ResType::model>(std::string(path),flag);
     bool s = false;
     std::shared_ptr<Node<Component>> res;
     std::string parent_path = wws::get_parent(path);
+    //dbg::log << "path " << path << "parent_path " << parent_path << dbg::endl;
     if(ai)
     {   
         if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
