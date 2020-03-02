@@ -63,8 +63,10 @@ namespace gld::def{
         }
         void on_draw() override
         {
-            diffuseTex->active<ActiveTexId::_0>();
-            specularTex->active<ActiveTexId::_1>();
+            if(diffuseTex)
+                diffuseTex->active<ActiveTexId::_0>();
+            if(specularTex)
+                specularTex->active<ActiveTexId::_1>();
 
             uspecularTex.sync();
             udiffuseTex.sync();
