@@ -43,6 +43,11 @@ namespace gld{
             return false;
         }
 
+        void clear_all()
+        {
+            map.clear();
+        }
+
         std::unordered_map<Key,CacheTy> map;
 
         inline static std::shared_ptr<ResCache<T,Key>> instance()
@@ -82,6 +87,11 @@ namespace gld{
         decltype(auto) rm_cache(Key&& k)
         {
             return ResCache<typename MapResPlug<Rt,Plugs...>::type>::instance()->rm_cache(std::forward<Key>(k));
+        }
+
+        void clear_all()
+        {
+            (ResCache<typename Plugs::type>::instance()->clear_all(),...);
         }
 
         //std::tuple<ResCache<typename Plugs::Ret> ...> tup;

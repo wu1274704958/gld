@@ -112,6 +112,11 @@ namespace gld
             self = std::shared_ptr<DataMgr<Plugs...>>(new DataMgr<Plugs...>(std::forward<T>(t)));
             return self;
         }
+
+        void clear_all()
+        {
+            ResCacheMgr<Plugs...>::instance()->clear_all();
+        }
 protected:
 private:    
     inline static std::shared_ptr<DataMgr<Plugs...>> self;

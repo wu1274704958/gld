@@ -217,6 +217,11 @@ namespace gld{
             return rm_cache(std::forward<Uri>(uri),Ty::default_args());
         }
 
+        void clear_all()
+        {
+            ResCacheMgr<Plugs...>::instance()->clear_all();
+        }
+
         inline static std::shared_ptr<ResourceMgr<Separator,Plugs...>> instance()
         {
             return self;

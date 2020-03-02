@@ -19,6 +19,7 @@
 //#include <d1/main.cpp>
 //#include <lighting_2/main.cpp>
 #include <load_model/main.cpp>
+#include <data_mgr.hpp>
 using namespace gld;
 
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
@@ -83,6 +84,7 @@ extern "C" {
         }
         cxt_p->destroy_surface();
         Loge("exit!!!");
+        DefDataMgr::instance()->clear_all();
     }
 
     static void ProcessAndroidCmd(struct android_app* app, int32_t cmd) {

@@ -34,7 +34,7 @@ gld::LoadProgram::RealRetTy gld::LoadProgram::load(std::tuple<const char*,const 
 
 gld::LoadProgram::RealRetTy gld::LoadProgram::load(gld::LoadProgram::ArgsTy args)
 {
-    dbg::log << "data mgr @V@"_E ;
+    dbg::log << "data mgr @V@"_E << "load program " << dbg::endl;
 
     bool s = false;
     std::shared_ptr<Program> res;
@@ -249,6 +249,7 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsT
     {   
         if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
         {
+            s = true;
             return make_result(s,std::move(node));
         }
     }
