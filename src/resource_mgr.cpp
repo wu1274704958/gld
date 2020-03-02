@@ -130,7 +130,7 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::Arg
 #include <log.hpp>
 using  namespace dbg::literal;
 
-std::tuple<std::unique_ptr<char[]>,std::uint64_t> load_byte(gld::AndroidCxtPtrTy cxt,std::string& uri)
+std::tuple<std::unique_ptr<char[]>,std::uint64_t> load_byte(gld::AndroidCxtPtrTy cxt,const std::string& uri)
 {
 	AAssetManager* mgr = cxt->app->activity->assetManager;
 
