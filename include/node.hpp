@@ -77,6 +77,10 @@ namespace gld{
         {
             return components.size() > idx;
         }
+        bool good_child_idx(int idx)
+        {
+            return children.size() > idx;
+        }
         std::shared_ptr<Node<Comp>> get_parent()
         {
             return parent.lock();
@@ -109,7 +113,7 @@ namespace gld{
             if(auto it = std::find(children.begin(),children.end(),ch);it != children.end())
             {
                 auto child = children.erase(it);
-                (*child)->clear_parent();
+                ch->clear_parent();
                 return true;
             }
             return false;
@@ -138,17 +142,14 @@ namespace gld{
                 res = ch->init();
             return res;
         }
-        void on_draw()
-        {
-            for(auto &comp : components)
-                comp->on_draw();
-            for(auto &ch : children)
-                ch->on_draw();
-        }
+      
         void draw()
         {
             for(auto &comp : components)
+            {   
+                comp->on_draw();
                 comp->draw();
+            }
             for(auto &ch : children)
                 ch->draw();
         }
@@ -159,10 +160,18 @@ namespace gld{
             for(auto &ch : children)
                 ch->update();
         }
+        std::shared_ptr<Node<Comp>> get_child(int idx)
+        {
+            if(good_child_idx(idx))
+            {
+                return children[idx];
+            }
+            return std::shared_ptr<Node<Comp>>();
+        }
     protected:
         void clear_parent()
         {
-            parent.reset();
+            parent = std::weak_ptr<Node<Comp>>();
         }
 
     protected:

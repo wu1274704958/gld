@@ -220,7 +220,7 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
 }
 
 std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const aiScene* scene,
-    std::string& parent_path,std::string& vp,std::string& fp)
+    std::string& parent_path,std::string& vp,std::string& fp,int deep = 0x7fffffff)
 {
     auto node = std::shared_ptr<gld::Node<gld::Component>>(new gld::Node<gld::Component>());
     node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
@@ -228,10 +228,12 @@ std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const ai
     {
         node->add_child(process_mesh(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp));
     }
-
-    for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
+    if(deep > 0)
     {
-        node->add_child(process_node(ai_node->mChildren[i],scene,parent_path,vp,fp));
+        for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
+        {
+            node->add_child(process_node(ai_node->mChildren[i],scene,parent_path,vp,fp,deep - 1));
+        }
     }
     return node;
 }
