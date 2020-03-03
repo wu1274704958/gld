@@ -35,6 +35,18 @@ namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
+struct AutoRotate : public Component
+{
+    void update() override
+    {
+        auto trans = node.lock()->get_comp<Transform>();
+        if(trans->rotate.y > glm::pi<float>() * 2.0)
+            trans->rotate.y = 0.f;
+        else
+            trans->rotate.y += 0.01f; 
+    }
+};
+
 class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : view_pos("view_pos"), perspective("perspective"), world("world")
@@ -57,11 +69,13 @@ public:
         perspective.attach_program(program);
         world.attach_program(program);
 
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        //glEnable(GL_BLEND);
+        //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        glDisable(GL_CULL_FACE);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
 
         auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
             "lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
@@ -70,9 +84,9 @@ public:
         trans->scale = glm::vec3(0.2f,0.2f,0.2f);
         trans->pos.y = -1.6f;
         
-        cxts.push_back(std::move(node));
+        cxts.push_back(node);
 
-        
+        node->add_comp(std::make_shared<AutoRotate>());
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -155,9 +169,6 @@ public:
       
         perspective.sync();
         world.sync();
-
-        for (auto& p : cxts)
-            p->on_draw();
 
         for (auto& p : cxts)
             p->draw();
