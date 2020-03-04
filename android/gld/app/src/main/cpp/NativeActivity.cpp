@@ -20,6 +20,7 @@
 //#include <lighting_2/main.cpp>
 #include <load_model/main.cpp>
 #include <data_mgr.hpp>
+#include <frame_rate.h>
 using namespace gld;
 
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"NativeActivity @V@",f,##__VA_ARGS__)
@@ -58,6 +59,7 @@ extern "C" {
         // loop waiting for stuff to do.
         while (cxt_p->is_runing()) {
             // Read all pending events.
+            auto calc = gld::FrameRate::calculator();
             int events;
             struct android_poll_source *source;
 

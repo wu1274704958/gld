@@ -1,6 +1,7 @@
 
 #ifndef PF_ANDROID
 #include <glad/glad.h>
+#include <frame_rate.h>
 #define Loge(...)
 #else
 #include <EGLCxt.h>
@@ -137,6 +138,7 @@ void RenderDemo::run()
 #ifndef PF_ANDROID
     while (!glfwWindowShouldClose(m_window))
 	{
+        auto clac = gld::FrameRate::calculator();
         draw();
         glfwSwapBuffers(m_window);
 		glfwPollEvents();

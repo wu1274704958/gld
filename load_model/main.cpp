@@ -29,6 +29,7 @@
 #include <data_mgr.hpp>
 #include <component.h>
 #include <comps/Material.hpp>
+#include <frame_rate.h>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -43,7 +44,7 @@ struct AutoRotate : public Component
         if(trans->rotate.y > glm::pi<float>() * 2.0)
             trans->rotate.y = 0.f;
         else
-            trans->rotate.y += 0.01f; 
+            trans->rotate.y += 0.001f * FrameRate::get_ms(); 
     }
 };
 
