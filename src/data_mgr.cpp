@@ -251,7 +251,6 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsT
     {   
         if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
         {
-            s = true;
             return make_result(s,std::move(node));
         }
     }
