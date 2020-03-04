@@ -11,6 +11,7 @@
 
 #include <RenderDemo.h>
 #include <resource_mgr.hpp>
+#include <thread>
 
 std::vector<RenderDemo*> RenderDemo::WindowResizeListeners = std::vector<RenderDemo*>();
 std::vector<RenderDemo*> RenderDemo::MouseButtonListeners = std::vector<RenderDemo*>();
@@ -138,6 +139,13 @@ void RenderDemo::run()
 #ifndef PF_ANDROID
     while (!glfwWindowShouldClose(m_window))
 	{
+        if(width == 0 || height == 0)
+        {
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(1ms);
+            glfwPollEvents();
+            continue;
+        }
         auto clac = gld::FrameRate::calculator();
         draw();
         glfwSwapBuffers(m_window);
