@@ -173,6 +173,8 @@ public:
         for (auto& p : cxts)
             p->draw();
 
+        program->use();
+
         update();
         update_matrix();
 
