@@ -145,11 +145,12 @@ namespace gld{
       
         void draw()
         {
-            for(auto &comp : components)
-            {   
-                comp->on_draw();
+            for(auto &comp : components) 
+                comp->before_draw();
+            for(auto &comp : components) 
                 comp->draw();
-            }
+            for(int64_t i = static_cast<int64_t>(components.size() - 1);i >= 0;--i)
+                components[i]->after_draw();
             for(auto &ch : children)
                 ch->draw();
         }

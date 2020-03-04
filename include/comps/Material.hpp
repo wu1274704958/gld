@@ -61,7 +61,7 @@ namespace gld::def{
 
             return f;
         }
-        void on_draw() override
+        void draw() override
         {
             if(diffuseTex)
                 diffuseTex->active<ActiveTexId::_0>();
@@ -100,10 +100,6 @@ namespace gld::def{
             vertex_size(vertex_size),
             vao(std::move(vao))
         {   
-
-        }
-        void on_draw() override
-        {
 
         }
         void draw() override

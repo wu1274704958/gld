@@ -15,8 +15,9 @@ namespace gld{
         virtual bool init(){return true;}
         virtual void attach_node(std::weak_ptr<Node<Component>> n){ node = n; }
         virtual void reset_node(){node.reset();}
-        virtual void on_draw(){}
+        virtual void before_draw(){}
         virtual void draw(){}
+        virtual void after_draw(){}
         virtual void update(){}
         virtual int64_t idx() { return 0;}
         virtual ~Component(){}
@@ -30,7 +31,8 @@ namespace gld{
         Render(std::string vert_path,std::string frag_path) : vert_path(vert_path) , frag_path(frag_path) 
         {}
         bool init() override;
-        void on_draw() override;
+        void before_draw() override;
+        void after_draw() override;
         int64_t idx() override;
         std::shared_ptr<Program> get();
         std::string vert_path,frag_path;
@@ -46,7 +48,7 @@ namespace gld{
 
         bool init() override ;
 
-        void on_draw() override ;
+        void draw() override ;
 
         glm::mat4 get_model();
 

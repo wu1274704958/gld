@@ -6,9 +6,13 @@ namespace gld{
         program = DefDataMgr::instance()->load<DataType::Program>(vert_path,frag_path);
         return (bool)program;
     }
-    void Render::on_draw() 
+    void Render::before_draw() 
     {
         program->use();
+    }
+    void Render::after_draw() 
+    {
+        program->unuse();
     }
     int64_t Render::idx() { return -100;}
     std::shared_ptr<Program> Render::get()
@@ -40,7 +44,7 @@ namespace gld{
         return true;
     }
 
-    void Transform::on_draw()
+    void Transform::draw()
     {
         if(!no_render)
         {
