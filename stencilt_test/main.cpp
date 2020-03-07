@@ -86,6 +86,9 @@ public:
         glCullFace(GL_BACK);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS,1,0xFF);
+        glStencilOp(GL_KEEP,GL_KEEP,GL_REPLACE);
 
         auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
             "lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
@@ -99,9 +102,10 @@ public:
             "base/base_vs.glsl","base/base_fg.glsl");
 
         trans = base_node->get_comp<Transform>();
-        trans->scale = glm::vec3(0.2f,0.2f,0.2f);
-        trans->pos.y = -1.6f;
-        trans->pos.x = -0.7f;
+        trans->scale = glm::vec3(0.21f,0.21f,0.21f);
+        trans->pos.y = -1.71f;
+        //trans->pos.z = 0.01f;
+        base_node->add_comp(std::make_shared<AutoRotate>());
         
         cxts.push_back(node);
         cxts.push_back(base_node);
@@ -183,7 +187,7 @@ public:
 
     void draw() override
     {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         program->use();
         perspective.attach_program(program);
         world.attach_program(program);
@@ -196,10 +200,19 @@ public:
         perspective.sync();
         world.sync();
 
-        for (auto& p : cxts)
-            p->draw();
+        // for (auto& p : cxts)
+        //     p->draw();
 
+        glStencilMask(0xff);
+        glStencilFunc(GL_ALWAYS,1,0xff);
+
+        cxts[0]->draw();
+
+        glStencilFunc(GL_NOTEQUAL,1,0xff);
         
+        glStencilMask(0x0);
+
+        cxts[1]->draw();
 
         update();
         update_matrix();
