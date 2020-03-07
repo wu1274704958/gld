@@ -72,7 +72,7 @@ public:
 
         Uniform<UT::Vec3> fill_color("fill_color",base_p);
         
-        glm::vec3 f_color = glm::vec3(0.2f,0.8f,0.0f);
+        glm::vec3 f_color = glm::vec3(0.04f, 0.28f, 0.26f);
         fill_color = glm::value_ptr(f_color);
 
         view_pos.attach_program(program);
@@ -102,9 +102,9 @@ public:
             "base/base_vs.glsl","base/base_fg.glsl");
 
         trans = base_node->get_comp<Transform>();
-        trans->scale = glm::vec3(0.21f,0.21f,0.21f);
-        trans->pos.y = -1.71f;
-        //trans->pos.z = 0.01f;
+        trans->scale = glm::vec3(0.2f,0.2f,0.2f);
+        trans->pos.y = -1.6f;
+        trans->pos.z = 0.05f;
         base_node->add_comp(std::make_shared<AutoRotate>());
         
         cxts.push_back(node);
