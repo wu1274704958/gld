@@ -263,29 +263,16 @@ typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(typename g
     return make_result(s,std::move(res));
 }
 
+#define InstanctationLoadSceneNode(TY)  \
+template gld::LoadSceneNode<gld::SceneLoadMode::TY>;    \
+template typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::TY>::load(typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::ArgsTy args);\
+template std::string gld::LoadSceneNode<gld::SceneLoadMode::TY>::key_from_args(gld::LoadSceneNode<gld::SceneLoadMode::TY>::ArgsTy args);    \
+template std::string gld::LoadSceneNode<gld::SceneLoadMode::TY>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);  \
+template typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::TY>::load(std::tuple<const char*,unsigned int,const char*,const char*> args);    \
+template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::TY>    \
+    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);    \
+template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::TY>(aiNode *,const aiScene* ,  \
+    std::string& ,std::string& ,std::string& ,int );    
 
-template gld::LoadSceneNode<gld::SceneLoadMode::Default>;
-template gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>;
-
-template typename gld::LoadSceneNode<gld::SceneLoadMode::Default>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::Default>::load(typename gld::LoadSceneNode<gld::SceneLoadMode::Default>::ArgsTy args);
-template typename gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::load(typename gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::ArgsTy args);
-
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::Default>::key_from_args(gld::LoadSceneNode<gld::SceneLoadMode::Default>::ArgsTy args);
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::key_from_args(gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::ArgsTy args);
-
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::Default>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);
-
-template typename gld::LoadSceneNode<gld::SceneLoadMode::Default>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::Default>::load(std::tuple<const char*,unsigned int,const char*,const char*> args);
-template typename gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>::load(std::tuple<const char*,unsigned int,const char*,const char*> args);
-
-template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::Default>
-    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);
-template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::NoMaterial>
-    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);
-
-template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::Default>(aiNode *,const aiScene* ,
-    std::string& ,std::string& ,std::string& ,int );
-
-template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::NoMaterial>(aiNode *,const aiScene* ,
-    std::string& ,std::string& ,std::string& ,int );
+InstanctationLoadSceneNode(Default)
+InstanctationLoadSceneNode(NoMaterial)
