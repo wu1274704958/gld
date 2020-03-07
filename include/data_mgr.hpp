@@ -150,7 +150,15 @@ private:
     template<typename Comp>
     struct Node;
 
+    enum class SceneLoadMode : uint32_t
+    {
+        Default = 0x0,
+        NoMaterial = 0x1
+    };
+
+    template<SceneLoadMode M>
     struct LoadSceneNode{
+        constexpr static SceneLoadMode LoadMode = M;
         using RetTy = std::shared_ptr<Node<Component>>;
         using ArgsTy = std::tuple<std::string,unsigned int,std::string,std::string>;
         using RealRetTy = std::tuple<bool,RetTy>;
@@ -162,5 +170,7 @@ private:
 
     typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,
         DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>,
-        DataLoadPlugTy<DataType::Scene,LoadSceneNode>> DefDataMgr;
+        DataLoadPlugTy<DataType::Scene,LoadSceneNode<SceneLoadMode::Default>>,
+        DataLoadPlugTy<DataType::SceneNoMaterial,LoadSceneNode<SceneLoadMode::NoMaterial>>
+        > DefDataMgr;
 } // namespace gld

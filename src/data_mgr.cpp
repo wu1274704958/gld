@@ -117,15 +117,16 @@ gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(std::tuple<const char*,
 {
     return load(std::make_tuple(std::string(std::get<0>(args)),std::get<1>(args)));
 }
-
-std::string gld::LoadSceneNode::key_from_args(gld::LoadSceneNode::ArgsTy args)
+template<gld::SceneLoadMode M>
+std::string gld::LoadSceneNode<M>::key_from_args(gld::LoadSceneNode<M>::ArgsTy args)
 {
    std::string res = std::move(std::get<0>(args));
    res += "#";
    res += wws::to_string(std::get<1>(args));
    return res;
 }
-std::string gld::LoadSceneNode::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args)
+template<gld::SceneLoadMode M>
+std::string gld::LoadSceneNode<M>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args)
 {
    std::string res = std::get<0>(args);
    res += "#";
@@ -133,7 +134,8 @@ std::string gld::LoadSceneNode::key_from_args(std::tuple<const char*,unsigned in
    return res;
 }
 
-gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(std::tuple<const char*,unsigned int,const char*,const char*> args)
+template<gld::SceneLoadMode M>
+typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(std::tuple<const char*,unsigned int,const char*,const char*> args)
 {
     auto [a,b,c,d] = args;
     return load(std::make_tuple(std::string(a),b,std::string(c),std::string(d)));
@@ -154,6 +156,7 @@ std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string par
     return std::shared_ptr<gld::Texture<gld::TexType::D2>>();
 }
 
+template<gld::SceneLoadMode M>
 std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiMesh* mesh,
     std::string& parent_path,std::string& vp,std::string& fp)
 {
@@ -207,18 +210,21 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
     
     std::shared_ptr<gld::def::Mesh> mesh_comp = std::shared_ptr<gld::def::Mesh>(new gld::def::Mesh(indices.size(),vertices.size(),std::move(vao)));
     res->add_comp<gld::def::Mesh>(mesh_comp);
+    if constexpr(((uint32_t)M & (uint32_t)gld::SceneLoadMode::NoMaterial) == 0x0 )
+    {
+        aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
-    aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-    
-    auto diffuse = get_material_tex(parent_path,material,aiTextureType_DIFFUSE,0);
-    auto spec = get_material_tex(parent_path,material,aiTextureType_SPECULAR,0);
-    
-    res->add_comp<gld::def::Material>(std::shared_ptr<gld::def::Material>(
-        new gld::def::Material(std::move(diffuse),std::move(spec))));
+        auto diffuse = get_material_tex(parent_path,material,aiTextureType_DIFFUSE,0);
+        auto spec = get_material_tex(parent_path,material,aiTextureType_SPECULAR,0);
 
+        res->add_comp<gld::def::Material>(std::shared_ptr<gld::def::Material>(
+            new gld::def::Material(std::move(diffuse),std::move(spec))));
+
+    }
     return res;
 }
 
+template<gld::SceneLoadMode M>
 std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const aiScene* scene,
     std::string& parent_path,std::string& vp,std::string& fp,int deep = 0x7fffffff)
 {
@@ -226,19 +232,19 @@ std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const ai
     node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
     for(unsigned int i = 0;i < ai_node->mNumMeshes;++i)
     {
-        node->add_child(process_mesh(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp));
+        node->add_child(process_mesh<M>(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp));
     }
     if(deep > 0)
     {
         for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
         {
-            node->add_child(process_node(ai_node->mChildren[i],scene,parent_path,vp,fp,deep - 1));
+            node->add_child(process_node<M>(ai_node->mChildren[i],scene,parent_path,vp,fp,deep - 1));
         }
     }
     return node;
 }
-
-gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsTy args)
+template<gld::SceneLoadMode M>
+typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(typename gld::LoadSceneNode<M>::ArgsTy args)
 {
     auto [path,flag,vp,fp] = args;
     dbg::log << "LoadSceneNode @V@"_E << "path " << path << dbg::endl;
@@ -249,7 +255,7 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsT
     //dbg::log << "path " << path << "parent_path " << parent_path << dbg::endl;
     if(ai)
     {   
-        if(auto node = process_node(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
+        if(auto node = process_node<M>(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
         {
             return make_result(s,std::move(node));
         }
@@ -257,3 +263,17 @@ gld::LoadSceneNode::RealRetTy gld::LoadSceneNode::load(gld::LoadSceneNode::ArgsT
     return make_result(s,std::move(res));
 }
 
+
+template gld::LoadSceneNode<gld::SceneLoadMode::Default>;
+template gld::LoadSceneNode<gld::SceneLoadMode::NoMaterial>;
+
+template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::Default>
+    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);
+template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::NoMaterial>
+    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);
+
+template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::Default>(aiNode *,const aiScene* ,
+    std::string& ,std::string& ,std::string& ,int );
+
+template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::NoMaterial>(aiNode *,const aiScene* ,
+    std::string& ,std::string& ,std::string& ,int );

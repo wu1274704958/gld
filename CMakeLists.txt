@@ -80,6 +80,10 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     target_link_libraries(load_model ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 
+    add_executable(stencilt_test stencilt_test/main.cpp  glad.c ${ALL_SOURCE_FILES})
+
+    target_link_libraries(stencilt_test ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
+
 endif()
 
         

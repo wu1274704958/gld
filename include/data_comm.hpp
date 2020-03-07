@@ -7,7 +7,8 @@ namespace gld{
     enum class DataType{
         Program = 0x100,
         Texture2D,
-        Scene
+        Scene,
+        SceneNoMaterial
     };
 
     namespace data_ck{

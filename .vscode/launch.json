@@ -94,5 +94,16 @@
             "environment": [],
             "externalConsole": false
         }
+        ,{
+            "name": "stencilt_test",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/stencilt_test.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        }
     ]
 }
