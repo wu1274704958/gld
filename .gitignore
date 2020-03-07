@@ -13,3 +13,5 @@ android/3rd_library/assimp/x86/*.a
 android/3rd_library/assimp/x86_64/*.a
 
 android/gld/app/.cxx/**
+android/gld/gradle/wrapper/gradle-wrapper.properties
+android/gld/build.gradle
