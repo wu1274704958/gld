@@ -102,9 +102,9 @@ public:
             "base/base_vs.glsl","base/base_fg.glsl");
 
         trans = base_node->get_comp<Transform>();
-        trans->scale = glm::vec3(0.2f,0.2f,0.2f);
-        trans->pos.y = -1.6f;
-        trans->pos.z = 0.05f;
+        trans->scale = glm::vec3(0.205f,0.205f,0.205f);
+        trans->pos.y = -1.64f;
+        trans->pos.z = 1.49012e-08f;
         base_node->add_comp(std::make_shared<AutoRotate>());
         
         cxts.push_back(node);
@@ -167,6 +167,46 @@ public:
         return 0;
     }
 
+    void onMouseButton(int btn,int action,int mode) override
+    {
+        //dbg::log << btn << " " << action << " " << mode << dbg::endl;
+        if(action == GLFW_RELEASE)
+        { 
+            switch (btn)
+            {
+            case 2:
+                adjust_z = !adjust_z;
+                break;
+            case 4://up
+            {
+                adjust(-0.01f);
+                break;            
+            }
+            case 3://down
+            {
+                adjust(0.01f);
+                break;
+            }
+            }
+            
+        }
+        RenderDemoRotate::onMouseButton(btn,action,mode);
+    }
+
+    void adjust(float off)
+    {
+        if(adjust_z)
+        {
+            auto trans = cxts[1]->get_comp<Transform>();
+            trans->pos.z += off;
+            dbg::log << "pos z " << trans->pos.z << dbg::endl;
+        }else{
+            auto trans = cxts[1]->get_comp<Transform>();
+            trans->pos.y += off;
+            dbg::log << "pos y " << trans->pos.y << dbg::endl;
+        }
+    }
+
     void loadModel()
     {
         auto res = ResMgrWithGlslPreProcess::instance()->load<ResType::model>("model/nanosuit/nanosuit.obj");
@@ -213,6 +253,7 @@ public:
         glStencilMask(0x0);
 
         cxts[1]->draw();
+        glStencilMask(0xff);
 
         update();
         update_matrix();
@@ -260,6 +301,7 @@ private:
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     float pl_angle = 0.0f;
+    bool adjust_z = true;
 };
 
 #ifndef PF_ANDROID
