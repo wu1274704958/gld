@@ -15,3 +15,9 @@ android/3rd_library/assimp/x86_64/*.a
 android/gld/app/.cxx/**
 android/gld/gradle/wrapper/gradle-wrapper.properties
 android/gld/build.gradle
+android/gld/gradle.properties
+android/gld/local.properties
+android/gld/build/**
+android/gld/app/.externalNativeBuild/**
+android/gld/.idea/**
+android/gld/.gradle/**
