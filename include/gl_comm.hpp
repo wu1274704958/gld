@@ -18,6 +18,11 @@ namespace gld
         UNIFORM = 0x8A11
     };
 
+    enum class BufferType{
+        FRAME = 0x8D40,
+        RENDER = 0x8D41
+    };
+
     template <size_t ...I>
     struct IdxArr;
 

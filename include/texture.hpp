@@ -278,6 +278,11 @@ namespace gld{
         {
             return id > 0;
         }
+
+        Glid get_id()
+        {
+            return id;
+        }
     protected:
         Glid id;
     };
