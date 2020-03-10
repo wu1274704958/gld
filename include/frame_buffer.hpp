@@ -57,7 +57,10 @@ namespace gld{
         template <BufferType Bt>
         void attach_buffer(GLenum attachment, GLenum renderbuffertarget, buf::Buffer<Bt> renderbuffer)
         {
-            glFramebufferRenderbuffer(static_cast<size_t>(BT), attachment, static_cast<size_t>(Bt), renderbuffer.get_id());
+            if constexpr(Bt == BufferType::RENDER)
+            {
+                glFramebufferRenderbuffer(static_cast<size_t>(BT), attachment, static_cast<size_t>(Bt), renderbuffer.get_id());
+            }
         }
         
     };
