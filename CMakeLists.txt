@@ -19,6 +19,8 @@ else()
 
 endif()
 
+include(cmake/CreateExample.cmake)
+
 find_package(GLM)
 find_package(GLFW3)
 find_package(MINI_TEST)
@@ -83,6 +85,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     add_executable(stencilt_test stencilt_test/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
     target_link_libraries(stencilt_test ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
+
+    CreateExample(DIR framebuffer FILES main.cpp)
 
 endif()
 
