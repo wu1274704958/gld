@@ -38,7 +38,7 @@ namespace gld{
         }
 
         template <TexType TT>
-        void attach_texture(Texture<TT> texture, GLenum attachment, GLenum textarget, GLint level, GLint zoffset = 0)
+        void attach_texture(Texture<TT>& texture, GLenum attachment, GLint level, GLint zoffset = 0)
         {
             if constexpr(TT == TexType::D3)
             {
@@ -55,7 +55,7 @@ namespace gld{
         }
 
         template <BufferType Bt>
-        void attach_buffer(GLenum attachment, GLenum renderbuffertarget, buf::Buffer<Bt> renderbuffer)
+        void attach_buffer(GLenum attachment,buf::Buffer<Bt>& renderbuffer)
         {
             if constexpr(Bt == BufferType::RENDER)
             {

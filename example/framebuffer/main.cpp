@@ -49,6 +49,33 @@ struct AutoRotate : public Component
     }
 };
 
+struct ScreenMat : public Component
+{
+    ScreenMat(std::shared_ptr<Texture<TexType::D2>> tex) :
+        utex("screenTexture"),
+        tex(std::move(tex))
+    {
+        utex = 0;
+    }
+    bool init() override
+    {
+        auto n_ptr = get_node();
+        auto render = n_ptr->get_comp<Render>();
+        utex.attach_program(render->get());
+        return true;
+    }
+    void draw() override
+    {
+        if(tex)
+            tex->active<ActiveTexId::_0>();
+
+        utex.sync();
+    }
+        
+    GlmUniform<UT::Sampler2D> utex;
+    std::shared_ptr<Texture<TexType::D2>> tex;
+};
+
 #define VER_PATH "lighting_5/base_vs.glsl"
 #define FRAG_PATH "lighting_5/base_fg.glsl"
 
@@ -69,6 +96,9 @@ public:
             "shininess","specularTex"
         );
 
+        auto p = DefDataMgr::instance()->load<DataType::Program>("framebuffer/vert.glsl","framebuffer/frag.glsl");
+        p->use();
+        p->locat_uniforms("screenTexture");
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
@@ -138,6 +168,17 @@ public:
              5.0f, -0.5f, -5.0f,  0.0f,  1.0f,  0.0f,  2.0f, 2.0f
         };
 
+        float quadVertices[] = { // vertex attributes for a quad that fills the entire screen in Normalized Device Coordinates.
+        // positions   // texCoords
+            -1.0f,  1.0f,  0.0f, 1.0f,
+            -1.0f, -1.0f,  0.0f, 0.0f,
+             1.0f, -1.0f,  1.0f, 0.0f,
+
+            -1.0f,  1.0f,  0.0f, 1.0f,
+             1.0f, -1.0f,  1.0f, 0.0f,
+             1.0f,  1.0f,  1.0f, 1.0f
+        };
+
         auto cube_vao = std::make_shared<gld::VertexArr>();
         cube_vao->create();
         cube_vao->create_arr<gld::ArrayBufferType::VERTEX>();
@@ -160,8 +201,19 @@ public:
          gld::VAP_DATA<2,float,false>>();
         plane_vao->unbind();
 
+        auto quad_vao = std::make_shared<gld::VertexArr>();
+        quad_vao->create();
+        quad_vao->create_arr<gld::ArrayBufferType::VERTEX>();
+        quad_vao->bind();
+        quad_vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(quadVertices,GL_STATIC_DRAW);
+        quad_vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+         gld::VAP_DATA<2,float,false>,
+         gld::VAP_DATA<2,float,false>>();
+        quad_vao->unbind();
+
         auto cube_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(cubeVertices)/8,cube_vao ));
         auto plane_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(planeVertices)/8,plane_vao ));
+        auto quad_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(quadVertices)/4,quad_vao ));
 
         auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
         auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/metal.png",0);
@@ -193,6 +245,36 @@ public:
         cxts.push_back(cube);
         cxts.push_back(cube2);
         cxts.push_back(plane);
+
+        auto screen_tex = std::make_shared<Texture<TexType::D2>>();
+        screen_tex->create();
+        screen_tex->bind();
+        screen_tex->tex_image(0,GL_RGB,0,GL_RGB,(unsigned char *)nullptr,width,height);
+        screen_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
+        screen_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+
+        auto quad_mat = std::shared_ptr<ScreenMat>(new ScreenMat(screen_tex));
+
+        screen  = std::make_shared<Node<Component>>();
+        screen->add_comp<def::Mesh>(quad_mesh);
+        screen->add_comp<ScreenMat>(quad_mat);
+        screen->add_comp<Render>(std::shared_ptr<Render>(new Render("framebuffer/vert.glsl","framebuffer/frag.glsl")));
+
+
+        fb.create();
+        fb.bind();
+        fb.attach_texture(*screen_tex.get(),GL_COLOR_ATTACHMENT0,0);
+        
+        rb.create();
+        rb.bind();
+        rb.storage(GL_DEPTH24_STENCIL8,width,height);
+        
+        fb.attach_buffer(GL_DEPTH_STENCIL_ATTACHMENT,rb);
+
+        dbg(fb.check_status() == GL_FRAMEBUFFER_COMPLETE);
+
+        fb.unbind();
+
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -246,6 +328,8 @@ public:
 
         for (auto& p : cxts)
             p->init();
+
+        screen->init();
         update_matrix();
         return 0;
     }
@@ -270,8 +354,11 @@ public:
 
     void draw() override
     {
+        fb.bind();
+        program->use();
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f); 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
       
         perspective.sync();
         world.sync();
@@ -283,6 +370,13 @@ public:
 
         update();
         update_matrix();
+
+        fb.unbind();
+        glClearColor(1.0f, 1.0f, 1.0f, 1.0f); 
+        glDisable(GL_DEPTH_TEST);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        screen->draw();
 
     }
 
@@ -301,6 +395,8 @@ public:
     {
         for (auto& p : cxts)
             p->update();
+
+        screen->update();
         
         glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
         pl_pos = glm::rotateZ(pl_pos,pl_angle);
@@ -327,6 +423,9 @@ private:
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     float pl_angle = 0.0f;
+    std::shared_ptr<Node<Component>> screen;
+    FrameBuffer fb;
+    RenderBuffer rb;
 };
 
 #ifndef PF_ANDROID
