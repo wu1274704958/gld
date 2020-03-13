@@ -81,7 +81,7 @@ struct ScreenMat : public Component
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world")
+    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") ,texHeight("TexHeight"),texWidth("TexWidth")
         {}
     int init() override
     {
@@ -98,11 +98,17 @@ public:
 
         auto p = DefDataMgr::instance()->load<DataType::Program>("framebuffer/vert.glsl","framebuffer/frag.glsl");
         p->use();
-        p->locat_uniforms("screenTexture");
+        p->locat_uniforms("screenTexture","TexWidth","TexHeight");
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
         world.attach_program(program);
+
+        texHeight.attach_program(p);
+        texWidth.attach_program(p);
+
+        texWidth = 800.f;
+        texHeight = 800.f;
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -418,6 +424,7 @@ public:
 private:
     std::shared_ptr<Program> program;
     UniformBuf<0,DictLight> light;
+    Uniform<UT::Float> texWidth,texHeight;
     Uniform<UT::Vec3> view_pos;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
