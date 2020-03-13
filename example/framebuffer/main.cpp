@@ -49,6 +49,9 @@ struct AutoRotate : public Component
     }
 };
 
+#define VER_PATH "lighting_5/base_vs.glsl"
+#define FRAG_PATH "lighting_5/base_fg.glsl"
+
 class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : view_pos("view_pos"), perspective("perspective"), world("world")
@@ -57,7 +60,7 @@ public:
     {
         RenderDemoRotate::init();
         
-        program = DefDataMgr::instance()->load<DataType::Program>("lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
+        program = DefDataMgr::instance()->load<DataType::Program>(VER_PATH,FRAG_PATH);
         program->use();
 
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
@@ -74,21 +77,122 @@ public:
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+        glDisable(GL_CULL_FACE);
+        //glCullFace(GL_BACK);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
 
-        auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
-            "lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
+        float cubeVertices[] = {
+            // positions          // normals           // texture coords
+         -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
+          0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  0.0f,
+          0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
+          0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
+         -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  1.0f,
+         -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
 
-        auto trans = node->get_comp<Transform>();
-        trans->scale = glm::vec3(0.2f,0.2f,0.2f);
-        trans->pos.y = -1.6f;
-        
-        cxts.push_back(node);
+         -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
+          0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  0.0f,
+          0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
+          0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
+         -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  1.0f,
+         -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
 
-        node->add_comp(std::make_shared<AutoRotate>());
+         -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
+         -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
+         -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
+         -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
+         -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
+         -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
+
+          0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
+          0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
+          0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
+          0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
+          0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
+          0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
+
+         -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
+          0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  1.0f,
+          0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
+          0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
+         -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  0.0f,
+         -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
+
+         -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,
+          0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  1.0f,
+          0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
+          0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
+         -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
+         -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
+        };
+
+        float planeVertices[] = {
+            // positions          //normal            // texture Coords 
+             5.0f, -0.5f,  5.0f,  0.0f,  1.0f,  0.0f,  2.0f, 0.0f,
+            -5.0f, -0.5f,  5.0f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f,
+            -5.0f, -0.5f, -5.0f,  0.0f,  1.0f,  0.0f,  0.0f, 2.0f,
+  
+             5.0f, -0.5f,  5.0f,  0.0f,  1.0f,  0.0f,  2.0f, 0.0f,
+            -5.0f, -0.5f, -5.0f,  0.0f,  1.0f,  0.0f,  0.0f, 2.0f,
+             5.0f, -0.5f, -5.0f,  0.0f,  1.0f,  0.0f,  2.0f, 2.0f
+        };
+
+        auto cube_vao = std::make_shared<gld::VertexArr>();
+        cube_vao->create();
+        cube_vao->create_arr<gld::ArrayBufferType::VERTEX>();
+        cube_vao->bind();
+        cube_vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(cubeVertices,GL_STATIC_DRAW);
+        cube_vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+         gld::VAP_DATA<3,float,false>,
+         gld::VAP_DATA<3,float,false>,
+         gld::VAP_DATA<2,float,false>>();
+        cube_vao->unbind();
+
+        auto plane_vao = std::make_shared<gld::VertexArr>();
+        plane_vao->create();
+        plane_vao->create_arr<gld::ArrayBufferType::VERTEX>();
+        plane_vao->bind();
+        plane_vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(planeVertices,GL_STATIC_DRAW);
+        plane_vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+         gld::VAP_DATA<3,float,false>,
+         gld::VAP_DATA<3,float,false>,
+         gld::VAP_DATA<2,float,false>>();
+        plane_vao->unbind();
+
+        auto cube_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(cubeVertices)/8,cube_vao ));
+        auto plane_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(planeVertices)/8,plane_vao ));
+
+        auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
+        auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/metal.png",0);
+
+        auto cube_mat = std::shared_ptr<def::Material>(new def::Material(dif_cube,nullptr));
+        auto plane_mat = std::shared_ptr<def::Material>(new def::Material(dif_plane,nullptr));
+
+        auto cube = std::make_shared<Node<Component>>();
+        cube->add_comp<Transform>(std::make_shared<Transform>());
+        cube->add_comp<def::Mesh>(cube_mesh);
+        cube->add_comp<def::Material>(cube_mat);
+        cube->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
+
+        auto cube2 = std::make_shared<Node<Component>>();
+        cube2->add_comp<Transform>(std::make_shared<Transform>());
+        cube2->add_comp<def::Mesh>(cube_mesh);
+        cube2->add_comp<def::Material>(cube_mat);
+        cube2->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
+
+        auto plane = std::make_shared<Node<Component>>();
+        plane->add_comp<Transform>(std::make_shared<Transform>());
+        plane->add_comp<def::Mesh>(plane_mesh);
+        plane->add_comp<def::Material>(plane_mat);
+        plane->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
+
+        cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
+        cube2->get_comp<Transform>()->pos = glm::vec3(2.0f, 0.0f, 0.0f);
+
+        cxts.push_back(cube);
+        cxts.push_back(cube2);
+        cxts.push_back(plane);
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
