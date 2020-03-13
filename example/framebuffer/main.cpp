@@ -252,6 +252,8 @@ public:
         screen_tex->tex_image(0,GL_RGB,0,GL_RGB,(unsigned char *)nullptr,width,height);
         screen_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
         screen_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+        screen_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_EDGE>();
+        screen_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_EDGE>();
 
         auto quad_mat = std::shared_ptr<ScreenMat>(new ScreenMat(screen_tex));
 
