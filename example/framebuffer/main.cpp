@@ -252,7 +252,7 @@ public:
         cxts.push_back(cube2);
         cxts.push_back(plane);
 
-        auto screen_tex = std::make_shared<Texture<TexType::D2>>();
+        screen_tex = std::make_shared<Texture<TexType::D2>>();
         screen_tex->create();
         screen_tex->bind();
         screen_tex->tex_image(0,GL_RGB,0,GL_RGB,(unsigned char *)nullptr,width,height);
@@ -420,6 +420,15 @@ public:
     void onWindowResize(int w, int h) override
     {
         glViewport(0, 0, w, h);
+        texWidth = static_cast<float>(w);
+        texHeight = static_cast<float>(h);
+
+        screen_tex->bind();
+        screen_tex->tex_image(0,GL_RGB,0,GL_RGB,(unsigned char*)nullptr,w,h);
+
+        rb.bind();
+        rb.storage(GL_DEPTH24_STENCIL8,w,h);
+
     }
 private:
     std::shared_ptr<Program> program;
@@ -435,6 +444,7 @@ private:
     std::shared_ptr<Node<Component>> screen;
     FrameBuffer fb;
     RenderBuffer rb;
+    std::shared_ptr<Texture<TexType::D2>> screen_tex;
 };
 
 #ifndef PF_ANDROID
