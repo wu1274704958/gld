@@ -35,7 +35,7 @@ void main()
     );
     if(gl_FragCoord.x < TexWidth / 2.f && gl_FragCoord.y < TexHeight / 2.f )
     {
-        FragColor = texture(screenTexture, TexCoords);//vec4(f2(),1.0);
+        FragColor = vec4(f2(),1.0);//texture(screenTexture, TexCoords);
     }else
     if(gl_FragCoord.x > TexWidth / 2.f && gl_FragCoord.y < TexHeight / 2.f )
     {
