@@ -420,9 +420,10 @@ public:
     void onWindowResize(int w, int h) override
     {
         glViewport(0, 0, w, h);
+        screen->get_comp<Render>()->get()->use();
         texWidth = static_cast<float>(w);
         texHeight = static_cast<float>(h);
-
+        screen->get_comp<Render>()->get()->unuse();
         screen_tex->bind();
         screen_tex->tex_image(0,GL_RGB,0,GL_RGB,(unsigned char*)nullptr,w,h);
 
