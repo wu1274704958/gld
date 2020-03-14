@@ -76,8 +76,8 @@ struct ScreenMat : public Component
     std::shared_ptr<Texture<TexType::D2>> tex;
 };
 
-#define VER_PATH "lighting_5/base_vs.glsl"
-#define FRAG_PATH "lighting_5/base_fg.glsl"
+#define VER_PATH "lighting_6/base_vs.glsl"
+#define FRAG_PATH "lighting_6/base_fg.glsl"
 
 class Demo1 : public RenderDemoRotate {
 public:
@@ -107,8 +107,8 @@ public:
         texHeight.attach_program(p);
         texWidth.attach_program(p);
 
-        texWidth = 800.f;
-        texHeight = 800.f;
+        texWidth = static_cast<float>(width);
+        texHeight = static_cast<float>(height);
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
