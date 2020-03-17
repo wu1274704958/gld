@@ -18,7 +18,8 @@ namespace gld{
     {
         D1 = 0x0DE0,
         D2 = 0x0DE1,
-        D3 = 0x806F
+        D3 = 0x806F,
+        CUBE = 0x8513
     };
 
     enum class TexOption{

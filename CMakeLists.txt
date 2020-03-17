@@ -87,6 +87,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_link_libraries(stencilt_test ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
 
     CreateExample(DIR framebuffer FILES main.cpp)
+    CreateExample(DIR skybox FILES main.cpp)
 
 endif()
 

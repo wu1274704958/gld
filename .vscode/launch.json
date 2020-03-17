@@ -117,6 +117,17 @@
             "cwd": "${workspaceFolder}",
             "environment": [],
             "externalConsole": false
-        }
+        },
+        {
+            "name": "skybox",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/skybox.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
     ]
 }
