@@ -97,6 +97,8 @@ public:
             "shininess","specularTex"
         );
 
+        auto cube_tex = DefDataMgr::instance()->load<DataType::TextureCube>("textures/skybox","jpg",0);
+
         auto p = DefDataMgr::instance()->load<DataType::Program>("framebuffer/vert.glsl","framebuffer/frag.glsl");
         p->use();
         p->locat_uniforms("screenTexture","TexWidth","TexHeight");

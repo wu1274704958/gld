@@ -8,7 +8,8 @@ namespace gld{
         Program = 0x100,
         Texture2D,
         Scene,
-        SceneNoMaterial
+        SceneNoMaterial,
+        TextureCube
     };
 
     namespace data_ck{
