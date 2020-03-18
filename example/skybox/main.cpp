@@ -98,7 +98,8 @@ public:
         );
 
         auto cube_tex = DefDataMgr::instance()->load<DataType::TextureCube>("textures/skybox","jpg",0);
-
+        cube_tex->bind();
+        cube_tex->generate_mipmap();
         cube_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
         cube_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
         cube_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_EDGE>();

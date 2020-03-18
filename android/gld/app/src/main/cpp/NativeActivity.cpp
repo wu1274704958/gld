@@ -19,7 +19,7 @@
 //#include <d1/main.cpp>
 //#include <lighting_2/main.cpp>
 //#include <stencilt_test/main.cpp>
-#include <example/framebuffer/main.cpp>
+#include <example/skybox/main.cpp>
 #include <data_mgr.hpp>
 #include <frame_rate.h>
 using namespace gld;

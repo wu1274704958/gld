@@ -32,8 +32,8 @@ namespace gld{
                 GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
                 GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
                 GL_TEXTURE_CUBE_MAP_POSITIVE_X,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
-                GL_TEXTURE_CUBE_MAP_POSITIVE_Z
+                GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+                GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
             };
             int idx = 0;
             for(auto& c : list)
