@@ -14,7 +14,8 @@ namespace gld
             UTData<UT::Vec3,glm::vec3>,
             UTData<UT::Vec4,glm::vec4>,
             UTData<UT::Int, int>,
-            UTData<UT::Sampler2D, int>
+            UTData<UT::Sampler2D, int>,
+            UTData<UT::SamplerCube, int>
         >::type>;
 
         GlmUniform(std::string key,std::shared_ptr<Program> ptr) : uniform(std::move(key),std::move(ptr))

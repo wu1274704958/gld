@@ -119,4 +119,29 @@ namespace gld::def{
         size_t vertex_size;
         std::shared_ptr<gld::VertexArr> vao;
     };
+
+    struct Skybox : public Component{
+        Skybox(std::shared_ptr<Texture<TexType::CUBE>> skyboxTex) : 
+            uskybox("skybox"),
+            skyboxTex(std::move(skyboxTex))
+        {
+            uskybox = 0;
+        }
+        bool init() override
+        {
+            auto n_ptr = get_node();
+            auto render = n_ptr->get_comp<Render>();
+            uskybox.attach_program(render->get());
+            return true;
+        }
+        void draw() override
+        {
+            if(skyboxTex)
+                skyboxTex->active<ActiveTexId::_0>();
+
+            uskybox.sync();
+        }
+        GlmUniform<UT::SamplerCube> uskybox;
+        std::shared_ptr<Texture<TexType::CUBE>> skyboxTex;
+    };
 }

@@ -9,6 +9,8 @@ uniform mat4 world;
 void main()
 {
     TexCoords = aPos;
-    vec4 pos = perspective * mat4(mat3(world)) * vec4(aPos, 1.0);
+    vec4 pos = perspective * 
+    //world * vec4(aPos, 1.0);
+    mat4(mat3(world)) * vec4(aPos, 1.0);
     gl_Position = pos.xyww;
 }

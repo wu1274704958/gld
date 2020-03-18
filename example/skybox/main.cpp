@@ -99,6 +99,12 @@ public:
 
         auto cube_tex = DefDataMgr::instance()->load<DataType::TextureCube>("textures/skybox","jpg",0);
 
+        cube_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
+        cube_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+        cube_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_EDGE>();
+        cube_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_EDGE>();
+        cube_tex->set_paramter<TexOption::WRAP_T,TexOpVal::CLAMP_TO_EDGE>();
+
         auto skybox_p = DefDataMgr::instance()->load<DataType::Program>("base/skybox_vs.glsl","base/skybox_fg.glsl");
 
         skybox_p->locat_uniforms("perspective", "world", "skybox");
@@ -192,6 +198,51 @@ public:
              1.0f,  1.0f,  1.0f, 1.0f
         };
 
+        float skyboxVertices[] = {
+        // positions          
+        -1.0f,  1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+         1.0f,  1.0f, -1.0f,
+        -1.0f,  1.0f, -1.0f,
+
+        -1.0f, -1.0f,  1.0f,
+        -1.0f, -1.0f, -1.0f,
+        -1.0f,  1.0f, -1.0f,
+        -1.0f,  1.0f, -1.0f,
+        -1.0f,  1.0f,  1.0f,
+        -1.0f, -1.0f,  1.0f,
+
+         1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+
+        -1.0f, -1.0f,  1.0f,
+        -1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f, -1.0f,  1.0f,
+        -1.0f, -1.0f,  1.0f,
+
+        -1.0f,  1.0f, -1.0f,
+         1.0f,  1.0f, -1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f, -1.0f,
+
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f,  1.0f,
+         1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f,  1.0f,
+         1.0f, -1.0f,  1.0f
+    };
+
         auto cube_vao = std::make_shared<gld::VertexArr>();
         cube_vao->create();
         cube_vao->create_arr<gld::ArrayBufferType::VERTEX>();
@@ -224,9 +275,19 @@ public:
          gld::VAP_DATA<2,float,false>>();
         quad_vao->unbind();
 
+        auto skybox_vao = std::make_shared<gld::VertexArr>();
+        skybox_vao->create();
+        skybox_vao->create_arr<gld::ArrayBufferType::VERTEX>();
+        skybox_vao->bind();
+        skybox_vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(skyboxVertices,GL_STATIC_DRAW);
+        skybox_vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+         gld::VAP_DATA<3,float,false>>();
+        skybox_vao->unbind();
+
         auto cube_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(cubeVertices)/8,cube_vao ));
         auto plane_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(planeVertices)/8,plane_vao ));
         auto quad_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(quadVertices)/4,quad_vao ));
+        auto skybox_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(skyboxVertices)/3,skybox_vao ));
 
         auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
         auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/metal.png",0);
@@ -251,6 +312,11 @@ public:
         plane->add_comp<def::Mesh>(plane_mesh);
         plane->add_comp<def::Material>(plane_mat);
         plane->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
+
+        skybox = std::make_shared<Node<Component>>();
+        skybox->add_comp<def::Mesh>(skybox_mesh);
+        skybox->add_comp<def::Skybox>(std::shared_ptr<def::Skybox>(new def::Skybox(cube_tex)));
+        skybox->add_comp<Render>(std::shared_ptr<Render>(new Render("base/skybox_vs.glsl","base/skybox_fg.glsl")));
 
         cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
         cube2->get_comp<Transform>()->pos = glm::vec3(2.0f, 0.0f, 0.0f);
@@ -345,6 +411,7 @@ public:
             p->init();
 
         screen->init();
+        skybox->init();
         update_matrix();
         return 0;
     }
@@ -374,12 +441,26 @@ public:
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f); 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-      
+
+        perspective.attach_program(program);
+        world.attach_program(program);
+        perspective.sync();
+        world.sync();
+
+        auto sky_pro = skybox->get_comp<Render>()->get();
+        sky_pro->use();
+
+        perspective.attach_program(sky_pro);
+        world.attach_program(sky_pro);
         perspective.sync();
         world.sync();
 
         for (auto& p : cxts)
             p->draw();
+            
+        glDepthFunc(GL_LEQUAL);
+        skybox->draw();
+        glDepthFunc(GL_LESS);
 
         program->use();
 
@@ -412,6 +493,8 @@ public:
             p->update();
 
         screen->update();
+
+        skybox->update();
         
         glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
         pl_pos = glm::rotateZ(pl_pos,pl_angle);
@@ -453,6 +536,7 @@ private:
     FrameBuffer fb;
     RenderBuffer rb;
     std::shared_ptr<Texture<TexType::D2>> screen_tex;
+    std::shared_ptr<Node<Component>> skybox;
 };
 
 #ifndef PF_ANDROID

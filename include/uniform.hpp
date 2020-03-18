@@ -12,7 +12,8 @@ namespace gld
         Vec3,
         Vec4,
         Int,
-        Sampler2D
+        Sampler2D,
+        SamplerCube
     };
 
     template <UT Ut,typename T>
@@ -83,7 +84,8 @@ namespace gld
             UTData<UT::Vec3,float*>,
             UTData<UT::Vec4,float*>,
             UTData<UT::Int,int>,
-            UTData<UT::Sampler2D,int>
+            UTData<UT::Sampler2D,int>,
+            UTData<UT::SamplerCube,int>
         >::type>;
 
         Uniform(std::string key, std::shared_ptr<Program> program) :
@@ -121,7 +123,7 @@ namespace gld
                 glUniform4fv(id, 1, data);
             }
             else
-            if constexpr (Ut == UT::Int || Ut == UT::Sampler2D)
+            if constexpr (Ut == UT::Int || Ut == UT::Sampler2D || Ut == UT::SamplerCube)
             {
                 glUniform1i(id, data);
             }
