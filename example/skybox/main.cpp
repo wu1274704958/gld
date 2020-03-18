@@ -77,8 +77,8 @@ struct ScreenMat : public Component
     std::shared_ptr<Texture<TexType::D2>> tex;
 };
 
-#define VER_PATH "lighting_5/base_vs.glsl"
-#define FRAG_PATH "lighting_5/base_fg.glsl"
+#define VER_PATH "lighting_6/base_vs.glsl"
+#define FRAG_PATH "lighting_6/base_fg.glsl"
 
 class Demo1 : public RenderDemoRotate {
 public:
