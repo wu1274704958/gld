@@ -12,7 +12,7 @@ namespace gld{
         template<typename T>
         T* get_comp()
         {
-            size_t ty_id = typeid(T).hash_code();
+            const type_info& ty_id = typeid(T);
             for(int i = 0;i < components.size();++i)
             {
                 if(comp_ty_id(i) == ty_id)
@@ -67,11 +67,9 @@ namespace gld{
             }
             return false;
         }
-        size_t comp_ty_id(int idx)
+        const type_info& comp_ty_id(int idx)
         {
-            if(good_comp_idx(idx))
-                return typeid(*(components[idx])).hash_code();
-            return -1;
+            return typeid(*(components[idx]));
         }
         bool good_comp_idx(int idx)
         {

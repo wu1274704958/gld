@@ -68,7 +68,15 @@ gld::LoadProgram::RealRetTy gld::LoadProgram::load(gld::LoadProgram::ArgsTy args
         res->attach_shader(std::move(frag));
         res->link();
         s = true;
-        return make_result(s,std::move(res));
+        auto [succ,errstr] = res->check_link_state<200>();
+        if(succ)
+        {
+            s = true;
+            return make_result(s,std::move(res));
+        }else{
+            dbg::log << "link failed " << *errstr << dbg::endl;
+            return make_result(s,nullptr);
+        }
     }
     return make_result(s,std::move(res));
 }
@@ -132,8 +140,15 @@ gld::LoadProgramWithGeom::RealRetTy gld::LoadProgramWithGeom::load(gld::LoadProg
         res->attach_shader(std::move(frag));
         res->attach_shader(std::move(gemo));
         res->link();
-        s = true;
-        return make_result(s,std::move(res));
+        auto [succ,errstr] = res->check_link_state<200>();
+        if(succ)
+        {
+            s = true;
+            return make_result(s,std::move(res));
+        }else{
+            dbg::log << "link failed " << *errstr << dbg::endl;
+            return make_result(s,nullptr);
+        }
     }
     return make_result(s,std::move(res));
 }
@@ -230,7 +245,7 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
     std::vector<unsigned int> indices;
     if constexpr((ThisMode & (uint32_t)gld::SceneLoadMode::HasGeometry) == (uint32_t)gld::SceneLoadMode::HasGeometry )
     {
-        res->add_comp<gld::RenderEx>(std::shared_ptr<gld::RenderEx>(new gld::RenderEx(vp,fp,std::get<0>(args))));
+        res->add_comp<gld::Render>(std::shared_ptr<gld::Render>(new gld::Render(vp,fp,std::get<0>(args))));
     }else{
         res->add_comp<gld::Render>(std::shared_ptr<gld::Render>(new gld::Render(vp,fp)));
     }

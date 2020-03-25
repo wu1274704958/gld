@@ -154,5 +154,21 @@ namespace sundry
         return res;
     }
 
+    template<size_t ERR_INFO_SIZE>
+    std::tuple<bool,std::unique_ptr<std::string>> check_link_state(GLuint id)
+    {
+        GLint compile_status = GL_TRUE;
+        glGetProgramiv(id,GL_LINK_STATUS,&compile_status);
+        if(!compile_status)
+        {
+            char buf[ERR_INFO_SIZE] = {0};
+            int size = 0;
+            memset(buf,0,sizeof(buf));
+            glGetProgramInfoLog(id,sizeof(buf),&size,buf);
+            return std::make_tuple(false,std::unique_ptr<std::string>(new std::string(buf)));
+        }else{
+            return std::make_tuple(true,nullptr);
+        }
+    }
     
 } // namespace sundry

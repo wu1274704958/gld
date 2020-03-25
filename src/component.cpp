@@ -3,7 +3,12 @@
 namespace gld{
     bool Render::init()  
     {
-        program = DefDataMgr::instance()->load<DataType::Program>(vert_path,frag_path);
+        if(geom_path)
+        {
+            program = DefDataMgr::instance()->load<DataType::ProgramWithGeometry>(vert_path,frag_path,*geom_path);
+        }else{
+            program = DefDataMgr::instance()->load<DataType::Program>(vert_path,frag_path);
+        }
         return (bool)program;
     }
     void Render::before_draw() 
@@ -16,25 +21,6 @@ namespace gld{
     }
     int64_t Render::idx() { return -100;}
     std::shared_ptr<Program> Render::get()
-    {
-        return program;
-    }
-
-    bool RenderEx::init()  
-    {
-        program = DefDataMgr::instance()->load<DataType::ProgramWithGeometry>(vert_path,frag_path,geom_path);
-        return (bool)program;
-    }
-    void RenderEx::before_draw() 
-    {
-        program->use();
-    }
-    void RenderEx::after_draw() 
-    {
-        program->unuse();
-    }
-    int64_t RenderEx::idx() { return -100;}
-    std::shared_ptr<Program> RenderEx::get()
     {
         return program;
     }

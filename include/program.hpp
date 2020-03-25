@@ -15,6 +15,7 @@
 #include <GLES2/gl2ext.h>
 #endif
 
+#include <sundry.hpp>
 
 namespace gld{
     
@@ -182,6 +183,12 @@ namespace gld{
             }
             else
                 return -1;
+        }
+
+        template<size_t ERR_INFO_SIZE>
+        std::tuple<bool,std::unique_ptr<std::string>> check_link_state()
+        {
+            return sundry::check_link_state<ERR_INFO_SIZE>(program);
         }
     private:
 
