@@ -19,7 +19,7 @@ uniform float time;
 
 vec4 explode(vec4 position, vec3 normal)
 {
-    float magnitude = 2.0;
+    float magnitude = 0.2;
     vec3 direction = normal * ((sin(time) + 1.0) / 2.0) * magnitude; 
     return position + vec4(direction, 0.0);
 }
@@ -46,5 +46,6 @@ void main() {
         goUv = gs_in[2].oUv;
         goVpos = gs_in[2].oVpos;
         EmitVertex();
+        EndPrimitive();
     }
 }

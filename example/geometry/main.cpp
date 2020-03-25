@@ -50,25 +50,27 @@ struct AutoRotate : public Component
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world")
+    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") ,time_("time")
         {}
     int init() override
     {
         RenderDemoRotate::init();
         
-        program = DefDataMgr::instance()->load<DataType::Program>("lighting_5/base_vs.glsl","lighting_5/base_fg.glsl");
+        program = DefDataMgr::instance()->load<DataType::ProgramWithGeometry>("geometry/base_vs.glsl","geometry/base_fg.glsl","geometry/explode.glsl");
         program->use();
 
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex"
+            "shininess","specularTex","time"
         );
 
-
+        GLenum err = glGetError();
+        dbg(err);
         view_pos.attach_program(program);
         perspective.attach_program(program);
         world.attach_program(program);
+        time_.attach_program(program);
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -78,8 +80,10 @@ public:
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
 
-        auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
-            "lighting_5/base_vs.glsl","lighting_5/base_fg.glsl");
+        time_ = 0.f;
+
+        auto node = DefDataMgr::instance()->load<DataType::SceneWithGeometry>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
+            "geometry/base_vs.glsl","geometry/base_fg.glsl","geometry/explode.glsl");
 
         auto trans = node->get_comp<Transform>();
         trans->scale = glm::vec3(0.2f,0.2f,0.2f);
@@ -91,7 +95,7 @@ public:
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
-        GLenum err = glGetError();
+        err = glGetError();
         dbg(err);
 
         light.init(GL_STATIC_DRAW);
@@ -202,6 +206,9 @@ public:
         pl->pls[0].pos = pl_pos;
         pl.sync(GL_MAP_WRITE_BIT);
         if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
+
+        time_ = time_ + 0.01;
+        time_.sync();
     }
 
     ~Demo1() {
@@ -221,6 +228,7 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
+    GlmUniform<UT::Float> time_;
     float pl_angle = 0.0f;
 };
 
