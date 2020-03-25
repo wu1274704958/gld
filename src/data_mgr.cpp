@@ -402,9 +402,9 @@ template typename LOAD_TY<gld::SceneLoadMode::TY>::RealRetTy LOAD_TY<gld::SceneL
   
 #define InstanctationProcessMeshEx(TY,...)    \
 template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::TY,##__VA_ARGS__>    \
-    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&,std::tuple<##__VA_ARGS__>&);    \
+    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&,std::tuple<__VA_ARGS__>&);    \
 template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::TY,##__VA_ARGS__>(aiNode *,const aiScene* ,  \
-    std::string& ,std::string& ,std::string& ,std::tuple<##__VA_ARGS__>&,int );  
+    std::string& ,std::string& ,std::string& ,std::tuple<__VA_ARGS__>&,int );
 
 InstanctationLoadSceneNode(gld::LoadSceneNode,Default)
 InstanctationLoadSceneNode(gld::LoadSceneNode,NoMaterial)
