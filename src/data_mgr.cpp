@@ -13,17 +13,13 @@ using namespace dbg::literal;
 
 std::string gld::LoadProgram::key_from_args(gld::LoadProgram::ArgsTy args)
 {
-    std::string res = std::move(std::get<0>(args));
-    res += "#";
-    res += std::get<1>(args);
+    std::string res = sundry::format_tup(args,'#');
     return res;
 }
 
 std::string gld::LoadProgram::key_from_args(std::tuple<const char*,const char*> args)
 {
-    std::string res = std::get<0>(args);
-    res += "#";
-    res += std::get<1>(args);
+    std::string res = sundry::format_tup(args,'#');
     return res;
 }
 
@@ -77,6 +73,70 @@ gld::LoadProgram::RealRetTy gld::LoadProgram::load(gld::LoadProgram::ArgsTy args
     return make_result(s,std::move(res));
 }
 
+std::string gld::LoadProgramWithGeom::key_from_args(gld::LoadProgramWithGeom::ArgsTy args)
+{
+    return sundry::format_tup(args,'#');
+}
+
+std::string gld::LoadProgramWithGeom::key_from_args(std::tuple<const char*,const char*,const char*> args)
+{
+    return sundry::format_tup(args,'#');
+}
+
+gld::LoadProgramWithGeom::RealRetTy gld::LoadProgramWithGeom::load(std::tuple<const char*,const char*,const char*> args)
+{
+    return load(std::make_tuple(std::string(std::get<0>(args)),std::string(std::get<1>(args)),std::string(std::get<1>(args))));
+}
+
+gld::LoadProgramWithGeom::RealRetTy gld::LoadProgramWithGeom::load(gld::LoadProgramWithGeom::ArgsTy args)
+{
+    dbg::log << "data mgr @V@"_E << "load program " << dbg::endl;
+
+    bool s = false;
+    std::shared_ptr<Program> res;
+
+    Shader<ShaderType::VERTEX> vertex;
+    Shader<ShaderType::FRAGMENT> frag;
+    Shader<ShaderType::GEOMETRY> gemo;
+
+    auto vs_str = ResMgrWithGlslPreProcess::instance()->load<ResType::text>(std::get<0>(args));
+    auto fg_str = ResMgrWithGlslPreProcess::instance()->load<ResType::text>(std::get<1>(args));
+    auto ge_str = ResMgrWithGlslPreProcess::instance()->load<ResType::text>(std::get<2>(args));
+    if(vs_str && fg_str && ge_str)
+    {
+
+        auto vs_p = vs_str.get()->c_str();
+        auto fg_p = fg_str.get()->c_str();
+        auto ge_p = ge_str.get()->c_str();
+
+        try {
+            sundry::compile_shaders<100>(
+                GL_VERTEX_SHADER, &vs_p, 1, (GLuint*)vertex,
+                GL_FRAGMENT_SHADER, &fg_p, 1, (GLuint*)frag,
+                GL_GEOMETRY_SHADER, &ge_p, 1 ,(GLuint*)gemo
+            );
+        }
+        catch (sundry::CompileError e)
+        {
+            dbg::log << "compile failed " << e.what() << dbg::endl;
+            return make_result(s,std::move(res));
+        }
+        catch (std::exception e)
+        {
+            dbg::log << e.what() << dbg::endl;
+            return make_result(s,std::move(res));
+        }
+        res = std::shared_ptr<Program>(new Program());
+        res->cretate();
+        res->attach_shader(std::move(vertex));
+        res->attach_shader(std::move(frag));
+        res->attach_shader(std::move(gemo));
+        res->link();
+        s = true;
+        return make_result(s,std::move(res));
+    }
+    return make_result(s,std::move(res));
+}
 
 std::string gld::LoadTexture2D::key_from_args(gld::LoadTexture2D::ArgsTy args)
 {
@@ -117,6 +177,7 @@ gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(std::tuple<const char*,
 {
     return load(std::make_tuple(std::string(std::get<0>(args)),std::get<1>(args)));
 }
+//---------------------------------------------------------------------------------------------------------------------
 template<gld::SceneLoadMode M>
 std::string gld::LoadSceneNode<M>::key_from_args(gld::LoadSceneNode<M>::ArgsTy args)
 {
@@ -141,6 +202,7 @@ typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(std::tuple
     return load(std::make_tuple(std::string(a),b,std::string(c),std::string(d)));
 }
 
+
 std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string parent,aiMaterial *material,aiTextureType ty,int i)
 {
     aiString path;
@@ -156,17 +218,23 @@ std::shared_ptr<gld::Texture<gld::TexType::D2>> get_material_tex(std::string par
     return std::shared_ptr<gld::Texture<gld::TexType::D2>>();
 }
 
-template<gld::SceneLoadMode M>
+template<gld::SceneLoadMode M,typename ...Args>
 std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiMesh* mesh,
-    std::string& parent_path,std::string& vp,std::string& fp)
+    std::string& parent_path,std::string& vp,std::string& fp,std::tuple<Args...>& args)
 {
+    constexpr uint32_t ThisMode = static_cast<uint32_t>(M);
 
     std::shared_ptr<gld::Node<gld::Component>> res = std::make_shared<gld::Node<gld::Component>>();
 
     std::vector<gld::def::Vertex> vertices;
     std::vector<unsigned int> indices;
-
-    res->add_comp<gld::Render>(std::shared_ptr<gld::Render>(new gld::Render(vp,fp)));
+    if constexpr((ThisMode & (uint32_t)gld::SceneLoadMode::HasGeometry) == (uint32_t)gld::SceneLoadMode::HasGeometry )
+    {
+        res->add_comp<gld::RenderEx>(std::shared_ptr<gld::RenderEx>(new gld::RenderEx(vp,fp,std::get<0>(args))));
+    }else{
+        res->add_comp<gld::Render>(std::shared_ptr<gld::Render>(new gld::Render(vp,fp)));
+    }
+   
     res->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
 
     for(unsigned int i = 0; i < mesh->mNumVertices; i++)
@@ -224,21 +292,21 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
     return res;
 }
 
-template<gld::SceneLoadMode M>
+template<gld::SceneLoadMode M,typename ...Args>
 std::shared_ptr<gld::Node<gld::Component>> process_node(aiNode *ai_node,const aiScene* scene,
-    std::string& parent_path,std::string& vp,std::string& fp,int deep = 0x7fffffff)
+    std::string& parent_path,std::string& vp,std::string& fp,std::tuple<Args...>& args,int deep = 0x7fffffff)
 {
     auto node = std::shared_ptr<gld::Node<gld::Component>>(new gld::Node<gld::Component>());
     node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
     for(unsigned int i = 0;i < ai_node->mNumMeshes;++i)
     {
-        node->add_child(process_mesh<M>(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp));
+        node->add_child(process_mesh<M>(scene,scene->mMeshes[ ai_node->mMeshes[i] ],parent_path,vp,fp,args));
     }
     if(deep > 0)
     {
         for(unsigned int i = 0;i < ai_node->mNumChildren;++i)
         {
-            node->add_child(process_node<M>(ai_node->mChildren[i],scene,parent_path,vp,fp,deep - 1));
+            node->add_child(process_node<M>(ai_node->mChildren[i],scene,parent_path,vp,fp,args,deep - 1));
         }
     }
     return node;
@@ -255,7 +323,8 @@ typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(typename g
     //dbg::log << "path " << path << "parent_path " << parent_path << dbg::endl;
     if(ai)
     {   
-        if(auto node = process_node<M>(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp);node)
+        std::tuple<> oths;
+        if(auto node = process_node<M>(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp,oths);node)
         {
             return make_result(s,std::move(node));
         }
@@ -263,16 +332,71 @@ typename gld::LoadSceneNode<M>::RealRetTy gld::LoadSceneNode<M>::load(typename g
     return make_result(s,std::move(res));
 }
 
-#define InstanctationLoadSceneNode(TY)  \
-template gld::LoadSceneNode<gld::SceneLoadMode::TY>;    \
-template typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::TY>::load(typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::ArgsTy args);\
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::TY>::key_from_args(gld::LoadSceneNode<gld::SceneLoadMode::TY>::ArgsTy args);    \
-template std::string gld::LoadSceneNode<gld::SceneLoadMode::TY>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);  \
-template typename gld::LoadSceneNode<gld::SceneLoadMode::TY>::RealRetTy gld::LoadSceneNode<gld::SceneLoadMode::TY>::load(std::tuple<const char*,unsigned int,const char*,const char*> args);    \
-template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::TY>    \
-    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&);    \
-template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::TY>(aiNode *,const aiScene* ,  \
-    std::string& ,std::string& ,std::string& ,int );    
+template<gld::SceneLoadMode M>
+std::string gld::LoadSceneNodeWithGeom<M>::key_from_args(gld::LoadSceneNodeWithGeom<M>::ArgsTy args)
+{
+   return sundry::format_tup(args,'#');
+}
+template<gld::SceneLoadMode M>
+std::string gld::LoadSceneNodeWithGeom<M>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*,const char *> args)
+{
+   return sundry::format_tup(args,'#');
+}
 
-InstanctationLoadSceneNode(Default)
-InstanctationLoadSceneNode(NoMaterial)
+template<gld::SceneLoadMode M>
+typename gld::LoadSceneNodeWithGeom<M>::RealRetTy gld::LoadSceneNodeWithGeom<M>::load(std::tuple<const char*,unsigned int,const char*,const char*,const char *> args)
+{
+    auto [a,b,c,d,e] = args;
+    return load(std::make_tuple(std::string(a),b,std::string(c),std::string(d),std::string(e)));
+}
+
+template<gld::SceneLoadMode M>
+typename gld::LoadSceneNodeWithGeom<M>::RealRetTy gld::LoadSceneNodeWithGeom<M>::load(typename gld::LoadSceneNodeWithGeom<M>::ArgsTy args)
+{
+    auto [path,flag,vp,fp,gp] = args;
+    dbg::log << "LoadSceneNode @V@"_E << "path " << path << dbg::endl;
+    auto ai = ResMgrWithGlslPreProcess::instance()->load<ResType::model>(std::string(path),flag);
+    bool s = false;
+    std::shared_ptr<Node<Component>> res;
+    std::string parent_path = wws::get_parent(path);
+    //dbg::log << "path " << path << "parent_path " << parent_path << dbg::endl;
+    if(ai)
+    {   
+        std::tuple<std::string> oths = std::make_tuple(std::move(gp));
+        if(auto node = process_node<M>(ai->GetScene()->mRootNode,ai->GetScene(),parent_path,vp,fp,oths);node)
+        {
+            return make_result(s,std::move(node));
+        }
+    }
+    return make_result(s,std::move(res));
+}
+
+#define InstanctationLoadSceneNode(LOAD_TY,TY)  \
+template LOAD_TY<gld::SceneLoadMode::TY>;    \
+template typename LOAD_TY<gld::SceneLoadMode::TY>::RealRetTy LOAD_TY<gld::SceneLoadMode::TY>::load(typename LOAD_TY<gld::SceneLoadMode::TY>::ArgsTy args);\
+template std::string LOAD_TY<gld::SceneLoadMode::TY>::key_from_args(LOAD_TY<gld::SceneLoadMode::TY>::ArgsTy args);    \
+template std::string LOAD_TY<gld::SceneLoadMode::TY>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*> args);  \
+template typename LOAD_TY<gld::SceneLoadMode::TY>::RealRetTy LOAD_TY<gld::SceneLoadMode::TY>::load(std::tuple<const char*,unsigned int,const char*,const char*> args);    
+  
+#define InstanctationLoadSceneNodeWithGeom(LOAD_TY,TY)  \
+template LOAD_TY<gld::SceneLoadMode::TY>;    \
+template typename LOAD_TY<gld::SceneLoadMode::TY>::RealRetTy LOAD_TY<gld::SceneLoadMode::TY>::load(typename LOAD_TY<gld::SceneLoadMode::TY>::ArgsTy args);\
+template std::string LOAD_TY<gld::SceneLoadMode::TY>::key_from_args(LOAD_TY<gld::SceneLoadMode::TY>::ArgsTy args);    \
+template std::string LOAD_TY<gld::SceneLoadMode::TY>::key_from_args(std::tuple<const char*,unsigned int,const char*,const char*,const char*> args);  \
+template typename LOAD_TY<gld::SceneLoadMode::TY>::RealRetTy LOAD_TY<gld::SceneLoadMode::TY>::load(std::tuple<const char*,unsigned int,const char*,const char*,const char*> args);    
+  
+#define InstanctationProcessMeshEx(TY,...)    \
+template std::shared_ptr<gld::Node<gld::Component>> process_mesh<gld::SceneLoadMode::TY,##__VA_ARGS__>    \
+    (const aiScene*,aiMesh*,std::string&,std::string&,std::string&,std::tuple<##__VA_ARGS__>&);    \
+template std::shared_ptr<gld::Node<gld::Component>> process_node<gld::SceneLoadMode::TY,##__VA_ARGS__>(aiNode *,const aiScene* ,  \
+    std::string& ,std::string& ,std::string& ,std::tuple<##__VA_ARGS__>&,int );  
+
+InstanctationLoadSceneNode(gld::LoadSceneNode,Default)
+InstanctationLoadSceneNode(gld::LoadSceneNode,NoMaterial)
+
+InstanctationLoadSceneNodeWithGeom(gld::LoadSceneNodeWithGeom,HasGeometry)
+
+InstanctationProcessMeshEx(Default)
+InstanctationProcessMeshEx(NoMaterial)
+
+InstanctationProcessMeshEx(HasGeometry,std::string)

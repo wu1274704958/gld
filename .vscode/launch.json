@@ -6,6 +6,17 @@
     "configurations": [
 
 
+        {
+            "name": "geometry",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/geometry.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
     
         {
             "name": "d1",

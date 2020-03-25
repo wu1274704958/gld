@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <string>
+#include <serialization.hpp>
 
 namespace sundry
 {
@@ -119,6 +120,36 @@ namespace sundry
     GenTy normal_dist(GenTy x,GenTy u = 0.0,GenTy o = 1.0)
     {
         return static_cast<GenTy>(1.0f / glm::sqrt(2 * glm::template pi<GenTy>() * o) * glm::exp(-glm::pow(x - u, 2.f) / (2.0f * glm::pow(o, 2.f))));
+    }
+
+    template<size_t I,typename ...Args>
+    void format_tup_sub(std::tuple<Args...>& tup,std::string& res,char sepa)
+    {
+        if constexpr( I < std::tuple_size_v<std::tuple<Args...>>)
+        {
+            using type = std::decay_t<std::remove_reference_t<decltype(std::get<I>(tup))>>;
+            if constexpr(std::is_same_v<std::string,type> || std::is_same_v<const char*,type> || std::is_same_v<char,type>)
+            {
+                res += std::get<I>(tup);
+            }else{
+                res += wws::to_string(std::get<I>(tup));
+            }
+            if constexpr( I + 1 < std::tuple_size_v<std::tuple<Args...>>)
+            {
+                res += sepa;
+                format_tup_sub<I + 1>(tup,res,sepa);
+            }
+        }
+    }
+
+    template<typename ...Args>
+    std::string format_tup(std::tuple<Args...>& tup,char sepa,char per = '\0',char back = '\0')
+    {
+        std::string res;
+        if(per != '\0') res += per;
+        format_tup_sub<0>(tup,res,sepa);
+        if(back != '\0') res += back;
+        return res;
     }
 
     

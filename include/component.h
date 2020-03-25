@@ -28,7 +28,8 @@ namespace gld{
 
     struct Render : public Component
     {
-        Render(std::string vert_path,std::string frag_path) : vert_path(vert_path) , frag_path(frag_path) 
+        Render(std::string vert_path,std::string frag_path) 
+            : vert_path(std::move(vert_path)) , frag_path(std::move(frag_path)) 
         {}
         bool init() override;
         void before_draw() override;
@@ -36,6 +37,21 @@ namespace gld{
         int64_t idx() override;
         std::shared_ptr<Program> get();
         std::string vert_path,frag_path;
+    protected:
+        std::shared_ptr<Program> program;
+    };
+
+    struct RenderEx : public Component
+    {
+        RenderEx(std::string vert_path,std::string frag_path,std::string geom_path) : 
+            vert_path(std::move(vert_path)) , frag_path(std::move(frag_path)) ,geom_path(std::move(geom_path))
+        {}
+        bool init() override;
+        void before_draw() override;
+        void after_draw() override;
+        int64_t idx() override;
+        std::shared_ptr<Program> get();
+        std::string vert_path,frag_path,geom_path;
     protected:
         std::shared_ptr<Program> program;
     };

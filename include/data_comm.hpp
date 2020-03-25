@@ -9,7 +9,9 @@ namespace gld{
         Texture2D,
         Scene,
         SceneNoMaterial,
-        TextureCube
+        TextureCube,
+        ProgramWithGeometry,
+        SceneWithGeometry
     };
 
     namespace data_ck{

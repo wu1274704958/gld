@@ -20,6 +20,25 @@ namespace gld{
         return program;
     }
 
+    bool RenderEx::init()  
+    {
+        program = DefDataMgr::instance()->load<DataType::ProgramWithGeometry>(vert_path,frag_path,geom_path);
+        return (bool)program;
+    }
+    void RenderEx::before_draw() 
+    {
+        program->use();
+    }
+    void RenderEx::after_draw() 
+    {
+        program->unuse();
+    }
+    int64_t RenderEx::idx() { return -100;}
+    std::shared_ptr<Program> RenderEx::get()
+    {
+        return program;
+    }
+
 
     Transform::Transform(std::string model_key) : model(std::move(model_key))
     {
