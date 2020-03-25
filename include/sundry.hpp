@@ -31,6 +31,8 @@ namespace sundry
                     return "GL_VERTEX_SHADER";
                 case GL_FRAGMENT_SHADER:
                     return "GL_FRAGMENT_SHADER";
+                case GL_GEOMETRY_SHADER:
+                    return "GL_GEOMETRY_SHADER";
                 default:
                     return "Unimpl to do!";
             }

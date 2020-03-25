@@ -85,7 +85,7 @@ std::string gld::LoadProgramWithGeom::key_from_args(std::tuple<const char*,const
 
 gld::LoadProgramWithGeom::RealRetTy gld::LoadProgramWithGeom::load(std::tuple<const char*,const char*,const char*> args)
 {
-    return load(std::make_tuple(std::string(std::get<0>(args)),std::string(std::get<1>(args)),std::string(std::get<1>(args))));
+    return load(std::make_tuple(std::string(std::get<0>(args)),std::string(std::get<1>(args)),std::string(std::get<2>(args))));
 }
 
 gld::LoadProgramWithGeom::RealRetTy gld::LoadProgramWithGeom::load(gld::LoadProgramWithGeom::ArgsTy args)
