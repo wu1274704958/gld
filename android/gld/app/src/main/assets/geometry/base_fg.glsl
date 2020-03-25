@@ -13,7 +13,7 @@ out vec4 color;
 
 layout (std140,binding = 1) uniform PL{
     PointLight pointLight[PL_LEN];
-    uint pl_len;
+    int pl_len;
 };
 
 layout (std140,binding = 2) uniform SPL{
@@ -45,7 +45,7 @@ void main()
 
     vec3 pl_color = vec3(0.0f,0.0f,0.0f);
 
-    for(uint i = 0;i < pl_len;++i)
+    for(int i = 0;i < pl_len;++i)
     {
         pl_color += calc_point_light(obj_color,view_dir,pointLight[i]);
     }
