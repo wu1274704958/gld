@@ -12,7 +12,7 @@ namespace gld{
         template<typename T>
         T* get_comp()
         {
-            const type_info& ty_id = typeid(T);
+            const std::type_info& ty_id = typeid(T);
             for(int i = 0;i < components.size();++i)
             {
                 if(comp_ty_id(i) == ty_id)
@@ -67,7 +67,7 @@ namespace gld{
             }
             return false;
         }
-        const type_info& comp_ty_id(int idx)
+        const std::type_info& comp_ty_id(int idx)
         {
             return typeid(*(components[idx]));
         }

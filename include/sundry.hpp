@@ -9,6 +9,13 @@
 #include <string>
 #include <serialization.hpp>
 
+#ifdef PF_ANDROID
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#include <GLES/gl.h>
+#include <GLES3/gl32.h>
+#endif
+
 namespace sundry
 {
     
