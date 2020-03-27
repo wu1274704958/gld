@@ -81,6 +81,7 @@ public:
         glDepthFunc(GL_LESS);
 
         time_ = 0.f;
+        time_.sync();
 
         auto node = DefDataMgr::instance()->load<DataType::SceneWithGeometry>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
             "geometry/base_vs.glsl","geometry/base_fg.glsl","geometry/explode.glsl");
