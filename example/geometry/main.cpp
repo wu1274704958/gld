@@ -30,6 +30,8 @@
 #include <component.h>
 #include <comps/Material.hpp>
 #include <frame_rate.h>
+#include <cube_texture.hpp>
+#include <stack>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -72,6 +74,76 @@ public:
         world.attach_program(program);
         time_.attach_program(program);
 
+        float skyboxVertices[] = {
+            // positions          
+            -1.0f,  1.0f, -1.0f,
+            -1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+
+            -1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f,  1.0f,
+            -1.0f, -1.0f,  1.0f,
+
+             1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+
+            -1.0f, -1.0f,  1.0f,
+            -1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f,  1.0f,
+
+            -1.0f,  1.0f, -1.0f,
+             1.0f,  1.0f, -1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+            -1.0f,  1.0f,  1.0f,
+            -1.0f,  1.0f, -1.0f,
+
+            -1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f,  1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f,  1.0f,
+             1.0f, -1.0f,  1.0f
+        };
+
+        auto cube_tex = DefDataMgr::instance()->load<DataType::TextureCube>("textures/skybox","jpg",0);
+        cube_tex->bind();
+        cube_tex->generate_mipmap();
+        cube_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
+        cube_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+        cube_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_EDGE>();
+        cube_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_EDGE>();
+        cube_tex->set_paramter<TexOption::WRAP_T,TexOpVal::CLAMP_TO_EDGE>();
+
+        auto skybox_vao = std::make_shared<gld::VertexArr>();
+        skybox_vao->create();
+        skybox_vao->create_arr<gld::ArrayBufferType::VERTEX>();
+        skybox_vao->bind();
+        skybox_vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(skyboxVertices,GL_STATIC_DRAW);
+        skybox_vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+         gld::VAP_DATA<3,float,false>>();
+        skybox_vao->unbind();
+
+        auto skybox_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(skyboxVertices)/3,skybox_vao ));
+
+        skybox = std::make_shared<Node<Component>>();
+        skybox->add_comp<def::Mesh>(skybox_mesh);
+        skybox->add_comp<def::Skybox>(std::shared_ptr<def::Skybox>(new def::Skybox(cube_tex)));
+        skybox->add_comp<Render>(std::shared_ptr<Render>(new Render("base/skybox_vs.glsl","base/skybox_fg.glsl")));
+
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -85,6 +157,26 @@ public:
 
         auto node = DefDataMgr::instance()->load<DataType::SceneWithGeometry>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
             "geometry/base_vs.glsl","geometry/base_fg.glsl","geometry/explode.glsl");
+
+        auto skybox_p = DefDataMgr::instance()->load<DataType::Program>("base/skybox_vs.glsl","base/skybox_fg.glsl");
+
+        std::stack<std::shared_ptr<gld::Node<gld::Component>>> st;
+        st.push(node);
+        while (!st.empty())
+        {
+            auto ptr = st.top();
+            st.pop();
+            for(uint64_t i = 0;i < ptr->children_count();++i)
+            { 
+                auto mater = ptr->get_child(i)->get_comp<def::Material>();
+                if(mater)
+                    mater->uambient_strength = 0.36f;
+                st.push(ptr->get_child(i));
+            }
+        }
+       
+
+        skybox_p->locat_uniforms("perspective", "world", "skybox");
 
         auto trans = node->get_comp<Transform>();
         trans->scale = glm::vec3(0.2f,0.2f,0.2f);
@@ -146,6 +238,7 @@ public:
 
         for (auto& p : cxts)
             p->init();
+        skybox->init();
         update_matrix();
         return 0;
     }
@@ -172,12 +265,26 @@ public:
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-      
+        program->use();
+        perspective.attach_program(program);
+        world.attach_program(program);
+        perspective.sync();
+        world.sync();
+
+        auto sky_pro = skybox->get_comp<Render>()->get();
+        sky_pro->use();
+
+        perspective.attach_program(sky_pro);
+        world.attach_program(sky_pro);
         perspective.sync();
         world.sync();
 
         for (auto& p : cxts)
             p->draw();
+
+        glDepthFunc(GL_LEQUAL);
+        skybox->draw();
+        glDepthFunc(GL_LESS);
 
         program->use();
 
@@ -208,6 +315,8 @@ public:
         pl.sync(GL_MAP_WRITE_BIT);
         if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
 
+        skybox->update();
+
         time_ = time_ + 0.01;
         time_.sync();
     }
@@ -230,6 +339,7 @@ private:
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     GlmUniform<UT::Float> time_;
+    std::shared_ptr<Node<Component>> skybox;
     float pl_angle = 0.0f;
 };
 

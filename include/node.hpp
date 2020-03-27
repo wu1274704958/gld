@@ -159,13 +159,21 @@ namespace gld{
             for(auto &ch : children)
                 ch->update();
         }
-        std::shared_ptr<Node<Comp>> get_child(int idx)
+        std::shared_ptr<Node<Comp>> get_child(uint64_t idx)
         {
             if(good_child_idx(idx))
             {
                 return children[idx];
             }
             return std::shared_ptr<Node<Comp>>();
+        }
+        uint64_t children_count()
+        {
+            return static_cast<uint64_t>(children.size());
+        }
+        uint64_t comp_count()
+        {
+            return static_cast<uint64_t>(components.size());
         }
     protected:
         void clear_parent()
