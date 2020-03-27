@@ -92,7 +92,7 @@ public:
         
         cxts.push_back(node);
 
-       // node->add_comp(std::make_shared<AutoRotate>());
+        node->add_comp(std::make_shared<AutoRotate>());
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
