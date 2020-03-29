@@ -90,6 +90,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR skybox FILES main.cpp)
     CreateExample(DIR geometry FILES main.cpp)
     CreateExample(DIR reflect FILES main.cpp)
+    CreateExample(DIR refract FILES main.cpp)
 
 endif()
 
