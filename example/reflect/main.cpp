@@ -250,6 +250,8 @@ public:
         return 0;
     }
 
+
+
     void loadModel()
     {
         auto res = ResMgrWithGlslPreProcess::instance()->load<ResType::model>("model/nanosuit/nanosuit.obj");
@@ -298,6 +300,17 @@ public:
         update();
         update_matrix();
 
+    }
+
+    void onMouseMove(double x,double y) override
+    {
+        float ly = last_mouse_pos.y;
+        RenderDemoRotate::onMouseMove(x,y);
+        if(mouse_key_left_press)
+        {   
+            time_ += (static_cast<float>(y) - ly) * 0.01f;
+            time_.sync();
+        }
     }
 
     void update_matrix()
