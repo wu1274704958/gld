@@ -245,7 +245,7 @@ public:
 
         spl.sync(GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
 
-        refract_rate = 0.658f;
+        refract_rate = 0.413223f;
         refract_rate.sync();
 
         for (auto& p : cxts)
