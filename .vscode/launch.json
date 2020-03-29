@@ -6,6 +6,17 @@
     "configurations": [
 
         {
+            "name": "heart",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/heart.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "refract",
             "type": "cppvsdbg",
             "request": "launch",

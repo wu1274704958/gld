@@ -160,14 +160,17 @@ namespace gld{
       
         void draw()
         {
-            for(auto &comp : components) 
-                comp->before_draw();
-            for(auto &comp : components) 
-                comp->draw();
-            for(int64_t i = static_cast<int64_t>(components.size() - 1);i >= 0;--i)
-                components[i]->after_draw();
-            for(auto &ch : children)
-                ch->draw();
+            if(visible)
+            {
+                for(auto &comp : components) 
+                    comp->before_draw();
+                for(auto &comp : components) 
+                    comp->draw();
+                for(int64_t i = static_cast<int64_t>(components.size() - 1);i >= 0;--i)
+                    components[i]->after_draw();
+                for(auto &ch : children)
+                    ch->draw();
+            }
         }
         void update()
         {
@@ -192,6 +195,7 @@ namespace gld{
         {
             return static_cast<uint64_t>(components.size());
         }
+        bool visible = true;
     protected:
         void clear_parent()
         {

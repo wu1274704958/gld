@@ -91,6 +91,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR geometry FILES main.cpp)
     CreateExample(DIR reflect FILES main.cpp)
     CreateExample(DIR refract FILES main.cpp)
+    CreateExample(DIR heart FILES main.cpp)
 
 endif()
 

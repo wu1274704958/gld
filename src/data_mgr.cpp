@@ -259,9 +259,15 @@ std::shared_ptr<gld::Node<gld::Component>> process_mesh(const aiScene* scene,aiM
             mesh->mVertices[i].y,
             mesh->mVertices[i].z);
         // normals
-        vertex.normal = glm::vec3(mesh->mNormals[i].x,
+        if(mesh->mNormals)
+        {
+            vertex.normal = glm::vec3(mesh->mNormals[i].x,
             mesh->mNormals[i].y,
             mesh->mNormals[i].z);
+        }else{
+            vertex.normal = glm::vec3(0.f,0.f,0.f);
+        }
+        
         // texture coordinates
         if(mesh->mTextureCoords[0]) // does the mesh contain texture coordinates?
         {
