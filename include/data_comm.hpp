@@ -11,7 +11,8 @@ namespace gld{
         SceneNoMaterial,
         TextureCube,
         ProgramWithGeometry,
-        SceneWithGeometry
+        SceneWithGeometry,
+        SceneWithGeometryNoMaterial
     };
 
     namespace data_ck{

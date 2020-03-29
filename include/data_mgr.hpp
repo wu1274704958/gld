@@ -176,7 +176,8 @@ private:
     {
         Default = 0x0,
         NoMaterial = 0x1,
-        HasGeometry = 0x2
+        HasGeometry = 0x2,
+        HasGeometry_NoMaterial = 0x3
     };
 
     template<SceneLoadMode M>
@@ -209,6 +210,7 @@ private:
         DataLoadPlugTy<DataType::SceneNoMaterial,LoadSceneNode<SceneLoadMode::NoMaterial>>,
         DataLoadPlugTy<DataType::TextureCube,LoadTextureCube>,
         DataLoadPlugTy<DataType::ProgramWithGeometry,LoadProgramWithGeom>,
-        DataLoadPlugTy<DataType::SceneWithGeometry,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry>>
+        DataLoadPlugTy<DataType::SceneWithGeometry,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry>>,
+        DataLoadPlugTy<DataType::SceneWithGeometryNoMaterial,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry_NoMaterial>>
         > DefDataMgr;
 } // namespace gld

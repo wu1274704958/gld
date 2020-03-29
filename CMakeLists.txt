@@ -89,6 +89,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR framebuffer FILES main.cpp)
     CreateExample(DIR skybox FILES main.cpp)
     CreateExample(DIR geometry FILES main.cpp)
+    CreateExample(DIR reflect FILES main.cpp)
 
 endif()
 

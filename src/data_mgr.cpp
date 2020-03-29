@@ -410,8 +410,11 @@ InstanctationLoadSceneNode(gld::LoadSceneNode,Default)
 InstanctationLoadSceneNode(gld::LoadSceneNode,NoMaterial)
 
 InstanctationLoadSceneNodeWithGeom(gld::LoadSceneNodeWithGeom,HasGeometry)
+InstanctationLoadSceneNodeWithGeom(gld::LoadSceneNodeWithGeom,HasGeometry_NoMaterial)
 
 InstanctationProcessMeshEx(Default)
 InstanctationProcessMeshEx(NoMaterial)
 
 InstanctationProcessMeshEx(HasGeometry,std::string)
+
+InstanctationProcessMeshEx(HasGeometry_NoMaterial,std::string)
