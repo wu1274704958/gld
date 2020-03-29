@@ -157,7 +157,7 @@ public:
         time_ = -glm::pi<float>() / 2.f;
         time_.sync();
 
-        auto node = DefDataMgr::instance()->load<DataType::SceneWithGeometry>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
+        auto node = DefDataMgr::instance()->load<DataType::SceneWithGeometryNoMaterial>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
             "geometry/base_vs.glsl","reflect/reflect_fg.glsl","geometry/explode.glsl");
         // auto node = DefDataMgr::instance()->load<DataType::Scene>("model/nanosuit/nanosuit.obj",LoadScene::default_args(),
         //      "geometry/base_fg.glsl","geometry/explode.glsl");
@@ -172,10 +172,10 @@ public:
             st.pop();
             for(uint64_t i = 0;i < ptr->children_count();++i)
             { 
-                auto mater = ptr->get_child(i)->get_comp<def::Material>();
+                auto mater = ptr->get_child(i)->get_comp<Render>();
                 if(mater)
                 {
-                    ptr->get_child(i)->remove_comp<def::Material>(mater);
+                    //ptr->get_child(i)->remove_comp<def::Material>(mater);
                     ptr->get_child(i)->add_comp<def::Skybox>(std::shared_ptr<def::Skybox>(new def::Skybox(cube_tex)));
                 }
                 st.push(ptr->get_child(i));
