@@ -101,33 +101,33 @@ public:
 
         def::Mesh* mesh = nullptr;
         std::shared_ptr<Node<Component>> ptr = asteroid;
-        while(!mesh)
-        {
-            mesh = ptr->get_comp<def::Mesh>();
-            if(ptr->children_count() > 0)
-                ptr = ptr->get_child(0);
-        }
-        if(mesh)
-        {
-            auto mesh_ins = def::MeshInstanced::create_with_mesh(mesh,AsteroidNum);
-            ptr->remove_comp(mesh);
-            ptr->add_comp(mesh_ins);
+        // while(!mesh)
+        // {
+        //     mesh = ptr->get_comp<def::Mesh>();
+        //     if(ptr->children_count() > 0)
+        //         ptr = ptr->get_child(0);
+        // }
+        // if(mesh)
+        // {
+        //     auto mesh_ins = def::MeshInstanced::create_with_mesh(mesh,AsteroidNum);
+        //     ptr->remove_comp(mesh);
+        //     ptr->add_comp(mesh_ins);
 
-            auto data = create_asteroids(AsteroidNum);
+        //     auto data = create_asteroids(AsteroidNum);
 
-            auto& vao = mesh_ins->vao;
-            vao->bind_self();
-            auto& buf = vao->create_one();
-            buf.bind_data(data.get(),AsteroidNum,GL_STATIC_DRAW);
+        //     auto& vao = mesh_ins->vao;
+        //     vao->bind_self();
+        //     auto& buf = vao->create_one();
+        //     buf.bind_data(data.get(),AsteroidNum,GL_STATIC_DRAW);
             
-            buf.vertex_attrib_pointer<3,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>>();
+        //     buf.vertex_attrib_pointer<3,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>>();
 
-            vao->vertex_attr_div<3,1,1,1,1>();
-            vao->unbind_self();
-        }
+        //     vao->vertex_attr_div<3,1,1,1,1>();
+        //     vao->unbind_self();
+        // }
         
-        //cxts.push_back(planet);
-        cxts.push_back(asteroid);
+        cxts.push_back(planet);
+        //cxts.push_back(asteroid);
 
         planet->add_comp(std::make_shared<AutoRotate>());
 
@@ -192,7 +192,7 @@ public:
     std::unique_ptr<glm::mat4[]> create_asteroids(int n)
     {
         glm::mat4 *res = new glm::mat4[n];
-        srand(glfwGetTime()); // 初始化随机种子    
+        srand(::time(nullptr)); // 初始化随机种子    
         float radius = 50.0;
         float offset = 2.5f;
         for(unsigned int i = 0; i < n; i++)
