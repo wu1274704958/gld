@@ -120,6 +120,42 @@ namespace gld::def{
         std::shared_ptr<gld::VertexArr> vao;
     };
 
+    struct MeshInstanced : public Component
+    {
+        MeshInstanced(
+            size_t index_size,
+            size_t vertex_size,
+            size_t count,
+            std::shared_ptr<gld::VertexArr> vao)
+            : index_size(index_size),
+            vertex_size(vertex_size),
+            instance_count(count),
+            vao(std::move(vao))
+        {   
+
+        }
+
+        static std::shared_ptr<MeshInstanced> create_with_mesh(Mesh* m,size_t count);
+
+        void draw() override
+        {
+            vao->bind();
+            if(vao->buffs().get<ArrayBufferType::ELEMENT>().good())
+            {   
+                glDrawElementsInstanced(GL_TRIANGLES,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr,static_cast<GLsizei>(instance_count));
+            }else{
+                glDrawArraysInstanced(GL_TRIANGLES,0,static_cast<GLsizei>(vertex_size),static_cast<GLsizei>(instance_count));
+            }
+		    vao->unbind();
+        }
+        
+        int64_t idx() override { return 100;}
+        size_t index_size;
+        size_t vertex_size;
+        size_t instance_count;
+        std::shared_ptr<gld::VertexArr> vao;
+    };
+
     struct Skybox : public Component{
         Skybox(std::shared_ptr<Texture<TexType::CUBE>> skyboxTex) : 
             uskybox("skybox"),

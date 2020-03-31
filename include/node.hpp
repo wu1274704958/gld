@@ -70,7 +70,7 @@ namespace gld{
         bool remove_comp(T * comp)
         {
             if(!comp) return false;
-            const type_info& ty_id = typeid(T);
+            const std::type_info& ty_id = typeid(T);
             for(int i = 0;i < components.size();++i)
             {
                 if(comp_ty_id(i) == ty_id && comp == components[i].get())
