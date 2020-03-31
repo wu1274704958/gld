@@ -36,7 +36,7 @@ namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
-#define AsteroidNum 1000
+#define AsteroidNum 3600
 
 struct AutoRotate : public Component
 {
@@ -96,38 +96,38 @@ public:
             "instantiation/base_vs.glsl","instantiation/base_fg.glsl");
 
         auto trans = planet->get_comp<Transform>();
-        trans->scale = glm::vec3(0.42f,0.42f,0.42f);
+        trans->scale = glm::vec3(7.42f,7.42f,7.42f);
         trans->pos.y = -0.6f;
 
         def::Mesh* mesh = nullptr;
         std::shared_ptr<Node<Component>> ptr = asteroid;
-        // while(!mesh)
-        // {
-        //     mesh = ptr->get_comp<def::Mesh>();
-        //     if(ptr->children_count() > 0)
-        //         ptr = ptr->get_child(0);
-        // }
-        // if(mesh)
-        // {
-        //     auto mesh_ins = def::MeshInstanced::create_with_mesh(mesh,AsteroidNum);
-        //     ptr->remove_comp(mesh);
-        //     ptr->add_comp(mesh_ins);
+        while(!mesh)
+        {
+            mesh = ptr->get_comp<def::Mesh>();
+            if(ptr->children_count() > 0)
+                ptr = ptr->get_child(0);
+        }
+        if(mesh)
+        {
+            auto mesh_ins = def::MeshInstanced::create_with_mesh(mesh,AsteroidNum);
+            ptr->remove_comp(mesh);
+            ptr->add_comp(mesh_ins);
 
-        //     auto data = create_asteroids(AsteroidNum);
-
-        //     auto& vao = mesh_ins->vao;
-        //     vao->bind_self();
-        //     auto& buf = vao->create_one();
-        //     buf.bind_data(data.get(),AsteroidNum,GL_STATIC_DRAW);
+            auto data = create_asteroids(AsteroidNum,glm::vec3(0.f,10.f,0.f));
+            auto mat = glm::mat4(1.0f);
+            auto& vao = mesh_ins->vao;
+            vao->bind_self();
+            auto& buf = vao->create_one();
+            buf.bind_data(data.get(),AsteroidNum,GL_STATIC_DRAW);
             
-        //     buf.vertex_attrib_pointer<3,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>>();
+            buf.vertex_attrib_pointer<3,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>,VAP_DATA<4,float,false>>();
 
-        //     vao->vertex_attr_div<3,1,1,1,1>();
-        //     vao->unbind_self();
-        // }
+            vao->vertex_attr_div<3,1,1,1,1>();
+            vao->unbind_self();
+        }
         
         cxts.push_back(planet);
-        //cxts.push_back(asteroid);
+        cxts.push_back(asteroid);
 
         planet->add_comp(std::make_shared<AutoRotate>());
 
@@ -173,7 +173,7 @@ public:
 
         spl->pos = glm::vec3(0.f, 0.f, 0.f);
         
-        spl->color = glm::vec3(0.f,0.f, 1.f);
+        spl->color = glm::vec3(0.f,0.f, 0.f);
         spl->constant = 1.0f;
         spl->linear = 0.045f;
         spl->quadratic = 0.0075f;
@@ -189,27 +189,27 @@ public:
         return 0;
     }
 
-    std::unique_ptr<glm::mat4[]> create_asteroids(int n)
+    std::unique_ptr<glm::mat4[]> create_asteroids(int n,glm::vec3 off)
     {
         glm::mat4 *res = new glm::mat4[n];
         srand(::time(nullptr)); // 初始化随机种子    
-        float radius = 50.0;
+        float radius = 28.0;
         float offset = 2.5f;
-        for(unsigned int i = 0; i < n; i++)
+        for(int i = 0; i < n; i++)
         {
-            glm::mat4 model;
+            glm::mat4 model(1.0f);
             // 1. 位移：分布在半径为 'radius' 的圆形上，偏移的范围是 [-offset, offset]
-            float angle = (float)i / (float)n * 360.0f;
+            float angle = (float)i / (float)n * glm::pi<float>() * 2.f;
             float displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
             float x = sin(angle) * radius + displacement;
             displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
             float y = displacement * 0.4f; // 让行星带的高度比x和z的宽度要小
             displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
             float z = cos(angle) * radius + displacement;
-            model = glm::translate(model, glm::vec3(x, y, z));
+            model = glm::translate(model, glm::vec3(x + off.x, y + off.y, z + off.z));
 
             // 2. 缩放：在 0.05 和 0.25f 之间缩放
-            float scale = (rand() % 20) / 100.0f + 0.05;
+            float scale = ((rand() % 20) / 100.0f + 0.05);
             model = glm::scale(model, glm::vec3(scale));
 
             // 3. 旋转：绕着一个（半）随机选择的旋转轴向量进行随机的旋转
@@ -272,7 +272,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.0f, 0.0f, -3.0f));
+        world = glm::translate(*world, glm::vec3(0.0f, 0.0f, -50.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
