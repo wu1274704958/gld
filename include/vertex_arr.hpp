@@ -88,6 +88,12 @@ namespace gld
             glBufferData(static_cast<size_t>(ABT),sizeof(T) * N,v,ty);
         }
 
+        template<typename T>
+        void bind_data(T* data,size_t size,GLenum ty)
+        {
+            glBufferData(static_cast<size_t>(ABT),static_cast<long long int>(sizeof(T) * size),data,ty);
+        }
+
         bool good()
         {
             return id > 0;
@@ -100,6 +106,16 @@ namespace gld
             {
                 constexpr size_t stride = vertex_attrib_stride<Ts...>();
                 vertex_attrib_pointer_sub<stride,0,0,Ts...>();
+            }
+        }
+
+        template<size_t B,typename ...Ts>
+        void vertex_attrib_pointer()
+        {
+            if constexpr(sizeof...(Ts) > 0)
+            {
+                constexpr size_t stride = vertex_attrib_stride<Ts...>();
+                vertex_attrib_pointer_sub<stride,B,0,Ts...>();
             }
         }
 
@@ -191,6 +207,7 @@ namespace gld
             id = oth.id;
             oth.id = 0;
             vbuffs = std::move(oth.vbuffs);
+            oths = std::move(oth.oths);
         }
         VertexArr& operator=(VertexArr&& oth)
         {
@@ -198,6 +215,7 @@ namespace gld
             id = oth.id;
             oth.id = 0;
             vbuffs = std::move(oth.vbuffs);
+            oths = std::move(oth.oths);
             return *this;
         }
         
@@ -206,9 +224,19 @@ namespace gld
             clean();
         }
 
-        void bind()
+        void bind_self()
         {
             glBindVertexArray(id);
+        }
+
+        void unbind_self()
+        {
+            glBindVertexArray(0);
+        }
+
+        void bind()
+        {
+            bind_self();
             if(vbuffs.get<ArrayBufferType::VERTEX>().good())
                 vbuffs.get<ArrayBufferType::VERTEX>().bind();
             if(vbuffs.get<ArrayBufferType::ELEMENT>().good())
@@ -217,7 +245,7 @@ namespace gld
 
         void unbind()
         {
-            glBindVertexArray(0);
+            unbind_self();
             vbuffs.get<ArrayBufferType::VERTEX>().unbind();
             vbuffs.get<ArrayBufferType::ELEMENT>().unbind();
         }
@@ -238,8 +266,45 @@ namespace gld
         {
             return vbuffs;
         }
+
+        std::vector<VABuffer<ArrayBufferType::VERTEX>>& get_oths() 
+        {
+            return oths;
+        }
+
+        const std::vector<VABuffer<ArrayBufferType::VERTEX>>& get_oths() const
+        {
+            return oths;
+        }
+
+        VABuffer<ArrayBufferType::VERTEX>& create_one()
+        {
+            VABuffer<ArrayBufferType::VERTEX> buff;
+            buff.create();
+            bind_self();
+            buff.bind();
+            oths.push_back(std::move(buff));
+            return oths.back();
+        }
+
+        void vertex_attr_div(GLuint idx,GLuint div)
+        {
+            glVertexAttribDivisor(idx,div);
+        }
+
+        template<size_t B,size_t Df,size_t ... Div>
+        void vertex_attr_div()
+        {
+            glVertexAttribDivisor(B,Df);
+            if constexpr(sizeof...(Div) > 0)
+            {
+                vertex_attr_div<B + 1,Div...>();
+            }
+        }
+
     private:
         Glid id = 0;  
         VABuffers vbuffs;
+        std::vector<VABuffer<ArrayBufferType::VERTEX>> oths;
     };
 } // namespace gld

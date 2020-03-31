@@ -6,6 +6,17 @@
     "configurations": [
 
         {
+            "name": "instantiation",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/instantiation.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "heart",
             "type": "cppvsdbg",
             "request": "launch",
