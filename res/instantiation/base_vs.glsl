@@ -15,8 +15,8 @@ void main()
 { 
     oUv = vuv;
     vec4 a = model * vec4(vposition,1.0f);
-    gl_Position = perspective * world * vmodel * vec4(vposition,1.0f);
-    oVpos = vec3(world * vmodel * vec4(vposition,1.0f));
-    mat3 nor_mat = mat3(world * vmodel);
+    gl_Position = perspective * world * model * vmodel * vec4(vposition,1.0f);
+    oVpos = vec3(world * model * vmodel * vec4(vposition,1.0f));
+    mat3 nor_mat = mat3(world * model * vmodel);
     oNormal = normalize(nor_mat * vnormal);
 }

@@ -36,7 +36,7 @@ namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
-#define AsteroidNum 3600
+#define AsteroidNum 4800
 
 struct AutoRotate : public Component
 {
@@ -96,8 +96,13 @@ public:
             "instantiation/base_vs.glsl","instantiation/base_fg.glsl");
 
         auto trans = planet->get_comp<Transform>();
-        trans->scale = glm::vec3(7.42f,7.42f,7.42f);
-        trans->pos.y = -0.6f;
+        trans->scale = glm::vec3(8.42f,8.42f,8.42f);
+        trans->pos.y = -7.6f;
+
+        trans = asteroid->get_comp<Transform>();
+        trans->setRotateZ(12.f);
+
+        
 
         def::Mesh* mesh = nullptr;
         std::shared_ptr<Node<Component>> ptr = asteroid;
@@ -113,7 +118,7 @@ public:
             ptr->remove_comp(mesh);
             ptr->add_comp(mesh_ins);
 
-            auto data = create_asteroids(AsteroidNum,glm::vec3(0.f,10.f,0.f));
+            auto data = create_asteroids(AsteroidNum,glm::vec3(0.f,0.f,0.f));
             auto mat = glm::mat4(1.0f);
             auto& vao = mesh_ins->vao;
             vao->bind_self();
@@ -130,6 +135,7 @@ public:
         cxts.push_back(asteroid);
 
         planet->add_comp(std::make_shared<AutoRotate>());
+        asteroid->get_child(0)->add_comp(std::make_shared<AutoRotate>());
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -194,22 +200,24 @@ public:
         glm::mat4 *res = new glm::mat4[n];
         srand(::time(nullptr)); // 初始化随机种子    
         float radius = 28.0;
-        float offset = 2.5f;
+        float offsetx = 3.78f;
+        float offsety = 0.4f;
+        float offsetz = 3.6f;
         for(int i = 0; i < n; i++)
         {
             glm::mat4 model(1.0f);
             // 1. 位移：分布在半径为 'radius' 的圆形上，偏移的范围是 [-offset, offset]
             float angle = (float)i / (float)n * glm::pi<float>() * 2.f;
-            float displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
+            float displacement = (rand() % (int)(2 * offsetx * 100)) / 100.0f - offsetx;
             float x = sin(angle) * radius + displacement;
-            displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
-            float y = displacement * 0.4f; // 让行星带的高度比x和z的宽度要小
-            displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
+            displacement = (rand() % (int)(2 * offsety * 100)) / 100.0f - offsety;
+            float y = displacement ;//* 0.4f; // 让行星带的高度比x和z的宽度要小
+            displacement = (rand() % (int)(2 * offsetz * 100)) / 100.0f - offsetz;
             float z = cos(angle) * radius + displacement;
             model = glm::translate(model, glm::vec3(x + off.x, y + off.y, z + off.z));
 
             // 2. 缩放：在 0.05 和 0.25f 之间缩放
-            float scale = ((rand() % 20) / 100.0f + 0.05);
+            float scale = ((rand() % 20) / 100.0f + 0.05f) * 0.7f;
             model = glm::scale(model, glm::vec3(scale));
 
             // 3. 旋转：绕着一个（半）随机选择的旋转轴向量进行随机的旋转
