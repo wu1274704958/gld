@@ -58,7 +58,7 @@ public:
     {
         RenderDemoRotate::init();
         
-        program = DefDataMgr::instance()->load<DataType::Program>("lighting_5/base_vs.glsl","lighting_5/base_fg.glsl");
+        program = DefDataMgr::instance()->load<DataType::Program>("lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
         program->use();
 
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
@@ -90,7 +90,7 @@ public:
         glDepthFunc(GL_LESS);
 
         planet = DefDataMgr::instance()->load<DataType::Scene>("model/planet/planet.obj",LoadScene::default_args(),
-            "lighting_5/base_vs.glsl","lighting_5/base_fg.glsl");
+            "lighting_6/base_vs.glsl","lighting_6/base_fg.glsl");
 
         asteroid = DefDataMgr::instance()->load<DataType::Scene>("model/rock/rock.obj",LoadScene::default_args(),
             "instantiation/base_vs.glsl","instantiation/base_fg.glsl");
