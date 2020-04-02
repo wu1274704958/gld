@@ -36,7 +36,7 @@ namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
-#define AsteroidNum 4800
+#define AsteroidNum 30000
 
 struct AutoRotate : public Component
 {
@@ -199,9 +199,9 @@ public:
     {
         glm::mat4 *res = new glm::mat4[n];
         srand(::time(nullptr)); // 初始化随机种子    
-        float radius = 28.0;
-        float offsetx = 3.78f;
-        float offsety = 0.4f;
+        float radius = 36.0;
+        float offsetx = 5.78f;
+        float offsety = 0.62f;
         float offsetz = 3.6f;
         for(int i = 0; i < n; i++)
         {
@@ -217,7 +217,7 @@ public:
             model = glm::translate(model, glm::vec3(x + off.x, y + off.y, z + off.z));
 
             // 2. 缩放：在 0.05 和 0.25f 之间缩放
-            float scale = ((rand() % 20) / 100.0f + 0.05f) * 0.7f;
+            float scale = ((rand() % 20) / 100.0f + 0.05f) * 0.4f;
             model = glm::scale(model, glm::vec3(scale));
 
             // 3. 旋转：绕着一个（半）随机选择的旋转轴向量进行随机的旋转
