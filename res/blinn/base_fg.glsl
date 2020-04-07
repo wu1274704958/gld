@@ -32,11 +32,21 @@ vec3 calc_point_light(vec3 obj_color,vec3 view_dir,PointLight pl);
 vec3 calc_direct_light(vec3 obj_color,vec3 view_dir,DirctLight dirct_light);
 vec3 calc_spot_light(vec3 obj_color,vec3 view_dir,SpotLight spot_light);
 vec3 calc_direct_light_blinn(vec3 obj_color,vec3 view_dir,DirctLight dirct_light);
+vec3 calc_point_light_blinn(vec3 obj_color,vec3 view_dir,PointLight pl);
 
 
-float blinn_spec(vec3 view_dir)
+float blinn_direct_spec(vec3 view_dir)
 {
-    return 0.0f;
+    vec3 light_dirction = -normalize(dirct_light.dir);
+    vec3 halfwayDir = normalize( light_dirction + view_dir );
+    return pow(max(dot(oNormal,halfwayDir),0.0f),shininess);
+}
+
+float blinn_point_spec(PointLight pl,vec3 view_dir)
+{
+    vec3 pl_dir = normalize(pl.pos - oVpos);
+    vec3 halfwayDir = normalize( pl_dir + view_dir );
+    return pow(max(dot(oNormal,halfwayDir),0.0f),shininess);
 }
 
 void main() 
@@ -46,8 +56,9 @@ void main()
     vec3 view_dir = normalize(view_pos - oVpos);
 
     color = vec4( (
-        calc_direct_light(obj_color,view_dir, dirct_light) //+ 
-        //calc_point_light(obj_color,view_dir,pointLight) + 
+        //calc_direct_light(obj_color,view_dir, dirct_light) //+ 
+        calc_direct_light_blinn(obj_color,view_dir,dirct_light) +
+        calc_point_light_blinn(obj_color,view_dir,pointLight) 
         //calc_spot_light(obj_color,view_dir,spotLight)
         ),1.0f);
 }
@@ -67,6 +78,27 @@ vec3 calc_point_light(vec3 obj_color,vec3 view_dir,PointLight pl)
     vec3 pl_reflect = reflect(-pl_dir,oNormal);
 
     float pl_spec = pow(max(dot(view_dir,pl_reflect),0.0f),shininess);
+
+    vec3 pl_specular = attenuation * specular_strength * pl_spec * (pl.color * texture(specularTex,oUv).rgb);
+    
+    return pl_diffuse + pl_specular;
+}
+
+vec3 calc_point_light_blinn(vec3 obj_color,vec3 view_dir,PointLight pl)
+{
+
+    vec3 pl_dir = normalize(pl.pos - oVpos);
+
+    float dist = length(pl.pos - oVpos);
+
+    float attenuation = 1.0 / (pl.constant + pl.linear * dist + 
+                pl.quadratic * (dist * dist));
+
+    vec3 pl_diffuse = (pl.color *  obj_color) * (max(dot(pl_dir,oNormal),0.0f) * attenuation);
+
+    vec3 pl_reflect = reflect(-pl_dir,oNormal);
+
+    float pl_spec = blinn_point_spec(pl,view_dir);
 
     vec3 pl_specular = attenuation * specular_strength * pl_spec * (pl.color * texture(specularTex,oUv).rgb);
     
@@ -100,7 +132,7 @@ vec3 calc_direct_light_blinn(vec3 obj_color,vec3 view_dir,DirctLight dirct_light
 
     vec3 light_reflect = reflect(-light_dirction,oNormal);
 
-    float spec = blinn_spec(view_dir);
+    float spec = blinn_direct_spec(view_dir);
 
     vec3 specular = specular_strength * spec * (dirct_light.color * texture(specularTex,oUv).rgb);
 

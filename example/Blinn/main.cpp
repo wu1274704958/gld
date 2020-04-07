@@ -236,7 +236,11 @@ public:
         plane->add_comp<def::Material>(plane_mat);
         plane->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
-        plane_mat->ushininess = 32.f;
+        plane->get_comp<Transform>()->pos.z = -3.f;
+        plane->get_comp<Transform>()->pos.y = -1.f;
+
+        plane_mat->uambient_strength = 0.2f;
+        plane_mat->ushininess = 128.f;
         plane_mat->uspecular_strength = 0.3f;
 
         cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
@@ -254,7 +258,7 @@ public:
         light.init(GL_STATIC_DRAW);
         
         light->color = glm::vec3(1.f, 1.f, 1.f);
-        light->dir = glm::vec3(-0.2f, -1.0f, -0.3f);
+        light->dir = glm::vec3(-0.2f, -1.0f, 0.3f);
 
         light.sync(GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT);
 
@@ -357,9 +361,10 @@ public:
         for (auto& p : cxts)
             p->update();
         
-        glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
-        pl_pos = glm::rotateZ(pl_pos,pl_angle);
+        glm::vec3 pl_pos = glm::vec3(1.f, 2.f, 0.f);
+        pl_pos = glm::rotateY(pl_pos,pl_angle);
         pl->pls[0].pos = pl_pos;
+        pl->pls[0].pos.z -= 3.f;
         pl.sync(GL_MAP_WRITE_BIT);
         if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
     }
