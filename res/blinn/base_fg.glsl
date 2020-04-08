@@ -24,6 +24,7 @@ uniform sampler2D specularTex;
 uniform float ambient_strength;
 uniform float specular_strength;
 uniform float shininess;
+uniform int use_blinn;
 //point light 
 
 uniform vec3 view_pos;
@@ -54,13 +55,23 @@ void main()
     vec3 obj_color = texture(diffuseTex, oUv).rgb;
 
     vec3 view_dir = normalize(view_pos - oVpos);
-
-    color = vec4( (
+    if(use_blinn == 1)
+    {
+        color = vec4( (
         //calc_direct_light(obj_color,view_dir, dirct_light) //+ 
         calc_direct_light_blinn(obj_color,view_dir,dirct_light) +
         calc_point_light_blinn(obj_color,view_dir,pointLight) 
         //calc_spot_light(obj_color,view_dir,spotLight)
         ),1.0f);
+    }else{
+        color = vec4( (
+        //calc_direct_light(obj_color,view_dir, dirct_light) //+ 
+        calc_direct_light(obj_color,view_dir,dirct_light) +
+        calc_point_light(obj_color,view_dir,pointLight) 
+        //calc_spot_light(obj_color,view_dir,spotLight)
+        ),1.0f);
+    }
+    
 }
 
 vec3 calc_point_light(vec3 obj_color,vec3 view_dir,PointLight pl)

@@ -81,7 +81,7 @@ struct ScreenMat : public Component
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") 
+    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world"),use_blinn("use_blinn")
         {}
     int init() override
     {
@@ -93,12 +93,16 @@ public:
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex"
+            "shininess","specularTex","use_blinn"
         );
 
         view_pos.attach_program(program);
         perspective.attach_program(program);
         world.attach_program(program);
+        use_blinn.attach_program(program);
+
+        use_blinn = 1;
+        use_blinn.sync();
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -107,6 +111,7 @@ public:
         //glCullFace(GL_BACK);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
+        glEnable(GL_FRAMEBUFFER_SRGB);
 
         float cubeVertices[] = {
             // positions          // normals           // texture coords
@@ -240,7 +245,7 @@ public:
         plane->get_comp<Transform>()->pos.y = -2.f;
 
         plane_mat->uambient_strength = 0.03f;
-        plane_mat->ushininess = 128.f;
+        plane_mat->ushininess = 256.f;
         plane_mat->uspecular_strength = 0.5f;
 
         cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
@@ -377,6 +382,18 @@ public:
         glViewport(0, 0, w, h);
 
     }
+
+    void onMouseButton(int btn,int action,int mode) override
+    {
+        RenderDemoRotate::onMouseButton(btn,action,mode);
+        if(action == GLFW_RELEASE && btn == GLFW_MOUSE_BUTTON_2)
+        {
+            int v = use_blinn;
+            use_blinn = (v == 1 ? 0 : 1);
+            use_blinn.sync();
+        }    
+    }
+
 private:
     std::shared_ptr<Program> program;
     UniformBuf<0,DictLight> light;
@@ -386,6 +403,7 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
+    GlmUniform<UT::Int> use_blinn;
     float pl_angle = 0.0f;
 };
 
