@@ -94,6 +94,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR heart FILES main.cpp)
     CreateExample(DIR instantiation FILES main.cpp)
     CreateExample(DIR blinn FILES main.cpp)
+    CreateExample(DIR shadow FILES main.cpp)
 
 endif()
 

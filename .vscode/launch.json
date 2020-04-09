@@ -6,6 +6,17 @@
     "configurations": [
 
         {
+            "name": "shadow",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/shadow.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "blinn",
             "type": "cppvsdbg",
             "request": "launch",
