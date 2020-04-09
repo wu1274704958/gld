@@ -74,6 +74,12 @@ namespace gld::def{
             ushininess.sync();
             uspecular_strength.sync();
         }
+
+        void after_draw() override
+        {
+            diffuseTex->unbind();
+            specularTex->unbind();
+        }
        
         GlmUniform<UT::Sampler2D>   udiffuseTex;
         GlmUniform<UT::Sampler2D>   uspecularTex;
