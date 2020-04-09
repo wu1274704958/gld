@@ -369,9 +369,10 @@ public:
 
         glm::vec3 pl_pos = glm::vec3(1.f, -1.f, -8.f);
         pl_pos = glm::rotateY(pl_pos,pl_angle);
+        pl_pos.z = -4.f;
         pl->pls[0].pos = pl_pos;
         pl.sync(GL_MAP_WRITE_BIT);
-        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.005f;
+        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
     }
 
     ~Demo1() {
