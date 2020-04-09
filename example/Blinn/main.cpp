@@ -218,7 +218,7 @@ public:
 
         auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
         auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood.png",0);
-        auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/white.png",0);
+        auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood_spec.png",0);
 
         auto cube_mat = std::shared_ptr<def::Material>(new def::Material(dif_cube,nullptr));
         auto plane_mat = std::shared_ptr<def::Material>(new def::Material(dif_plane,spec_plane));
