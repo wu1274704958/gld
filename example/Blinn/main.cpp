@@ -370,7 +370,10 @@ public:
         pl_pos = glm::rotateY(pl_pos,pl_angle);
         pl->pls[0].pos = pl_pos;
         pl.sync(GL_MAP_WRITE_BIT);
-        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
+        if(do_loop)
+        {
+            if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
+        }
     }
 
     ~Demo1() {
@@ -391,7 +394,9 @@ public:
             int v = use_blinn;
             use_blinn = (v == 1 ? 0 : 1);
             use_blinn.sync();
-        }    
+        } 
+        if(action == GLFW_RELEASE && btn == GLFW_MOUSE_BUTTON_3)
+            do_loop = !do_loop; 
     }
 
 private:
@@ -405,6 +410,7 @@ private:
     UniformBuf<2,SpotLight> spl;
     GlmUniform<UT::Int> use_blinn;
     float pl_angle = 0.0f;
+    bool do_loop = false;
 };
 
 #ifndef PF_ANDROID
