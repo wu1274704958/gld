@@ -79,6 +79,9 @@ struct ScreenMat : public Component
 #define VER_PATH "blinn/base_vs.glsl"
 #define FRAG_PATH "blinn/base_fg.glsl"
 
+#define Depth_VER_PATH "shadow_map/base_vs.glsl"
+#define Depth_FRAG_PATH "shadow_map/base_fg.glsl"
+
 class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") ,use_blinn("use_blinn")
@@ -86,6 +89,11 @@ public:
     int init() override
     {
         RenderDemoRotate::init();
+
+        depth_p = DefDataMgr::instance()->load<DataType::Program>(Depth_VER_PATH,Depth_FRAG_PATH);
+        depth_p->use();
+
+        depth_p->locat_uniforms("perspective", "world", "model");
         
         program = DefDataMgr::instance()->load<DataType::Program>(VER_PATH,FRAG_PATH);
         program->use();
@@ -238,6 +246,12 @@ public:
         cube2->add_comp<def::Material>(cube_mat);
         cube2->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
+        auto cube3 = std::make_shared<Node<Component>>();
+        cube3->add_comp<Transform>(std::make_shared<Transform>());
+        cube3->add_comp<def::Mesh>(cube_mesh);
+        cube3->add_comp<def::Material>(cube_mat);
+        cube3->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
+
         auto plane = std::make_shared<Node<Component>>();
         plane->add_comp<Transform>(std::make_shared<Transform>());
         plane->add_comp<def::Mesh>(plane_mesh);
@@ -249,10 +263,48 @@ public:
 
         cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
         cube2->get_comp<Transform>()->pos = glm::vec3(2.0f, 0.0f, 0.0f);
+        cube3->get_comp<Transform>()->pos = glm::vec3(2.0f, -1.6f, -2.0f);
+
+        cube->get_comp<Transform>()->rotate = glm::vec3(rd_0_1(), rd_0_1(), rd_0_1());
+        cube2->get_comp<Transform>()->rotate = glm::vec3(rd_0_1(), rd_0_1(), rd_0_1());
+
 
         cxts.push_back(cube);
         cxts.push_back(cube2);
+        cxts.push_back(cube3);
         cxts.push_back(plane);
+
+        auto cube_d = std::make_shared<Node<Component>>();
+        cube_d->add_comp<Transform>(std::make_shared<Transform>());
+        cube_d->add_comp<def::Mesh>(cube_mesh);
+        cube_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_FRAG_PATH)));
+
+        auto cube2_d = std::make_shared<Node<Component>>();
+        cube2_d->add_comp<Transform>(std::make_shared<Transform>());
+        cube2_d->add_comp<def::Mesh>(cube_mesh);
+        cube2_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_FRAG_PATH)));
+
+        auto cube3_d = std::make_shared<Node<Component>>();
+        cube3_d->add_comp<Transform>(std::make_shared<Transform>());
+        cube3_d->add_comp<def::Mesh>(cube_mesh);
+        cube3_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_FRAG_PATH)));
+
+        auto plane_d = std::make_shared<Node<Component>>();
+        plane_d->add_comp<Transform>(std::make_shared<Transform>());
+        plane_d->add_comp<def::Mesh>(plane_mesh);
+        plane_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_VER_PATH)));
+
+        cube_d->get_comp<Transform>()->pos = cube->get_comp<Transform>()->pos; 
+        cube2_d->get_comp<Transform>()->pos = cube2->get_comp<Transform>()->pos;
+        cube3_d->get_comp<Transform>()->pos = cube3->get_comp<Transform>()->pos;
+
+        cube_d->get_comp<Transform>()->rotate = cube->get_comp<Transform>()->rotate; 
+        cube2_d->get_comp<Transform>()->rotate = cube2->get_comp<Transform>()->rotate;
+
+        depth_nodes.push_back(cube_d );
+        depth_nodes.push_back(cube2_d);
+        depth_nodes.push_back(cube3_d);
+        depth_nodes.push_back(plane_d);
 
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -308,6 +360,9 @@ public:
         for (auto& p : cxts)
             p->init();
 
+        for (auto& p : depth_nodes)
+            p->init();
+
         update_matrix();
         return 0;
     }
@@ -333,18 +388,27 @@ public:
     void draw() override
     {
        
-        program->use();
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f); 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-      
+        program->use();
+        
+        perspective.attach_program(program);
+        world.attach_program(program);
+        
+        perspective.sync();
+        world.sync();
+
+        depth_p->use();
+        
+        perspective.attach_program(depth_p);
+        world.attach_program(depth_p);
+
         perspective.sync();
         world.sync();
 
         for (auto& p : cxts)
             p->draw();
-
-        program->use();
 
         update();
         update_matrix();
@@ -356,7 +420,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.0f, 0.0f, -3.0f));
+        world = glm::translate(*world, glm::vec3(0.0f, 0.0f, -4.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
@@ -384,13 +448,13 @@ public:
         glViewport(0, 0, w, h);
     }
 private:
-    std::shared_ptr<Program> program;
+    std::shared_ptr<Program> program,depth_p;
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
     Uniform<UT::Int> use_blinn;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
-    std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
+    std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts,depth_nodes;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     float pl_angle = 0.0f;
