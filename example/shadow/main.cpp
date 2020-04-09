@@ -224,6 +224,7 @@ public:
 
         plane_mat->ushininess = 128.f;
         plane_mat->uspecular_strength = 0.5f;
+        plane_mat->uambient_strength = 0.02f;
 
         auto cube = std::make_shared<Node<Component>>();
         cube->add_comp<Transform>(std::make_shared<Transform>());
@@ -244,6 +245,7 @@ public:
         plane->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
         plane->get_comp<Transform>()->scale = glm::vec3(4.f,1.f,4.f);
+        plane->get_comp<Transform>()->pos.y = -1.6f;
 
         cube->get_comp<Transform>()->pos = glm::vec3(-1.0f, 0.0f, -1.0f);
         cube2->get_comp<Transform>()->pos = glm::vec3(2.0f, 0.0f, 0.0f);
@@ -272,7 +274,7 @@ public:
         
         pl->pls[0].pos = glm::vec3(1.f, -2.f, 0.f);
         
-        pl->pls[0].color = glm::vec3(1.f,0.f, 0.f);
+        pl->pls[0].color = glm::vec3(0.f,0.f, 1.f);
         pl->pls[0].constant = 1.0f;
         pl->pls[0].linear = 0.09f;
         pl->pls[0].quadratic = 0.032f;
@@ -365,11 +367,11 @@ public:
         for (auto& p : cxts)
             p->update();
 
-        glm::vec3 pl_pos = glm::vec3(1.f, -2.f, 0.f);
-        pl_pos = glm::rotateZ(pl_pos,pl_angle);
+        glm::vec3 pl_pos = glm::vec3(1.f, -1.f, -8.f);
+        pl_pos = glm::rotateY(pl_pos,pl_angle);
         pl->pls[0].pos = pl_pos;
         pl.sync(GL_MAP_WRITE_BIT);
-        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
+        if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.005f;
     }
 
     ~Demo1() {
