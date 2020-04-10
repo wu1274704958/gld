@@ -37,6 +37,8 @@ namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
+#define DEPTH_TEX_W 1024
+
 struct AutoRotate : public Component
 {
     void update() override
@@ -55,7 +57,7 @@ struct ScreenMat : public Component
         utex("screenTexture"),
         tex(std::move(tex))
     {
-        utex = 0;
+        utex = 2;
     }
     bool init() override
     {
@@ -67,17 +69,22 @@ struct ScreenMat : public Component
     void draw() override
     {
         if(tex)
-            tex->active<ActiveTexId::_0>();
+            tex->active<ActiveTexId::_2>();
 
         utex.sync();
+    }
+
+    void after_draw() override
+    {
+        tex->unbind();
     }
         
     GlmUniform<UT::Sampler2D> utex;
     std::shared_ptr<Texture<TexType::D2>> tex;
 };
 
-#define VER_PATH "blinn/base_vs.glsl"
-#define FRAG_PATH "blinn/base_fg.glsl"
+#define VER_PATH "shadow/base_vs.glsl"
+#define FRAG_PATH "shadow/base_fg.glsl"
 
 #define Depth_VER_PATH "shadow_map/base_vs.glsl"
 #define Depth_FRAG_PATH "shadow_map/base_fg.glsl"
@@ -101,7 +108,7 @@ public:
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex" , "use_blinn"
+            "shininess","specularTex" , "use_blinn","screenTexture"
         );
 
 
@@ -109,8 +116,9 @@ public:
         perspective.attach_program(program);
         world.attach_program(program);
         use_blinn.attach_program(program);
-
+        //test depth texture 
         use_blinn = 1;
+        use_blinn.sync();
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -187,6 +195,16 @@ public:
              1.0f,  1.0f,  1.0f, 1.0f
         };
 
+        depth_tex = std::make_shared<Texture<TexType::D2>>();
+        depth_tex->create();
+        depth_tex->bind();
+        depth_tex->tex_image(0,GL_DEPTH_COMPONENT,0,GL_DEPTH_COMPONENT,(float *)nullptr,DEPTH_TEX_W,DEPTH_TEX_W);
+        depth_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::NEAREST>();
+        depth_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::NEAREST>();
+        depth_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_BORDER>();
+        depth_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_BORDER>();
+        depth_tex->unbind();
+
         auto cube_vao = std::make_shared<gld::VertexArr>();
         cube_vao->create();
         cube_vao->create_arr<gld::ArrayBufferType::VERTEX>();
@@ -223,7 +241,9 @@ public:
         auto plane_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(planeVertices)/8,plane_vao ));
         auto quad_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(quadVertices)/4,quad_vao ));
 
-        //auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
+        auto depth_tex_comp = std::make_shared<ScreenMat>(depth_tex);
+
+        auto dif_cube = DefDataMgr::instance()->load<DataType::Texture2D>("textures/container.jpg",0);
         auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood.png",0);
         auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood_spec.png",0);
 
@@ -238,24 +258,32 @@ public:
         cube->add_comp<Transform>(std::make_shared<Transform>());
         cube->add_comp<def::Mesh>(cube_mesh);
         cube->add_comp<def::Material>(cube_mat);
+        cube->add_comp<ScreenMat>(depth_tex_comp);
         cube->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
         auto cube2 = std::make_shared<Node<Component>>();
         cube2->add_comp<Transform>(std::make_shared<Transform>());
         cube2->add_comp<def::Mesh>(cube_mesh);
         cube2->add_comp<def::Material>(cube_mat);
+        cube2->add_comp<ScreenMat>(depth_tex_comp);
         cube2->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
         auto cube3 = std::make_shared<Node<Component>>();
         cube3->add_comp<Transform>(std::make_shared<Transform>());
         cube3->add_comp<def::Mesh>(cube_mesh);
         cube3->add_comp<def::Material>(cube_mat);
+        
+        cube3->add_comp<ScreenMat>(depth_tex_comp);
         cube3->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
         auto plane = std::make_shared<Node<Component>>();
         plane->add_comp<Transform>(std::make_shared<Transform>());
         plane->add_comp<def::Mesh>(plane_mesh);
         plane->add_comp<def::Material>(plane_mat);
+        if(*use_blinn == 1)
+            plane->add_comp<ScreenMat>(depth_tex_comp);
+        else
+            plane->add_comp<ScreenMat>(std::make_shared<ScreenMat>(dif_plane));
         plane->add_comp<Render>(std::shared_ptr<Render>(new Render(VER_PATH,FRAG_PATH)));
 
         plane->get_comp<Transform>()->scale = glm::vec3(4.f,1.f,4.f);
@@ -292,7 +320,7 @@ public:
         auto plane_d = std::make_shared<Node<Component>>();
         plane_d->add_comp<Transform>(std::make_shared<Transform>());
         plane_d->add_comp<def::Mesh>(plane_mesh);
-        plane_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_VER_PATH)));
+        plane_d->add_comp<Render>(std::shared_ptr<Render>(new Render(Depth_VER_PATH,Depth_FRAG_PATH)));
 
         cube_d->get_comp<Transform>()->pos = cube->get_comp<Transform>()->pos; 
         cube2_d->get_comp<Transform>()->pos = cube2->get_comp<Transform>()->pos;
@@ -300,6 +328,8 @@ public:
 
         cube_d->get_comp<Transform>()->rotate = cube->get_comp<Transform>()->rotate; 
         cube2_d->get_comp<Transform>()->rotate = cube2->get_comp<Transform>()->rotate;
+
+        (*(plane_d->get_comp<Transform>())) = (*(plane->get_comp<Transform>()));
 
         depth_nodes.push_back(cube_d );
         depth_nodes.push_back(cube2_d);
@@ -355,6 +385,16 @@ public:
         spl->cut_off = glm::cos(glm::radians(12.0f));
         spl->outer_cut_off = glm::cos(glm::radians(13.5f));
 
+        
+
+        fb.create();
+        fb.bind();
+        fb.attach_texture(*depth_tex.get(),GL_DEPTH_ATTACHMENT,0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        fb.unbind();
+        depth_tex->unbind();
+
         spl.sync(GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
 
         for (auto& p : cxts)
@@ -390,6 +430,30 @@ public:
        
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f); 
+        glViewport(0, 0, DEPTH_TEX_W, DEPTH_TEX_W);
+        fb.bind();
+        glClear(GL_DEPTH_BUFFER_BIT);
+        depth_p->use();
+
+        perspective.attach_program(depth_p);
+        world.attach_program(depth_p);
+
+        auto dep_ort = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 7.5f);
+        auto dep_view =  glm::lookAt(light->dir, -(light->dir), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        perspective = dep_ort;
+        world = dep_view;
+
+        perspective.sync();
+        world.sync();
+
+        for (auto& p : depth_nodes)
+            p->draw();
+
+        fb.unbind();
+        update_matrix();
+
+        glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         program->use();
         
@@ -398,20 +462,11 @@ public:
         
         perspective.sync();
         world.sync();
-
-        depth_p->use();
         
-        perspective.attach_program(depth_p);
-        world.attach_program(depth_p);
-
-        perspective.sync();
-        world.sync();
-
         for (auto& p : cxts)
             p->draw();
 
         update();
-        update_matrix();
 
     }
 
@@ -429,6 +484,9 @@ public:
     void update()
     {
         for (auto& p : cxts)
+            p->update();
+
+        for (auto& p : depth_nodes)
             p->update();
 
         glm::vec3 pl_pos = glm::vec3(1.f, -1.f, -8.f);
@@ -451,12 +509,15 @@ private:
     std::shared_ptr<Program> program,depth_p;
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
-    Uniform<UT::Int> use_blinn;
+    GlmUniform<UT::Int> use_blinn;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts,depth_nodes;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
+    FrameBuffer fb;
+    std::shared_ptr<Texture<TexType::D2>> depth_tex;
+    
     float pl_angle = 0.0f;
 };
 
