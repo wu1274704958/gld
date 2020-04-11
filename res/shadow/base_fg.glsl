@@ -5,6 +5,7 @@
 in vec3 oNormal; 
 in vec3 oVpos; 
 in vec2 oUv;
+in vec4 fragPosLightSpace;
 out vec4 color;
 
 layout (std140,binding = 0) uniform DL{
@@ -49,6 +50,24 @@ float blinn_point_spec(PointLight pl,vec3 view_dir)
     vec3 pl_dir = normalize(pl.pos - oVpos);
     vec3 halfwayDir = normalize( pl_dir + view_dir );
     return pow(max(dot(oNormal,halfwayDir),0.0f),shininess);
+}
+
+float shadowCalculation(vec3 light_dir)
+{
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    float closestDepth = texture(screenTexture, projCoords.xy).r; 
+    // 取得当前片段在光源视角下的深度
+    float currentDepth = projCoords.z;
+    // 检查当前片段是否在阴影中
+    float bias = max(0.0005 * (1.0 - dot(oNormal, light_dir)), 0.00005);
+    float shadow = (currentDepth - bias) > closestDepth  ? 1.0 : 0.0;
+
+    if(projCoords.z > 1.0)
+        shadow = 0.0;
+
+    return shadow;
 }
 
 void main() 
@@ -141,9 +160,11 @@ vec3 calc_direct_light_blinn(vec3 obj_color,vec3 view_dir,DirctLight dirct_light
 
     float spec = blinn_direct_spec(view_dir);
 
+    float shadow = shadowCalculation(light_dirction);
+
     vec3 specular = specular_strength * spec * (dirct_light.color * texture(specularTex,oUv).rgb);
 
-    return ambient + diffuse + specular;
+    return ambient + (1.0f - shadow) * (diffuse + specular);
 }
 
 

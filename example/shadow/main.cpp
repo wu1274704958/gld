@@ -91,7 +91,7 @@ struct ScreenMat : public Component
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") ,use_blinn("use_blinn")
+    Demo1() : view_pos("view_pos"), perspective("perspective"), world("world") ,use_blinn("use_blinn"), lightSpaceMartix("lightSpaceMartix")
         {}
     int init() override
     {
@@ -108,7 +108,7 @@ public:
         program->locat_uniforms("perspective", "world", "model", "diffuseTex", "ambient_strength",
             "specular_strength",
             "view_pos",
-            "shininess","specularTex" , "use_blinn","screenTexture"
+            "shininess","specularTex" , "use_blinn","screenTexture","lightSpaceMartix"
         );
 
 
@@ -116,6 +116,7 @@ public:
         perspective.attach_program(program);
         world.attach_program(program);
         use_blinn.attach_program(program);
+        lightSpaceMartix.attach_program(program);
         //test depth texture 
         use_blinn = 1;
         use_blinn.sync();
@@ -194,6 +195,7 @@ public:
              1.0f, -1.0f,  1.0f, 0.0f,
              1.0f,  1.0f,  1.0f, 1.0f
         };
+        float color[] = {1.f,1.f,1.f,1.f};
 
         depth_tex = std::make_shared<Texture<TexType::D2>>();
         depth_tex->create();
@@ -201,8 +203,9 @@ public:
         depth_tex->tex_image(0,GL_DEPTH_COMPONENT,0,GL_DEPTH_COMPONENT,(float *)nullptr,DEPTH_TEX_W,DEPTH_TEX_W);
         depth_tex->set_paramter<TexOption::MIN_FILTER,TexOpVal::NEAREST>();
         depth_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::NEAREST>();
-        depth_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_BORDER>();
+        depth_tex->set_paramter<TexOption::WRAP_T,TexOpVal::CLAMP_TO_BORDER>();
         depth_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_BORDER>();
+        depth_tex->set_paramter<TexOption::BORDER_COLOR>(color);
         depth_tex->unbind();
 
         auto cube_vao = std::make_shared<gld::VertexArr>();
@@ -334,7 +337,7 @@ public:
         depth_nodes.push_back(cube_d );
         depth_nodes.push_back(cube2_d);
         depth_nodes.push_back(cube3_d);
-        depth_nodes.push_back(plane_d);
+       // depth_nodes.push_back(plane_d);
 
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -345,7 +348,7 @@ public:
         light.init(GL_STATIC_DRAW);
         
         light->color = glm::vec3(1.f, 1.f, 1.f);
-        light->dir = glm::vec3(-0.2f, -1.0f, -0.3f);
+        light->dir = glm::vec3(10.2f, -20.0f, 10.13f);
 
         light.sync(GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT);
 
@@ -397,6 +400,8 @@ public:
 
         spl.sync(GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
 
+        light_pos = glm::vec3(0.0f,0.0f,0.0f);
+
         for (auto& p : cxts)
             p->init();
 
@@ -436,22 +441,19 @@ public:
         depth_p->use();
 
         perspective.attach_program(depth_p);
-        world.attach_program(depth_p);
 
-        auto dep_ort = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 7.5f);
-        auto dep_view =  glm::lookAt(light->dir, -(light->dir), glm::vec3(0.0f, 1.0f, 0.0f));
+        auto dep_ort = glm::ortho(-6.0f, 6.0f, 6.0f, -6.0f, 0.1f, 250.5f);
+        auto dep_view =  glm::lookAt(-(light->dir), light_pos, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        perspective = dep_ort;
-        world = dep_view;
+        perspective = dep_ort * dep_view;
 
         perspective.sync();
-        world.sync();
 
         for (auto& p : depth_nodes)
             p->draw();
 
         fb.unbind();
-        update_matrix();
+        
 
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -460,8 +462,14 @@ public:
         perspective.attach_program(program);
         world.attach_program(program);
         
+        update_matrix();
+
         perspective.sync();
         world.sync();
+
+        lightSpaceMartix.attach_program(program);
+        lightSpaceMartix = dep_ort * dep_view;
+        lightSpaceMartix.sync();
         
         for (auto& p : cxts)
             p->draw();
@@ -491,7 +499,7 @@ public:
 
         glm::vec3 pl_pos = glm::vec3(1.f, -1.f, -8.f);
         pl_pos = glm::rotateY(pl_pos,pl_angle);
-        pl_pos.z = -4.f;
+        pl_pos.z = -5.6f;
         pl->pls[0].pos = pl_pos;
         pl.sync(GL_MAP_WRITE_BIT);
         if(pl_angle >= glm::pi<float>() * 2.0f) pl_angle = 0.0f; else pl_angle += 0.02f;
@@ -499,6 +507,25 @@ public:
 
     ~Demo1() {
 
+    }
+    void onMouseButton(int btn,int action,int mode) override
+    {
+        RenderDemoRotate::onMouseButton(btn,action,mode);
+        if(btn == GLFW_MOUSE_BUTTON_2)
+        {
+            if(action == GLFW_PRESS)
+            {
+                light_pos.x += 0.1f;
+            }
+        }
+        if(btn == GLFW_MOUSE_BUTTON_3)
+        {
+            if(action == GLFW_PRESS)
+            {
+                light_pos.x -= 0.1f;
+            }
+        }
+        dbg(light_pos.x);
     }
 
     void onWindowResize(int w, int h) override
@@ -512,11 +539,13 @@ private:
     GlmUniform<UT::Int> use_blinn;
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
+    GlmUniform<UT::Matrix4> lightSpaceMartix;
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts,depth_nodes;
     UniformBuf<1,PointLights> pl;
     UniformBuf<2,SpotLight> spl;
     FrameBuffer fb;
     std::shared_ptr<Texture<TexType::D2>> depth_tex;
+    glm::vec3 light_pos;
     
     float pl_angle = 0.0f;
 };

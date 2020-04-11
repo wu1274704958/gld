@@ -29,7 +29,8 @@ namespace gld{
         WRAP_T       =      0x2803,
         WRAP_R       =      0x8072,
         BASE_LEVEL   =      0x813C,
-        MAX_LEVEL    =      0x813D
+        MAX_LEVEL    =      0x813D,
+        BORDER_COLOR =      0x1004
     };
 
     /**
@@ -273,6 +274,15 @@ namespace gld{
         {
             static_assert(TexOpLimitLsTy::can_set<Op,V>,"This option maybe can not set this value!!!");
             glTexParameteri(static_cast<int>(Tt), static_cast<int>(Op), static_cast<int>(V));
+        }
+
+        template<TexOption Op,typename V>
+        void set_paramter(V v)
+        {
+            if constexpr(std::is_same_v<std::decay_t<V>,float*>)
+            {
+                glTexParameterfv(static_cast<int>(Tt), static_cast<int>(Op), v);
+            }
         }
 
         bool good()
