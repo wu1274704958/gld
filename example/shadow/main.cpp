@@ -441,13 +441,16 @@ public:
         depth_p->use();
 
         perspective.attach_program(depth_p);
+        world.attach_program(depth_p);
 
         auto dep_ort = glm::ortho(-6.0f, 6.0f, 6.0f, -6.0f, 0.1f, 250.5f);
         auto dep_view =  glm::lookAt(-(light->dir), light_pos, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        perspective = dep_ort * dep_view;
+        perspective = dep_ort;
+        world = dep_view;
 
         perspective.sync();
+        world.sync();
 
         for (auto& p : depth_nodes)
             p->draw();
