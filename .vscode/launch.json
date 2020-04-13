@@ -6,6 +6,17 @@
     "configurations": [
 
         {
+            "name": "shadow2",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/shadow2.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "shadow",
             "type": "cppvsdbg",
             "request": "launch",
