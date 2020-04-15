@@ -1,0 +1,12 @@
+#version 320 es
+precision mediump float;
+layout (location = 0) in vec3 position;
+
+uniform mat4 perspective;
+uniform mat4 world;
+uniform mat4 model;
+
+void main()
+{
+    gl_Position = perspective * world * model * vec4(position, 1.0f);
+}

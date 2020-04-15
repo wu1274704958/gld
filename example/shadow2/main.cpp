@@ -145,7 +145,7 @@ public:
 
         view_pos.attach_program(blinn_p);
         view_pos = glm::value_ptr(view_p);
-
+        program->use();
 
         //glEnable(GL_BLEND);
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -372,8 +372,12 @@ public:
         light.init(GL_STATIC_DRAW);
         
         light->color = glm::vec3(1.f, 1.f, 1.f);
-        light->dir = glm::vec3(10.2f, -20.0f, 10.13f);
-
+#ifdef PF_ANDROID
+        light->a = 0.1f;
+        light->dir = glm::vec3(-10.0f, 0.0f, 0.0f);
+#else
+        light->dir = glm::vec3(0.1f, -10.0f, 0.0f);
+#endif
         light.sync(GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT);
 
         pl.init(GL_STATIC_DRAW);
@@ -414,7 +418,12 @@ public:
         fb.create();
         fb.bind();
         fb.attach_texture(*depth_tex.get(),GL_DEPTH_ATTACHMENT,0);
+#ifdef PF_ANDROID
+        GLenum v[] = { GL_NONE };
+        glDrawBuffers(1, v);
+#else
         glDrawBuffer(GL_NONE);
+#endif
         glReadBuffer(GL_NONE);
         fb.unbind();
         depth_tex->unbind();
@@ -467,8 +476,11 @@ public:
         world.attach_program(depth_p);
 
         auto dep_ort = glm::ortho(-6.0f, 6.0f, 6.0f, -6.0f, 0.1f, 250.5f);
+#ifdef  PF_ANDROID
+        auto dep_view =  glm::lookAt(-(glm::vec3(0.1f,-10.0f,0.0f)), light_pos, glm::vec3(0.0f, 1.0f, 0.0f));
+#else
         auto dep_view =  glm::lookAt(-(light->dir), light_pos, glm::vec3(0.0f, 1.0f, 0.0f));
-
+#endif
         perspective = dep_ort;
         world = dep_view;
 
