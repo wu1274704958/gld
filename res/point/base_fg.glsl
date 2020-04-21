@@ -3,8 +3,8 @@
 out vec4 color; 
 in vec3 oNormal;
 in vec2 oUv; 
+in vec3 ofill_color;
 
-uniform vec3 fill_color;
 uniform sampler2D diffuseTex;
 
 float gray()
@@ -15,6 +15,9 @@ float gray()
 
 void main() 
 { 
-    color = vec4( gray() *  fill_color * texture(diffuseTex, oUv).rgb,1.0f);
-    //color = vec4(  fill_color * texture(diffuseTex, oUv).rgb,1.0f);
+    vec4 t_c = texture(diffuseTex, oUv);
+    if(t_c.a <= 0.1)
+        discard;
+    color = vec4( gray() *  ofill_color * t_c.rgb,t_c.a);
+    //color = t_c;
 }

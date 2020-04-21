@@ -38,11 +38,11 @@ struct Material:public Component
 {
     Material( std::shared_ptr<Texture<TexType::D2>> diffuseTex):
         udiffuseTex("diffuseTex"),
-        uColor("fill_color"),
+        //uColor("fill_color"),
         diffuseTex(std::move(diffuseTex))
     {
         udiffuseTex = 0;
-        uColor = glm::vec3(1.f,1.f,1.f);
+        //uColor = glm::vec3(1.f,1.f,1.f);
     }
     bool init() override
     {
@@ -60,14 +60,14 @@ struct Material:public Component
         auto n_ptr = get_node();
         auto render = n_ptr->get_comp<Render>();
         udiffuseTex.attach_program(render->get());
-        uColor.attach_program(render->get());
+        //uColor.attach_program(render->get());
         return f;
     }
     void draw() override
     {
         if(diffuseTex)
             diffuseTex->active<ActiveTexId::_0>();
-        uColor.sync();
+        //uColor.sync();
         udiffuseTex.sync();
     }
     void after_draw() override
@@ -76,8 +76,15 @@ struct Material:public Component
     }
    
     GlmUniform<UT::Sampler2D>   udiffuseTex;
-    GlmUniform<UT::Vec3>        uColor;
+    //GlmUniform<UT::Vec3>        uColor;
     std::shared_ptr<Texture<TexType::D2>> diffuseTex;
+};
+
+struct Point{
+    glm::mat4 model;
+    glm::vec3 color;
+
+    Point() : model(1.f), color(1.f,1.f,1.f){}
 };
 
 class Demo1 : public RenderDemoRotate {
@@ -91,7 +98,7 @@ public:
         program = DefDataMgr::instance()->load<DataType::Program>("point/base_vs.glsl","point/base_fg.glsl");
         program->use();
 
-        program->locat_uniforms("perspective", "world", "model", "diffuseTex", "fill_color");
+        program->locat_uniforms("perspective", "world", "model", "diffuseTex");
 
         perspective.attach_program(program);
         world.attach_program(program);
@@ -118,27 +125,28 @@ public:
          gld::VAP_DATA<2,float,false>>();
         plane_vao->unbind();
 
-        plane_mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,wws::arrLen(planeVertices)/8,plane_vao ));
+        plane_mesh = std::shared_ptr<def::MeshInstanced>(new def::MeshInstanced(0,wws::arrLen(planeVertices)/8, pw * ph ,plane_vao ));
 
         dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/circle.png",0);
 
-        float bx = -static_cast<float>(pw) / 2.f; 
-        float by = -static_cast<float>(ph) / 2.f;
+        bx = -static_cast<float>(pw) / 2.f; 
+        by = -static_cast<float>(ph) / 2.f;
 
-        for(int y = 0;y < ph;++y)
-        {
-            for(int x = 0;x < pw;++x)
-            {
-                cxts.push_back(create_point(glm::vec3((float)x + bx,(float)y + by,0.f)));//,rd_vec3()));
-            }
-        }
+        cxts.push_back(create_point());
+
+        auto ps = verex_data_surface();
+
+        sync_vertex_data(ps);
+        
+        // glEnable(GL_BLEND);
+        // glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 
         glDisable(GL_CULL_FACE);
         //glCullFace(GL_BACK);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
 
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
         GLenum err = glGetError();
         dbg(err);
@@ -149,17 +157,60 @@ public:
         return 0;
     }
 
-    std::shared_ptr<Node<Component>> create_point(glm::vec3 pos = glm::vec3(0.f,0.f,0.f),glm::vec3 color = glm::vec3(1.f,1.f,1.f))
+    std::shared_ptr<Node<Component>> create_point(glm::vec3 pos = glm::vec3(0.f,0.f,0.f))
     {
         std::shared_ptr<Node<Component>> res = std::make_shared<Node<Component>>();
         res->add_comp<Transform>(std::make_shared<Transform>());
         res->get_comp<Transform>()->pos = pos;
-        res->add_comp<def::Mesh>(plane_mesh);
+        res->add_comp(plane_mesh);
         res->add_comp<Render>(std::shared_ptr<Render>(new Render("point/base_vs.glsl","point/base_fg.glsl")));
         res->add_comp<Material>(std::shared_ptr<Material>(new Material(dif_plane)));
-        res->get_comp<Material>()->uColor = color;
         return res;
     }
+
+    Point create_point(glm::vec3 pos,glm::vec3 color)
+    {
+        Point res;
+        res.color = color;
+        res.model = glm::translate(res.model,pos);
+        return res;
+    }
+
+    void sync_vertex_data(std::vector<Point>& ps)
+    {
+        auto& vao = plane_mesh->vao;
+        vao->bind_self();
+        auto& buf = vao->create_one();
+        buf.bind_data(ps.data(), pw * ph ,GL_STATIC_DRAW);
+        
+        buf.vertex_attrib_pointer<3,
+            VAP_DATA<4,float,false>,
+            VAP_DATA<4,float,false>,
+            VAP_DATA<4,float,false>,
+            VAP_DATA<4,float,false>,
+            VAP_DATA<3,float,false>
+            >();
+
+        vao->vertex_attr_div<3,1,1,1,1,1>();
+        vao->unbind_self();
+    }
+
+    std::vector<Point> verex_data_surface()
+    {
+        std::vector<Point> ps;
+        auto c = rd_vec3();
+
+        for(int y = 0;y < ph;++y)
+        {
+            for(int x = 0;x < pw;++x)
+            {
+                auto c = rd_vec3();
+                ps.push_back(create_point(glm::vec3((float)x + bx,(float)y + by,0.0f),c));
+            }
+        }
+        return ps;
+    }
+
 
     float rd_0_1()
     {
@@ -197,7 +248,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.f,0.f, -64.0f));
+        world = glm::translate(*world, glm::vec3(0.f,0.f, -132.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
@@ -213,6 +264,17 @@ public:
 
     }
 
+    void onMouseButton(int btn,int action,int mode) override
+    {
+        RenderDemoRotate::onMouseButton(btn,action,mode);
+        if(btn == GLFW_MOUSE_BUTTON_2 && action == GLFW_PRESS)
+        {
+            auto ps = verex_data_surface();
+
+            sync_vertex_data(ps);
+        }
+    }
+
     void onWindowResize(int w, int h) override
     {
         glViewport(0, 0, w, h);
@@ -222,11 +284,12 @@ private:
     GlmUniform<UT::Matrix4> perspective;
     GlmUniform<UT::Matrix4> world;
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
-    std::shared_ptr<def::Mesh> plane_mesh;
+    std::shared_ptr<def::MeshInstanced> plane_mesh;
     //std::shared_ptr<Material> plane_mat;
     std::shared_ptr<Texture<TexType::D2>> dif_plane;
     std::shared_ptr<Render> render;
-    int pw = 90,ph = 32;
+    int pw = 224,ph = 56;
+    float bx,by;
 
 };
 
