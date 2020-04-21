@@ -40,12 +40,89 @@ using  namespace dbg::literal;
 using namespace wws;
 using namespace ft2;
 
+class GLContent {
+	public:
+		glm::vec3* ptr = nullptr;
+		int w;
+		int h;
+	
+		using PIXEL_TYPE = glm::vec3;
+		using PRESENT_ARGS_TYPE = std::function<void(const GLContent*)>;
+		constexpr static PIXEL_TYPE PIXEL_ZERO = glm::vec3(0.f,0.f,0.f);
+		constexpr static PIXEL_TYPE EMPTY_PIXEL = glm::vec3(-1.f,-1.f,-1.f);
+		GLContent(int w, int h) {
+			this->w = w;
+			this->h = h;
+			ptr = new glm::vec3[this->w * this->h];
+		}
+		~GLContent() {
+			if (ptr)
+			{
+				delete[] ptr;
+			}
+		}
+		GLContent(const GLContent&) = delete;
+		GLContent(GLContent&& oth)
+		{
+			ptr = oth.ptr;
+			oth.ptr = nullptr;
+		}
+		GLContent& operator=(const GLContent&) = delete;
+		GLContent& operator=(GLContent&& oth)
+		{
+			if (ptr)
+			{
+				delete[] ptr;
+				ptr = nullptr;
+			}
+			ptr = oth.ptr;
+			oth.ptr = nullptr;
+			return *this;
+		}
 
-void set_text(surface<cmd_content>& sur, Face& f, std::string s,char pt);
+		virtual void init()
+		{
+			for (int i = 0; i < w * h; ++i)
+			{
+				ptr[i] = EMPTY_PIXEL;
+			}
+		}
 
-struct Drive : public ASDrive<cmd_content>
+		virtual void set_pixel(int x, int y, PIXEL_TYPE p)
+		{
+			ptr[(y * w) + x] = p;
+		}
+
+		virtual PIXEL_TYPE get_pixel(int x, int y) const
+		{
+			return ptr[(y * w) + x];
+		}
+
+		virtual void swap(GLContent& oth)
+		{
+			auto temp = oth.ptr;
+			oth.ptr = this->ptr;
+			this->ptr = temp;
+		}
+
+		virtual void present(PRESENT_ARGS_TYPE a) const
+		{
+			a(this);
+		}
+
+		void clear()
+		{
+			init();
+		}
+
+	};
+
+
+void set_text(surface<GLContent>& sur, Face& f, std::string s,glm::vec3 pt);
+
+struct Drive : public ASDrive<GLContent>
 {
-	Drive(Face& f) : face(f)
+	Drive(Face& f,std::function<void(const GLContent*)> func) : face(f),func(func)
 	{
 		str = get_time_str(has_p);
 	}
@@ -71,7 +148,7 @@ struct Drive : public ASDrive<cmd_content>
 	{
 		return false;
 	}
-	void set_text(surface<cmd_content>& sur,char f_c) override
+	void set_text(surface<GLContent>& sur,glm::vec3 f_c) override
 	{
 		{
 			::set_text(sur,face,str,f_c);
@@ -81,9 +158,9 @@ struct Drive : public ASDrive<cmd_content>
 	{
 		str = get_time_str(has_p);
 	}
-	std::ostream& get_present() override
+	std::function<void(const GLContent*)> get_present() override
 	{
-		return std::cout;
+		return func;
 	}
 	bool need_transfar(uint32_t ms,bool to_use_stable,bool to_out_stable) override 
 	{
@@ -97,6 +174,7 @@ struct Drive : public ASDrive<cmd_content>
 	bool has_p = true;
 	std::string str;
 	Face& face;
+    std::function<void(const GLContent*)> func;
 };
 
 struct Material:public Component
@@ -179,6 +257,53 @@ public:
              0.5f,-0.5f, 0.f,   0.0f,  1.0f,  0.0f,  1.0f, 1.0f
         };
 
+        std::function<void(const GLContent*)> update = [=](const GLContent* c)
+        {
+            std::vector<Point> ps;
+
+            for(int y = 0;y < ph;++y)
+            {
+                for(int x = 0;x < pw;++x)
+                {   
+                    auto color = c->get_pixel(x,y);
+                    if(color != GLContent::EMPTY_PIXEL)
+                        ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color));
+                }
+            }
+            sync_vertex_data(ps);
+            
+        };
+
+	    try
+	    {
+            auto path = DefResMgr::instance()->to_path("fonts/SHOWG.TTF").generic_string();
+	    	face = lib.load_face<Face>(path.c_str());
+	    }
+	    catch (const std::exception& e)
+	    {
+	    	std::cout << e.what() << std::endl;
+	    	return -1;
+	    }
+    
+
+	    srand(time(nullptr));
+	    face.set_pixel_size(56, 56);
+	    face.select_charmap(FT_ENCODING_UNICODE);
+
+	    drive = std::make_shared<Drive>(face,update);
+
+	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(224,56,drive.get(),rd_vec3(),300));
+	    sur->to_out_speed = 0.09f;
+	    sur->to_use_speed = 0.1f;
+
+	    sur->move_to_func = [](cgm::vec2& pos,cgm::vec2 v,cgm::vec2 tar)
+	    {
+	    	auto len = (tar - pos).len() * 0.1f;
+	    	pos = pos + ( v * len);
+	    };
+
+	    sur->set_min_frame_ms(16);
+
         auto plane_vao = std::make_shared<gld::VertexArr>();
         plane_vao->create();
         plane_vao->create_arr<gld::ArrayBufferType::VERTEX>();
@@ -198,10 +323,7 @@ public:
         by = -static_cast<float>(ph) / 2.f;
 
         cxts.push_back(create_point());
-
-        auto ps = verex_data_surface();
-
-        sync_vertex_data(ps);
+        cxts[0]->get_comp<Transform>()->setRotateX(180.f);
         
         // glEnable(GL_BLEND);
         // glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -219,6 +341,9 @@ public:
         for (auto& p : cxts)
             p->init();
         update_matrix();
+
+        sur->pre_go();
+
         return 0;
     }
 
@@ -246,7 +371,7 @@ public:
         auto& vao = plane_mesh->vao;
         vao->bind_self();
         auto& buf = vao->create_one();
-        buf.bind_data(ps.data(), pw * ph ,GL_STATIC_DRAW);
+        buf.bind_data(ps.data(), ps.size() ,GL_STATIC_DRAW);
         
         buf.vertex_attrib_pointer<3,
             VAP_DATA<4,float,false>,
@@ -258,6 +383,7 @@ public:
 
         vao->vertex_attr_div<3,1,1,1,1,1>();
         vao->unbind_self();
+        plane_mesh->instance_count = ps.size();
     }
 
     std::vector<Point> verex_data_surface()
@@ -305,6 +431,9 @@ public:
 
         update();
         update_matrix();
+
+        if(!sur->is_end())
+            sur->ani_step();
 
     }
 
@@ -355,7 +484,10 @@ private:
     std::shared_ptr<Render> render;
     int pw = 224,ph = 56;
     float bx,by;
-
+    Library lib;
+    Face face;
+    std::shared_ptr<AniSurface<GLContent>> sur;
+    std::shared_ptr<Drive> drive;
 };
 
 #ifndef PF_ANDROID
@@ -381,7 +513,7 @@ int main()
 
 static int colon_width = 7;
 
-void set_text(surface<cmd_content>& sur, Face& f, std::string s,char pt)
+void set_text(surface<GLContent>& sur, Face& f, std::string s,glm::vec3 pt)
 {
 	int x = 0;
 	for (auto c : s)
@@ -395,12 +527,12 @@ void set_text(surface<cmd_content>& sur, Face& f, std::string s,char pt)
 			CenterOff custom;
 			if(c == ':')
 			{
-				colon_width = f.render_surface(sur,custom, &CmdSurface::set_pixel, x, 0, pt);
+				colon_width = f.render_surface(sur,custom, &surface<GLContent>::set_pixel, x, 0, pt);
 				x += colon_width;
 			}
 			else
 			{
-				x += f.render_surface(sur,custom, &CmdSurface::set_pixel, x, 0, pt);
+				x += f.render_surface(sur,custom, &surface<GLContent>::set_pixel, x, 0, pt);
 			}
 		}
 	}
