@@ -40,6 +40,20 @@ using  namespace dbg::literal;
 using namespace wws;
 using namespace ft2;
 
+#define MODE_1
+
+float rd_0_1()
+{
+    std::random_device r;
+    std::default_random_engine e1(r());
+    std::uniform_int_distribution<int> uniform_dist(0, 1000000);
+    return static_cast<float>(uniform_dist(e1)) / 100000.f;
+}
+glm::vec3 rd_vec3()
+{
+    return glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
+}
+
 class GLContent {
 	public:
 		glm::vec3* ptr = nullptr;
@@ -267,12 +281,27 @@ public:
                 {   
                     auto color = c->get_pixel(x,y);
                     if(color != GLContent::EMPTY_PIXEL)
-                        ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color));
+                    #ifdef MODE_1
+                            ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,rd_0_1()),color));
+                    #endif
+                    #ifdef MODE_0
+                            ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color));
+                    #endif
+                    #ifdef MODE_2
+                            ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,z_arr[(y * pw) + x]),color));
+                    #endif
+                   
                 }
             }
             sync_vertex_data(ps);
             
         };
+#ifdef MODE_2
+        z_arr = std::unique_ptr<float[]>(new float[pw * ph]);
+
+        for(int i = 0;i < pw * ph;++i)
+            z_arr[i] = rd_0_1() * 0.2f;
+#endif
 
 	    try
 	    {
@@ -402,20 +431,6 @@ public:
         return ps;
     }
 
-
-    float rd_0_1()
-    {
-        std::random_device r;
-        std::default_random_engine e1(r());
-        std::uniform_int_distribution<int> uniform_dist(0, 1000000);
-        return static_cast<float>(uniform_dist(e1)) / 100000.f;
-    }
-
-    glm::vec3 rd_vec3()
-    {
-        return glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
-    }
-
     void draw() override
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -488,6 +503,9 @@ private:
     Face face;
     std::shared_ptr<AniSurface<GLContent>> sur;
     std::shared_ptr<Drive> drive;
+    #ifdef MODE_2
+    std::unique_ptr<float[]> z_arr;
+    #endif
 };
 
 #ifndef PF_ANDROID
