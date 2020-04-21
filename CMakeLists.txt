@@ -25,6 +25,8 @@ find_package(GLM)
 find_package(GLFW3)
 find_package(MINI_TEST)
 find_package(ASSIMP)
+find_package(FT2PP)
+find_package(freetype)
 
 add_definitions(-DNOMINMAX)
 
@@ -35,6 +37,10 @@ include_directories(
 
 if(MINI_TEST_FOUND)
     include_directories(${MINI_TEST_INCLUDE_DIR})
+endif()
+
+if(FT2PP_FOUND AND FREE_TYPE_INCLUDE_DIR)
+    include_directories(${FT2PP_INCLUDE_DIR} ${FREE_TYPE_INCLUDE_DIR})
 endif()
 
 if(GLM_FOUND AND GLFW3_FOUND)
