@@ -40,7 +40,7 @@ using  namespace dbg::literal;
 using namespace wws;
 using namespace ft2;
 
-#define MODE_1
+#define MODE_0
 
 float rd_0_1()
 {
@@ -304,6 +304,13 @@ public:
                     #endif
                     #ifdef MODE_2
                             ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,z_arr[(y * pw) + x]),color));
+                    #endif
+                    #ifdef MODE_3
+                        ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color));
+                    else
+                    {
+                        ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),glm::vec3(0.46f)));
+                    }
                     #endif
                    
                 }
