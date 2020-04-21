@@ -282,7 +282,7 @@ public:
                     auto color = c->get_pixel(x,y);
                     if(color != GLContent::EMPTY_PIXEL)
                     #ifdef MODE_1
-                            ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,rd_0_1()),color));
+                            ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,rd_0_1() - 0.5f),color));
                     #endif
                     #ifdef MODE_0
                             ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color));
