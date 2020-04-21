@@ -244,6 +244,21 @@ struct Point{
     Point() : model(1.f), color(1.f,1.f,1.f){}
 };
 
+struct AutoRotate : public Component
+{
+    bool add = true;
+    void update() override
+    {
+        auto trans = node.lock()->get_comp<Transform>();
+        if(trans->rotate.y >= 0.86f)
+            add = false;
+        else
+        if(trans->rotate.y <= -0.86f)
+            add = true;
+        trans->rotate.y += (add ?  0.0001f : -0.0001f) * FrameRate::get_ms();
+    }
+};
+
 class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : perspective("perspective"), world("world")
@@ -384,6 +399,9 @@ public:
         res->add_comp(plane_mesh);
         res->add_comp<Render>(std::shared_ptr<Render>(new Render("point/base_vs.glsl","point/base_fg.glsl")));
         res->add_comp<Material>(std::shared_ptr<Material>(new Material(dif_plane)));
+        #ifdef MODE_1
+        res->add_comp<AutoRotate>(std::make_shared<AutoRotate>());
+        #endif
         return res;
     }
 
