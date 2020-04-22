@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <resource_mgr.hpp>
 #include <FindPath.hpp>
 #include <glad/glad.h>
@@ -31,6 +32,7 @@
 #include <ani_surface.hpp>
 #include <surface.hpp>
 #include <strstream>
+#include <make_color.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -40,7 +42,7 @@ using  namespace dbg::literal;
 using namespace wws;
 using namespace ft2;
 
-#define MODE_0
+#define MODE_4
 
 float rd_0_1()
 {
@@ -285,6 +287,7 @@ public:
             -0.5f,-0.5f, 0.f,   0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
              0.5f,-0.5f, 0.f,   0.0f,  1.0f,  0.0f,  1.0f, 1.0f
         };
+        glEnable(GL_FRAMEBUFFER_SRGB);
 
         std::function<void(const GLContent*)> update = [=](const GLContent* c)
         {
@@ -294,6 +297,9 @@ public:
             {
                 for(int x = 0;x < pw;++x)
                 {   
+                    #ifdef MODE_4
+                        int z_k = y * pw + x;
+                    #endif
                     auto color = c->get_pixel(x,y);
                     if(color != GLContent::EMPTY_PIXEL)
                     #ifdef MODE_1
@@ -312,7 +318,15 @@ public:
                         ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),glm::vec3(0.46f)));
                     }
                     #endif
-                   
+                    #ifdef MODE_4
+                    {
+                        z_arr[z_k] = 1.0f;
+                    }else{
+                        z_arr[z_k] *= 0.9f;
+                        color = this->light_color;
+                    }
+                    ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color * z_arr[z_k]));
+                    #endif
                 }
             }
             sync_vertex_data(ps);
@@ -323,6 +337,13 @@ public:
 
         for(int i = 0;i < pw * ph;++i)
             z_arr[i] = rd_0_1() * 0.2f;
+#endif
+
+#ifdef MODE_4
+        z_arr = std::unique_ptr<float[]>(new float[pw * ph]);
+
+        for(int i = 0;i < pw * ph;++i)
+            z_arr[i] = 0.f;
 #endif
 
 	    try
@@ -337,13 +358,15 @@ public:
 	    }
     
 
-	    srand(time(nullptr));
+	    srand(static_cast<unsigned int>(time(nullptr)));
 	    face.set_pixel_size(56, 56);
 	    face.select_charmap(FT_ENCODING_UNICODE);
 
 	    drive = std::make_shared<Drive>(face,update);
 
-	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(224,56,drive.get(),rd_vec3(),300));
+        light_color = wws::make_rgb(PREPARE_STRING("FF1493")).make<glm::vec3>();
+
+	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(224,56,drive.get(),light_color,300));
 	    sur->to_out_speed = 0.09f;
 	    sur->to_use_speed = 0.1f;
 
@@ -531,6 +554,10 @@ private:
     #ifdef MODE_2
     std::unique_ptr<float[]> z_arr;
     #endif
+    #ifdef MODE_4
+    std::unique_ptr<float[]> z_arr;
+    #endif
+    glm::vec3 light_color;
 };
 
 #ifndef PF_ANDROID
