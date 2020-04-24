@@ -104,18 +104,19 @@ namespace gld::def{
             std::shared_ptr<gld::VertexArr> vao)
             : index_size(index_size),
             vertex_size(vertex_size),
-            vao(std::move(vao))
+            vao(std::move(vao)),
+            mode(GL_TRIANGLES)
         {   
-
+            
         }
         void draw() override
         {
             vao->bind();
             if(vao->buffs().get<ArrayBufferType::ELEMENT>().good())
             {
-                glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr);
+                glDrawElements(mode,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr);
             }else{
-                glDrawArrays(GL_TRIANGLES,0,static_cast<GLsizei>(vertex_size));
+                glDrawArrays(mode,0,static_cast<GLsizei>(vertex_size));
             }
 		    vao->unbind();
         }
@@ -124,6 +125,7 @@ namespace gld::def{
         size_t index_size;
         size_t vertex_size;
         std::shared_ptr<gld::VertexArr> vao;
+        GLenum mode;
     };
 
     struct MeshInstanced : public Component
@@ -136,7 +138,8 @@ namespace gld::def{
             : index_size(index_size),
             vertex_size(vertex_size),
             instance_count(count),
-            vao(std::move(vao))
+            vao(std::move(vao)),
+            mode(GL_TRIANGLES)
         {   
 
         }
@@ -148,9 +151,9 @@ namespace gld::def{
             vao->bind();
             if(vao->buffs().get<ArrayBufferType::ELEMENT>().good())
             {   
-                glDrawElementsInstanced(GL_TRIANGLES,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr,static_cast<GLsizei>(instance_count));
+                glDrawElementsInstanced(mode,static_cast<GLsizei>(index_size),MapGlTypeEnum<unsigned int>::val,nullptr,static_cast<GLsizei>(instance_count));
             }else{
-                glDrawArraysInstanced(GL_TRIANGLES,0,static_cast<GLsizei>(vertex_size),static_cast<GLsizei>(instance_count));
+                glDrawArraysInstanced(mode,0,static_cast<GLsizei>(vertex_size),static_cast<GLsizei>(instance_count));
             }
 		    vao->unbind();
         }
@@ -160,6 +163,7 @@ namespace gld::def{
         size_t vertex_size;
         size_t instance_count;
         std::shared_ptr<gld::VertexArr> vao;
+        GLenum mode;
     };
 
     struct Skybox : public Component{
