@@ -364,7 +364,7 @@ public:
 
 	    drive = std::make_shared<Drive>(face,update);
 
-        light_color = wws::make_rgb(PREPARE_STRING("FF1493")).make<glm::vec3>();
+        light_color = wws::make_rgb(PREPARE_STRING("00F5FF")).make<glm::vec3>();
 
 	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(224,56,drive.get(),light_color,300));
 	    sur->to_out_speed = 0.09f;
@@ -447,10 +447,20 @@ public:
     {
         auto& vao = plane_mesh->vao;
         vao->bind_self();
-        auto& buf = vao->create_one();
-        buf.bind_data(ps.data(), ps.size() ,GL_STATIC_DRAW);
+
+        VABuffer<ArrayBufferType::VERTEX>* buf;
+
+        if(vao->get_oths().empty())
+            buf = &(vao->create_one());
+        else
+        {
+            buf = &(vao->get_oths()[0]);
+            buf->bind();
+        }
+            
+        buf->bind_data(ps.data(), ps.size() ,GL_STATIC_DRAW);
         
-        buf.vertex_attrib_pointer<3,
+        buf->vertex_attrib_pointer<3,
             VAP_DATA<4,float,false>,
             VAP_DATA<4,float,false>,
             VAP_DATA<4,float,false>,
@@ -567,7 +577,7 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 800, "Demo1"))
+    if (d.initWindow(800, 460, "Clock"))
     {
         printf("init window failed\n");
         return -1;
