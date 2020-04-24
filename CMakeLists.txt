@@ -103,6 +103,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR shadow FILES main.cpp)
     CreateExample(DIR shadow2 FILES main.cpp)
     CreateExample(DIR clock FILES main.cpp)
+    CreateExample(DIR line FILES main.cpp)
 
 endif()
 
