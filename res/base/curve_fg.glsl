@@ -126,7 +126,7 @@ vec3 calc_direct_light_blinn(vec3 obj_color,vec3 view_dir,DirctLight dirct_light
 
     vec3 ambient = dirct_light.color * ambient_strength;
 
-    vec3 diffuse = (obj_color * dirct_light.color) * max(dot(light_dirction,oNormal),0.0f);
+    vec3 diffuse = (obj_color * dirct_light.color) * 1.0f;//max(dot(light_dirction,oNormal),0.0f);
 
     vec3 light_reflect = reflect(-light_dirction,oNormal);
 
