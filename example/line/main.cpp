@@ -75,24 +75,11 @@ public:
         fill_color = glm::vec3(0.f,1.0f,0.f);
         fill_color.sync();
 
-        auto [arr,cen] = curve(1.f,2.f,36);
-
-        std::vector<glm::vec3> res;
-        for(auto v : arr)
-            res.push_back(glm::vec3(v.x,v.y,0.0f));
         
-        auto vao = std::make_shared<VertexArr>();
-        vao->create();
-        vao->create_arr<ArrayBufferType::VERTEX>();
-        vao->bind();
-        vao->buffs().get<ArrayBufferType::VERTEX>().bind_data(res,GL_STATIC_DRAW);
-        vao->buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
-            VAP_DATA<3,float,false> >();
-        vao->unbind();
 
-        auto mesh = std::shared_ptr<def::Mesh>(new def::Mesh(0,res.size(),vao));
+        auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
 
-        mesh->mode = GL_LINE_STRIP;
+        mesh->mode = GL_TRIANGLE_STRIP;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
@@ -133,7 +120,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.f,0.f, -6.0f));
+        world = glm::translate(*world, glm::vec3(0.f,0.f, -2.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
