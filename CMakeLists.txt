@@ -104,7 +104,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR shadow2 FILES main.cpp)
     CreateExample(DIR clock FILES main.cpp)
     CreateExample(DIR line FILES main.cpp)
-
+    CreateExample(DIR test_curved FILES main.cpp)
 endif()
 
         

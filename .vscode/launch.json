@@ -6,6 +6,17 @@
     "configurations": [
 
         {
+            "name": "test_curved",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/test_curved.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "line",
             "type": "cppvsdbg",
             "request": "launch",
