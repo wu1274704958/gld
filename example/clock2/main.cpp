@@ -661,7 +661,7 @@ private:
     //std::shared_ptr<Material> plane_mat;
     std::shared_ptr<Texture<TexType::D2>> dif_plane;
     std::shared_ptr<Render> render;
-    int pw = 224,ph = 56;
+    int pw = 208,ph = 56;
     float bx,by;
     Library lib;
     Face face;
