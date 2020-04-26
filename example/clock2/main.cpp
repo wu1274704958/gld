@@ -344,7 +344,7 @@ public:
 
         //curved_surface node init +++++
 
-        auto mesh = gen::curved_surface(0.7f,0.8f,0.15f,0.07f,32);
+        auto mesh = gen::curved_surface(0.6f,0.8f,0.2f,0.16f,64);
 
         mesh->mode = GL_TRIANGLE_STRIP;
 
@@ -359,7 +359,7 @@ public:
 
         auto plane_mat = std::shared_ptr<def::Material>(new def::Material(screen_tex,spec_plane));
         plane_mat->uambient_strength = 0.0001f;
-        plane_mat->ushininess = 128.f;
+        plane_mat->ushininess = 256.f;
         plane_mat->uspecular_strength = 0.5f;
 
         curve_sur->add_comp<def::Material>(plane_mat);
@@ -509,9 +509,9 @@ public:
         res->add_comp(plane_mesh);
         res->add_comp<Render>(std::shared_ptr<Render>(new Render("point/base_vs.glsl","point/base_fg.glsl")));
         res->add_comp<PointMaterial>(std::shared_ptr<PointMaterial>(new PointMaterial(dif_plane)));
-        #ifdef MODE_1
-        res->add_comp<AutoRotate>(std::make_shared<AutoRotate>());
-        #endif
+        // #ifdef MODE_1
+        // res->add_comp<AutoRotate>(std::make_shared<AutoRotate>());
+        // #endif
         return res;
     }
 
