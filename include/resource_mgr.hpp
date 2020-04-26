@@ -322,6 +322,26 @@ private:
 #endif
     };
 
+    struct Ft2Data{
+        unsigned char* data = nullptr;
+        int index;
+        size_t size;
+    };
+
+    struct LoadFont
+    {
+        using RetTy = std::shared_ptr<Ft2Data>;
+        using ArgsTy = int;
+        using RealRetTy = std::tuple<bool,RetTy>;
+        static std::string format_args(ArgsTy flag);
+        static ArgsTy default_args();
+#ifndef PF_ANDROID
+        static RealRetTy load(PathTy p,ArgsTy flag);
+#else
+        static RealRetTy load(AndroidCxtPtrTy,PathTy p,ArgsTy flag);
+#endif
+    };
+
     typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,
         ResLoadPlugTy<ResType::image,LoadImage>,
         ResLoadPlugTy<ResType::model,LoadScene>> DefResMgr;

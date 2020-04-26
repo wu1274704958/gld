@@ -11,7 +11,8 @@ namespace gld
     enum class ResType{
         text = 0x0,
         image,
-        model
+        model,
+        font
     };
 
 #ifndef PF_ANDROID

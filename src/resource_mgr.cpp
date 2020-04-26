@@ -122,6 +122,38 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::Arg
 	}
 }
 
+
+std::string gld::LoadFont::format_args(ArgsTy flag)
+{
+	return wws::to_string(flag);
+}
+
+
+gld::LoadFont::ArgsTy gld::LoadFont::default_args()
+{
+	return 0;
+}
+
+gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag)
+{
+	std::string path = p.string();
+	std::ifstream f(path.c_str(), std::ios::binary);
+	
+	if (f.good())
+	{
+		std::vector<unsigned char> res;
+		while (!f.eof())
+		{
+			char buf[1024] = { 0 };
+			f.read(buf, wws::arrLen(buf) - 1);
+			//res.
+		}
+		return std::make_tuple(true,std::shared_ptr<std::string>(res));
+	}
+	else
+		return std::make_tuple(false,std::shared_ptr<std::string>());
+}
+
 #else
 
 #include <EGLCxt.h>
