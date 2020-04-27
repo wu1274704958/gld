@@ -323,6 +323,36 @@ private:
     };
 
     struct Ft2Data{
+        
+
+        Ft2Data(unsigned char * d,size_t len,int idx) : data(d),index(idx),size(len)
+        {
+            
+        }
+
+        ~Ft2Data()
+        {
+            if(data)
+                delete [] data;
+            size = 0;
+        }
+        
+        unsigned char* get_data()
+        {
+            return data;
+        }
+
+        size_t get_size()
+        {
+            return size;
+        }
+
+        int get_index()
+        {
+            return index;
+        }
+
+    protected:
         unsigned char* data = nullptr;
         int index;
         size_t size;
@@ -344,10 +374,12 @@ private:
 
     typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadText>,
         ResLoadPlugTy<ResType::image,LoadImage>,
-        ResLoadPlugTy<ResType::model,LoadScene>> DefResMgr;
+        ResLoadPlugTy<ResType::model,LoadScene>,
+        ResLoadPlugTy<ResType::font,LoadFont>> DefResMgr;
     typedef ResourceMgr<'/', ResLoadPlugTy<ResType::text, LoadTextWithGlslPreprocess>,
         ResLoadPlugTy<ResType::image,LoadImage>,
-        ResLoadPlugTy<ResType::model,LoadScene>> ResMgrWithGlslPreProcess;
+        ResLoadPlugTy<ResType::model,LoadScene>,
+        ResLoadPlugTy<ResType::font,LoadFont>> ResMgrWithGlslPreProcess;
 }
 
 #ifdef PF_ANDROID

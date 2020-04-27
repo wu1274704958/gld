@@ -141,17 +141,31 @@ gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag
 	
 	if (f.good())
 	{
-		std::vector<unsigned char> res;
+		constexpr size_t MAX = 1024 * 50;
+		size_t max_size = MAX;
+		size_t size = 0;
+		char *data = new char[MAX];
 		while (!f.eof())
 		{
-			char buf[1024] = { 0 };
-			f.read(buf, wws::arrLen(buf) - 1);
-			//res.
+			char buf[MAX] = { 0 };
+			f.read(buf, wws::arrLen(buf));
+			size_t t_s = f.gcount();
+			if(t_s <= 0)
+				break;
+			if(size + t_s > max_size)
+			{
+				data = reinterpret_cast<char*>(std::realloc(data,max_size + MAX));
+				if(data) max_size += MAX;
+				else throw std::runtime_error("realloc failed!");
+			}
+			std::memcpy(data + size,buf,t_s);
+			size += t_s;
 		}
-		return std::make_tuple(true,std::shared_ptr<std::string>(res));
+		Ft2Data *ft = new Ft2Data(reinterpret_cast<unsigned char*>(data),size,flag);
+		return std::make_tuple(true,std::shared_ptr<Ft2Data>(ft));
 	}
 	else
-		return std::make_tuple(false,std::shared_ptr<std::string>());
+		return std::make_tuple(false,std::shared_ptr<Ft2Data>());
 }
 
 #else
