@@ -46,6 +46,17 @@ gld::LoadScene::ArgsTy gld::LoadScene::default_args()
 	return aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace;
 }
 
+std::string gld::LoadFont::format_args(ArgsTy flag)
+{
+	return wws::to_string(flag);
+}
+
+
+gld::LoadFont::ArgsTy gld::LoadFont::default_args()
+{
+	return 0;
+}
+
 #ifndef PF_ANDROID
 namespace fs = std::filesystem;
 
@@ -122,17 +133,6 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::PathTy p,gld::LoadScene::Arg
 	}
 }
 
-
-std::string gld::LoadFont::format_args(ArgsTy flag)
-{
-	return wws::to_string(flag);
-}
-
-
-gld::LoadFont::ArgsTy gld::LoadFont::default_args()
-{
-	return 0;
-}
 
 gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag)
 {
@@ -273,6 +273,18 @@ gld::LoadScene::RealRetTy gld::LoadScene::load(gld::AndroidCxtPtrTy cxt,gld::Pat
 		}
 	}
 	return std::make_tuple(false,std::shared_ptr<Assimp::Importer>());
+}
+
+
+gld::LoadFont::RealRetTy gld::LoadFont::load(gld::AndroidCxtPtrTy cxt,PathTy p,gld::LoadFont::ArgsTy flag) {
+	auto [ptr,len] = load_byte(cxt,p);
+	if(ptr)
+	{
+		char* p = ptr.release();
+		return std::make_tuple(true,std::shared_ptr<Ft2Data>(new Ft2Data(reinterpret_cast<unsigned char*>(p),len,flag)));
+	}else{
+		return std::make_tuple(false, nullptr);
+	};
 }
 
 

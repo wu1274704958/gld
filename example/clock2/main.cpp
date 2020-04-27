@@ -315,8 +315,9 @@ public:
             -0.5f,-0.5f, 0.f,   0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
              0.5f,-0.5f, 0.f,   0.0f,  1.0f,  0.0f,  1.0f, 1.0f
         };
+#ifndef PF_ANDROID
         glEnable(GL_FRAMEBUFFER_SRGB);
-
+#endif
 
         screen_tex = std::make_shared<Texture<TexType::D2>>();
         screen_tex->create();

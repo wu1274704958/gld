@@ -36,7 +36,7 @@ if(NEED_ASSIMP)
 endif()
 
 if(NEED_FREETYPE)
-    include_directories(${ABThridLibrary}/freetype2)
+    include_directories(${ABThridLibrary}/freetype2/include)
 endif()
 
 aux_source_directory(../../../../../../src GLD_SOURCE_FILES)
@@ -90,7 +90,26 @@ set(freetype2-lib ${ABThridLibrary}/freetype2/${ANDROID_ABI}/libfreetype.a)
 # can link multiple libraries, such as libraries you define in this
 # build script, prebuilt third-party libraries, or system libraries.
 
-if(NEED_ASSIMP)
+if(NEED_ASSIMP AND NEED_FREETYPE)
+    target_link_libraries( # Specifies the target library.
+            native-lib
+
+            # Links the target library to the log library
+            # included in the NDK.
+            ${log-lib}
+            ${android-lib}
+            ${GLESv3-lib}
+            ${GLESv2-lib}
+            ${EGL-lib}
+
+            ${assimp-lib}
+            ${android_jniiosystem-lib}
+            ${IrrXML-lib}
+            ${zlibstatic-lib}
+            ${freetype2-lib}
+            )
+
+elseif(NEED_ASSIMP)
     target_link_libraries( # Specifies the target library.
             native-lib
 
@@ -120,24 +139,6 @@ elseif(NEED_FREETYPE)
             ${EGL-lib}
             ${freetype2-lib}
             )
-elseif(NEED_ASSIMP AND NEED_FREETYPE)
-        target_link_libraries( # Specifies the target library.
-                native-lib
-
-                # Links the target library to the log library
-                # included in the NDK.
-                ${log-lib}
-                ${android-lib}
-                ${GLESv3-lib}
-                ${GLESv2-lib}
-                ${EGL-lib}
-
-                ${assimp-lib}
-                ${android_jniiosystem-lib}
-                ${IrrXML-lib}
-                ${zlibstatic-lib}
-                ${freetype2-lib}
-        )
 else()
         target_link_libraries( # Specifies the target library.
                 native-lib
