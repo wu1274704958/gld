@@ -405,7 +405,8 @@ public:
                         z_arr[z_k] *= 0.9f;
                         color = this->light_color;
                     }
-                    ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color * z_arr[z_k]));
+                    float offset = (y % 2) == 0 ? -0.3f : 0.3f;
+                    ps.push_back(create_point(glm::vec3((float)x + this->bx + offset,(float)y + this->by,0.0f),color * z_arr[z_k]));
                     #endif
                 }
             }
