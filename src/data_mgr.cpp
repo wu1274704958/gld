@@ -182,6 +182,15 @@ gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(gld::LoadTexture2D::Arg
         res->create();
         res->bind();
         res->tex_image(0,image->gl_format(),0,image->gl_format(),image->data,image->width,image->height);
+        
+        res->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
+        res->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
+
+        res->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR>();
+        res->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
+
+        res->generate_mipmap();
+        
         res->unbind();
         s = true;
         return make_result(s,std::move(res));
