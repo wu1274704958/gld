@@ -718,7 +718,7 @@ int main()
         //::SetParent(self,root);
         if(def)
         {
-            ::SetParent(def,root);
+            ::SetParent(self,def);
             // auto lv = ::FindWindowExA(def,NULL,"SysListView32","FolderView");
             // if(lv)
             // {
