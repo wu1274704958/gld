@@ -27,6 +27,7 @@ find_package(MINI_TEST)
 find_package(ASSIMP)
 find_package(FT2PP)
 find_package(freetype)
+find_package(SPY)
 
 add_definitions(-DNOMINMAX)
 
@@ -41,6 +42,10 @@ endif()
 
 if(FT2PP_FOUND AND FREE_TYPE_INCLUDE_DIR)
     include_directories(${FT2PP_INCLUDE_DIR} ${FREE_TYPE_INCLUDE_DIR})
+endif()
+
+if(SPY_FOUND )
+    include_directories(${SPY_INCLUDE_DIR})
 endif()
 
 if(GLM_FOUND AND GLFW3_FOUND)

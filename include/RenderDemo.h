@@ -13,12 +13,21 @@ struct EGLCxt;
 
 class RenderDemo{
 public: 
+
+#ifdef PF_ANDROID
+protected:
+    using WINDOW_TYPE = std::shared_ptr<EGLCxt>;
+#else
+    using WINDOW_TYPE = GLFWwindow *;
+#endif
+
     RenderDemo() = default; 
     RenderDemo(RenderDemo&) = delete;
     RenderDemo(RenderDemo&&) = delete;
     virtual ~RenderDemo();
 #ifndef PF_ANDROID
     int initWindow(int w,int h,const char *title);
+    int initWindow(int w,int h,const char *title,std::function<void()> preCreate);
 #else
     void set_egl_cxt(int w,int h,std::shared_ptr<EGLCxt> cxt);
 #endif
@@ -28,6 +37,8 @@ public:
     virtual void onMouseButton(int,int,int);
     virtual void onMouseMove(double,double);
 
+    WINDOW_TYPE get_window();
+
 #ifdef PF_ANDROID
 public:
 #else
@@ -36,14 +47,8 @@ protected:
     virtual void destroy();
     virtual void draw() = 0;
 
-#ifdef PF_ANDROID
-protected:
-    using WINDOW_TYPE = std::shared_ptr<EGLCxt>;
-    std::shared_ptr<EGLCxt> m_window;
-#else
-    using WINDOW_TYPE = GLFWwindow *;
-    GLFWwindow *m_window;
-#endif
+    WINDOW_TYPE m_window;
+
     int width, height;
 //-----------------------------------------------------------
     static std::vector<RenderDemo*> WindowResizeListeners;

@@ -45,6 +45,36 @@ int RenderDemo::initWindow(int w,int h,const char *title)
 
     return 0;
 }
+
+int RenderDemo::initWindow(int w,int h,const char *title,std::function<void()> preCreate)
+{
+    if(!glfwInit())
+    {
+        error_c = -1;
+        return -1;
+    }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    if(preCreate)
+        preCreate();
+
+    m_window = glfwCreateWindow(w, h, title, NULL, NULL);
+	if (!m_window)
+	{
+		glfwTerminate();
+        error_c = -2;
+		return -2;
+	}
+
+    glfwMakeContextCurrent(m_window);
+	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+	glfwSwapInterval(1);
+
+    regOnWindowResizeListener(this);
+
+    return 0;
+}
 #else
     void  RenderDemo::set_egl_cxt(int w,int h,std::shared_ptr<EGLCxt> cxt)
     {
@@ -192,5 +222,10 @@ void RenderDemo::call_listeners(std::vector<RenderDemo*>& list,RenderDemo::WINDO
             func(it);
         }
     }
+}
+
+RenderDemo::WINDOW_TYPE RenderDemo::get_window()
+{
+    return m_window;
 }
 

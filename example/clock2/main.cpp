@@ -37,6 +37,7 @@
 #include <generator/Generator.hpp>
 #include "../lighting_6/model.hpp"
 #include "../lighting_6/light.hpp"
+#include <spy.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -327,6 +328,7 @@ public:
         screen_tex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
         screen_tex->set_paramter<TexOption::WRAP_R,TexOpVal::CLAMP_TO_EDGE>();
         screen_tex->set_paramter<TexOption::WRAP_S,TexOpVal::CLAMP_TO_EDGE>();
+        screen_tex->generate_mipmap();
 
 
         fb.create();
@@ -355,7 +357,7 @@ public:
         curve_sur->add_comp<Render>(std::make_shared<Render>("base/curve_vs.glsl","base/curve_fg.glsl"));
 
         
-        
+        dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/circle.png",0);
         auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/love.png",0);
 
         auto plane_mat = std::shared_ptr<def::Material>(new def::Material(screen_tex,spec_plane));
@@ -473,7 +475,7 @@ public:
 
         plane_mesh = std::shared_ptr<def::MeshInstanced>(new def::MeshInstanced(0,wws::arrLen(planeVertices)/8, pw * ph ,plane_vao ));
 
-        dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/circle.png",0);
+        
 
         bx = -static_cast<float>(pw) / 2.f; 
         by = -static_cast<float>(ph) / 2.f;
@@ -622,7 +624,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), screen_w / screen_h, 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.f,0.f, -108.0f));
+        world = glm::translate(*world, glm::vec3(0.f,0.f, -103.0f));
     }
 
     void update()
@@ -664,7 +666,7 @@ private:
     //std::shared_ptr<Material> plane_mat;
     std::shared_ptr<Texture<TexType::D2>> dif_plane;
     std::shared_ptr<Render> render;
-    int pw = 208,ph = 56;
+    int pw = 216,ph = 56;
     float bx,by;
     Library lib;
     Face face;
@@ -680,7 +682,7 @@ private:
     std::shared_ptr<Texture<TexType::D2>> screen_tex;
     FrameBuffer fb;
     RenderBuffer rb;
-    float screen_w = 860.f,screen_h = 460.f;
+    float screen_w = 860.f * 2.f,screen_h = 460.f * 2.f;
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
     std::shared_ptr<gld::Node<gld::Component>> curve_sur;
@@ -693,11 +695,41 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 460, "Clock"))
+    
+    if (d.initWindow(1920, 1060, "Clock",[](){
+        glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GL_FALSE); 
+    }))
     {
         printf("init window failed\n");
         return -1;
     }
+     
+
+    auto sp = spy::Spy::EnumWindowsByTitleAndCls("Program Manager","Progman");
+    auto self = ::GetActiveWindow();
+    if(!sp.get_windows().empty())
+    {
+        auto root = sp.get_windows()[0].get_hwnd();
+        dbg(root);
+
+        auto def = ::FindWindowExA(root,NULL,"SHELLDLL_DefView",NULL);
+        
+        //::SetParent(self,root);
+        if(def)
+        {
+            ::SetParent(def,root);
+            // auto lv = ::FindWindowExA(def,NULL,"SysListView32","FolderView");
+            // if(lv)
+            // {
+            //     dbg(lv);
+            //     auto self = ::GetActiveWindow();
+            //     ::SetParent(self,lv);
+            // }
+        }
+    }
+
+
     d.init();
     d.run();
 
