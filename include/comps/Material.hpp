@@ -28,28 +28,6 @@ namespace gld::def{
         bool init() override
         {
             bool f = true;
-            if(diffuseTex)
-            {
-                diffuseTex->bind();
-                diffuseTex->generate_mipmap();
-                diffuseTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-                diffuseTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
-
-                diffuseTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-                diffuseTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
-                f = false;
-            }
-            if(specularTex)
-            {
-                specularTex->bind();
-                specularTex->generate_mipmap();
-                specularTex->set_paramter<TexOption::WRAP_S,TexOpVal::REPEAT>();
-                specularTex->set_paramter<TexOption::WRAP_T,TexOpVal::REPEAT>();
-
-                specularTex->set_paramter<TexOption::MIN_FILTER,TexOpVal::LINEAR_MIPMAP_LINEAR>();
-                specularTex->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
-                 f = false;
-            }
 
             auto n_ptr = get_node();
             auto render = n_ptr->get_comp<Render>();
