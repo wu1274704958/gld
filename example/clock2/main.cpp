@@ -705,30 +705,8 @@ int main()
         return -1;
     }
      
-
-    auto sp = spy::Spy::EnumWindowsByTitleAndCls("Program Manager","Progman");
     auto self = ::GetActiveWindow();
-    if(!sp.get_windows().empty())
-    {
-        auto root = sp.get_windows()[0].get_hwnd();
-        dbg(root);
-
-        auto def = ::FindWindowExA(root,NULL,"SHELLDLL_DefView",NULL);
-        
-        //::SetParent(self,root);
-        if(def)
-        {
-            ::SetParent(self,def);
-            // auto lv = ::FindWindowExA(def,NULL,"SysListView32","FolderView");
-            // if(lv)
-            // {
-            //     dbg(lv);
-            //     auto self = ::GetActiveWindow();
-            //     ::SetParent(self,lv);
-            // }
-        }
-    }
-
+    spy::into_wallpage(self);
 
     d.init();
     d.run();
