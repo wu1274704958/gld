@@ -30,6 +30,7 @@
 #include <component.h>
 #include <comps/Material.hpp>
 #include <frame_rate.h>
+#include <spy.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -326,11 +327,17 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 800, "Demo1"))
+    if (d.initWindow(1920, 1060, "Clock",[](){
+        glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GL_FALSE); 
+    }))
     {
         printf("init window failed\n");
         return -1;
     }
+     
+    auto self = ::GetActiveWindow();
+    spy::into_wallpage(self);
     d.init();
     d.run();
 
