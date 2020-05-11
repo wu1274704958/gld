@@ -503,6 +503,8 @@ public:
 
         sur->pre_go();
 
+        rotate.x = -28.f;
+
         return 0;
     }
 
@@ -636,6 +638,13 @@ public:
 
         if(!sur->is_end())
             sur->ani_step();
+        
+       
+        rotate.y = dbg(glm::sin(pi) * 10.f);
+        if(pi > glm::pi<float>() * 2.f)
+            pi = 0.f;
+        else    
+            pi += FrameRate::get_ms() * 0.0003f;
     }
 
     ~Demo1() {
@@ -686,6 +695,7 @@ private:
     UniformBuf<0,DictLight> light;
     Uniform<UT::Vec3> view_pos;
     std::shared_ptr<gld::Node<gld::Component>> curve_sur;
+    float pi = 0.f;
 };
 
 #ifndef PF_ANDROID
