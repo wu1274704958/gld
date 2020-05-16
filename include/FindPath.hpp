@@ -30,10 +30,11 @@ namespace wws {
 			return std::make_tuple(false, res_all);
 	}
 
-    std::filesystem::path find_path(int deep,const char* name,bool is_dir = false)
+    std::filesystem::path find_path(int uplimit,const char* name,bool is_dir = false)
     {
     	std::filesystem::path res;
     	std::vector<std::filesystem::path> wait_ck;
+		std::filesystem::path previous;
     	std::filesystem::path root(".");
     	root = std::filesystem::absolute(root);
     	wait_ck.push_back(root);
@@ -45,7 +46,7 @@ namespace wws {
 				return std::filesystem::is_regular_file(t) && t.filename() == name;
     	};
 
-    	while (deep > 0)
+    	while (uplimit > 0)
     	{
     		auto p = std::move(wait_ck.back());
     		wait_ck.pop_back();
@@ -58,7 +59,7 @@ namespace wws {
     		else {
     			for (auto& p : ps)
     			{
-    				if (std::filesystem::is_directory(p))
+    				if (std::filesystem::is_directory(p) && previous != p)
     					wait_ck.push_back(std::move(p));
     			}
     		}
@@ -66,13 +67,51 @@ namespace wws {
     		{
     			if (!root.has_parent_path())
     				break;
+				previous = root;
     			root = root.parent_path();
     			wait_ck.push_back(root);
-    			--deep;
+    			--uplimit;
     		}
     	}
     	FINDED:
     	return res;
+    }
+
+	void enum_path(std::filesystem::path& root,std::function<void(const std::filesystem::path&)> ob,bool only_file = true)
+    {
+    	std::filesystem::path res;
+    	std::vector<std::filesystem::path> wait_ck;
+    	wait_ck.push_back(root);
+
+    	auto f = [&ob,only_file](const std::filesystem::path& t)->bool {
+			if(only_file)
+			{
+				if(std::filesystem::is_regular_file(t))
+    				ob(t);
+			}
+			else 
+				ob(t);
+			return false;
+    	};
+
+    	while (!wait_ck.empty())
+    	{
+    		auto p = std::move(wait_ck.back());
+    		wait_ck.pop_back();
+    		auto [finded, ps] = find_paths_ex(p, f);
+    		if (finded)
+    		{
+			    res = std::move(ps[0]);
+			    break;
+    		}
+    		else {
+    			for (auto& p : ps)
+    			{
+    				if (std::filesystem::is_directory(p))
+    					wait_ck.push_back(std::move(p));
+    			}
+    		}
+    	}
     }
 
 	#endif
