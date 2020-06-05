@@ -33,6 +33,7 @@
 #include <surface.hpp>
 #include <strstream>
 #include <make_color.hpp>
+#include <spy.hpp>
 
 using namespace gld;
 namespace fs = std::filesystem;
@@ -42,7 +43,8 @@ using  namespace dbg::literal;
 using namespace wws;
 using namespace ft2;
 
-#define MODE_4
+//#define MODE_4
+#define MODE_5
 
 float rd_0_1()
 {
@@ -327,10 +329,13 @@ public:
                     }
                     ps.push_back(create_point(glm::vec3((float)x + this->bx,(float)y + this->by,0.0f),color * z_arr[z_k]));
                     #endif
+                    #ifdef MODE_5
+                    ps.push_back(create_point(glm::vec3((float)x + this->bx + ((y % 2) == 0 ? -0.3f : 0.3f),(float)y + this->by,z_off[y * pw + x]),color ));
+                    #endif
                 }
             }
             sync_vertex_data(ps);
-            
+            std::memset(z_off.get(), 0, sizeof(float) * pw * ph);
         };
 #ifdef MODE_2
         z_arr = std::unique_ptr<float[]>(new float[pw * ph]);
@@ -344,6 +349,12 @@ public:
 
         for(int i = 0;i < pw * ph;++i)
             z_arr[i] = 0.f;
+#endif
+#ifdef MODE_5
+        z_off = std::unique_ptr<float[]>(new float[pw * ph]);
+
+        for (int i = 0; i < pw * ph; ++i)
+            z_off[i] = 0.f;
 #endif
 
 	    try
@@ -359,21 +370,29 @@ public:
     
 
 	    srand(static_cast<unsigned int>(time(nullptr)));
-	    face.set_pixel_size(56, 56);
+	    face.set_pixel_size(ph, ph);
 	    face.select_charmap(FT_ENCODING_UNICODE);
 
 	    drive = std::make_shared<Drive>(face,update);
 
         light_color = wws::make_rgb(PREPARE_STRING("00F5FF")).make<glm::vec3>();
 
-	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(224,56,drive.get(),light_color,300));
+	    sur = std::shared_ptr<AniSurface<GLContent>>(new AniSurface(pw,ph,drive.get(),light_color,300));
 	    sur->to_out_speed = 0.09f;
 	    sur->to_use_speed = 0.1f;
 
-	    sur->move_to_func = [](cgm::vec2& pos,cgm::vec2 v,cgm::vec2 tar)
+        
+
+	    sur->move_to_func = [=](wws::point& p)
 	    {
-	    	auto len = (tar - pos).len() * 0.1f;
-	    	pos = pos + ( v * len);
+	    	auto zl = (p.tar - p.pos).len() * 0.1f;
+	    	p.pos = p.pos + ( p.v * zl);
+#ifdef MODE_5
+            auto len = (p.tar - p.pos).len();
+            int zk = static_cast<int>(p.pos.y()) * pw + static_cast<int>(p.pos.x());
+           
+            z_off[zk] = glm::sin((len / p.distance) * glm::pi<float>()) * p.distance * -0.6f;
+#endif
 	    };
 
 	    sur->set_min_frame_ms(16);
@@ -512,10 +531,10 @@ public:
 
     void update_matrix()
     {
-        perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
+        perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 1000.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.f,0.f, -132.0f));
+        world = glm::translate(*world, glm::vec3(0.f,0.f, -219.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
@@ -525,6 +544,12 @@ public:
     {
         for (auto& p : cxts)
             p->update();
+
+        rotate.y = glm::sin(pi) * 10.f;
+        if (pi > glm::pi<float>() * 2.f)
+            pi = 0.f;
+        else
+            pi += FrameRate::get_ms() * 0.0003f;
     }
 
     ~Demo1() {
@@ -555,7 +580,7 @@ private:
     //std::shared_ptr<Material> plane_mat;
     std::shared_ptr<Texture<TexType::D2>> dif_plane;
     std::shared_ptr<Render> render;
-    int pw = 224,ph = 56;
+    int pw = 448,ph = 112;
     float bx,by;
     Library lib;
     Face face;
@@ -567,7 +592,11 @@ private:
     #ifdef MODE_4
     std::unique_ptr<float[]> z_arr;
     #endif
+    #ifdef MODE_5
+    std::unique_ptr<float[]> z_off;
+    #endif
     glm::vec3 light_color;
+    float pi = 0.f;
 };
 
 #ifndef PF_ANDROID
@@ -577,11 +606,17 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 460, "Clock"))
+    if (d.initWindow(1920, 1060, "Clock", []() {
+        glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GL_FALSE);
+    }))
     {
         printf("init window failed\n");
         return -1;
     }
+
+    auto self = ::GetActiveWindow();
+    spy::into_wallpage(self);
     d.init();
     d.run();
 
