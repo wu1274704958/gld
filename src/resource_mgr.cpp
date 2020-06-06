@@ -144,7 +144,9 @@ gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag
 		constexpr size_t MAX = 1024 * 50;
 		size_t max_size = MAX;
 		size_t size = 0;
-		char *data = new char[MAX];
+		char* data = reinterpret_cast<char*>( std::malloc(MAX) );
+		if(data == nullptr)
+			throw std::runtime_error("alloc failed!");
 		while (!f.eof())
 		{
 			char buf[MAX] = { 0 };
@@ -154,9 +156,14 @@ gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag
 				break;
 			if(size + t_s > max_size)
 			{
-				data = reinterpret_cast<char*>(std::realloc(data,max_size + MAX));
-				if(data) max_size += MAX;
-				else throw std::runtime_error("realloc failed!");
+				auto n_data = reinterpret_cast<char*>(std::realloc(data,max_size + MAX));
+				if (n_data = nullptr)
+				{
+					std::free(data);
+					throw std::runtime_error("realloc failed!");
+				}
+				max_size += MAX;
+				data = n_data;
 			}
 			std::memcpy(data + size,buf,t_s);
 			size += t_s;
