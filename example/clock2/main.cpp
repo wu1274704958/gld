@@ -454,11 +454,11 @@ public:
 	    sur->to_out_speed = 0.09f;
 	    sur->to_use_speed = 0.1f;
 
-	    sur->move_to_func = [](cgm::vec2& pos,cgm::vec2 v,cgm::vec2 tar)
-	    {
-	    	auto len = (tar - pos).len() * 0.1f;
-	    	pos = pos + ( v * len);
-	    };
+        sur->move_to_func = [](wws::point & p)
+        {
+            auto zl = (p.tar - p.pos).len() * 0.1f;
+            p.pos = p.pos + (p.v * zl);
+        };
 
 	    sur->set_min_frame_ms(16);
 
