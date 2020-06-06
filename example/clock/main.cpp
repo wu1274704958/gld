@@ -359,8 +359,9 @@ public:
 
 	    try
 	    {
-            auto path = DefResMgr::instance()->to_path("fonts/SHOWG.TTF").generic_string();
-	    	face = lib.load_face<Face>(path.c_str());
+            auto f = DefResMgr::instance()->load<ResType::font>("fonts/SHOWG.TTF");
+
+            face = lib.load_face_for_mem<Face>(f->get_data(), f->get_size(), 0);
 	    }
 	    catch (const std::exception& e)
 	    {

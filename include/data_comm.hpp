@@ -12,7 +12,9 @@ namespace gld{
         TextureCube,
         ProgramWithGeometry,
         SceneWithGeometry,
-        SceneWithGeometryNoMaterial
+        SceneWithGeometryNoMaterial,
+        FontLibrary,
+        FontFace
     };
 
     namespace data_ck{
