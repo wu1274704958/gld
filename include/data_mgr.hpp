@@ -204,6 +204,20 @@ private:
         static RealRetTy load(std::tuple<const char*,unsigned int,const char*,const char*,const char*> args);
     };
 
+    namespace ft2 {
+        class Library;
+    }
+
+    struct LoadFontLibrary {
+        using RetTy = std::shared_ptr<CubeTexture>;
+        using ArgsTy = std::tuple<std::string, std::string, int>;
+        using RealRetTy = std::tuple<bool, RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static std::string key_from_args(std::tuple<const char*, const char*, int> args);
+        static RealRetTy load(ArgsTy args);
+        static RealRetTy load(std::tuple<const char*, const char*, int> args);
+    };
+
     typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,
         DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>,
         DataLoadPlugTy<DataType::Scene,LoadSceneNode<SceneLoadMode::Default>>,
