@@ -111,6 +111,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR line FILES main.cpp)
     CreateExample(DIR test_curved FILES main.cpp)
     CreateExample(DIR clock2 FILES main.cpp)
+    CreateExample(DIR word FILES main.cpp)
 endif()
 
         
