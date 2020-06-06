@@ -157,7 +157,7 @@ gld::LoadFont::RealRetTy gld::LoadFont::load(PathTy p,gld::LoadFont::ArgsTy flag
 			if(size + t_s > max_size)
 			{
 				auto n_data = reinterpret_cast<char*>(std::realloc(data,max_size + MAX));
-				if (n_data = nullptr)
+				if (n_data == nullptr)
 				{
 					std::free(data);
 					throw std::runtime_error("realloc failed!");
