@@ -359,9 +359,7 @@ public:
 
 	    try
 	    {
-            auto f = DefResMgr::instance()->load<ResType::font>("fonts/SHOWG.TTF");
-
-            face = lib.load_face_for_mem<Face>(f->get_data(), f->get_size(), 0);
+            face = DefDataMgr::instance()->load<DataType::FontFace>("fonts/SHOWG.TTF", 0, 0);
 	    }
 	    catch (const std::exception& e)
 	    {
@@ -371,10 +369,10 @@ public:
     
 
 	    srand(static_cast<unsigned int>(time(nullptr)));
-	    face.set_pixel_size(ph, ph);
-	    face.select_charmap(FT_ENCODING_UNICODE);
+	    face->set_pixel_size(ph, ph);
+	    face->select_charmap(FT_ENCODING_UNICODE);
 
-	    drive = std::make_shared<Drive>(face,update);
+	    drive = std::make_shared<Drive>(*face,update);
 
         light_color = wws::make_rgb(PREPARE_STRING("00F5FF")).make<glm::vec3>();
 
@@ -583,8 +581,7 @@ private:
     std::shared_ptr<Render> render;
     int pw = 448,ph = 112;
     float bx,by;
-    Library lib;
-    Face face;
+    std::shared_ptr<Face> face;
     std::shared_ptr<AniSurface<GLContent>> sur;
     std::shared_ptr<Drive> drive;
     #ifdef MODE_2

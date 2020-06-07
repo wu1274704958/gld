@@ -4,6 +4,11 @@
 #include <res_cache_mgr.hpp>
 #include <texture.hpp>
 
+namespace ft2 {
+    class Library;
+    class Face;
+}
+
 namespace gld
 {
     template<typename ...Plugs>
@@ -204,18 +209,25 @@ private:
         static RealRetTy load(std::tuple<const char*,unsigned int,const char*,const char*,const char*> args);
     };
 
-    namespace ft2 {
-        class Library;
-    }
+    
 
     struct LoadFontLibrary {
-        using RetTy = std::shared_ptr<CubeTexture>;
-        using ArgsTy = std::tuple<std::string, std::string, int>;
+        using RetTy = std::shared_ptr<ft2::Library>;
+        using ArgsTy = std::tuple<>;
         using RealRetTy = std::tuple<bool, RetTy>;
         static std::string key_from_args(ArgsTy args);
-        static std::string key_from_args(std::tuple<const char*, const char*, int> args);
         static RealRetTy load(ArgsTy args);
-        static RealRetTy load(std::tuple<const char*, const char*, int> args);
+        static ArgsTy default_args();
+    };
+
+    struct LoadFontFace {
+        using RetTy = std::shared_ptr<ft2::Face>;
+        using ArgsTy = std::tuple<std::string,int,int>;
+        using RealRetTy = std::tuple<bool, RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static std::string key_from_args(std::tuple<const char*, int,int> args);
+        static RealRetTy load(ArgsTy args);
+        static RealRetTy load(std::tuple<const char* ,int,int> args);
     };
 
     typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,
@@ -225,6 +237,8 @@ private:
         DataLoadPlugTy<DataType::TextureCube,LoadTextureCube>,
         DataLoadPlugTy<DataType::ProgramWithGeometry,LoadProgramWithGeom>,
         DataLoadPlugTy<DataType::SceneWithGeometry,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry>>,
-        DataLoadPlugTy<DataType::SceneWithGeometryNoMaterial,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry_NoMaterial>>
+        DataLoadPlugTy<DataType::SceneWithGeometryNoMaterial,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry_NoMaterial>>,
+        DataLoadPlugTy<DataType::FontLibrary,LoadFontLibrary>,
+        DataLoadPlugTy<DataType::FontFace,LoadFontFace>
         > DefDataMgr;
 } // namespace gld
