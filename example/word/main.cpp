@@ -80,7 +80,7 @@ public:
 
         auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
 
-        mesh->mode = GL_LINE_STRIP;
+        mesh->mode = GL_TRIANGLE_STRIP;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
