@@ -3,11 +3,14 @@
 #include "TexGenerate.hpp"
 #include "TextRender.hpp"
 #include <data_mgr.hpp>
+#include "TextNodeGen.hpp"
 
 namespace txt {
+
+	template<typename NodeGen,typename TextGen,typename TextR,template< class A,class B> class PAge>
 	struct TextMgr{
 
-		using PageTy = typename Page<TexGenerate, DefTextRender>;
+		using PageTy = typename PAge<TextGen, TextR>;
 
 		bool has(std::string& font, int flag, int idx, int size, uint32_t c)
 		{
@@ -169,6 +172,11 @@ namespace txt {
 		
 		std::shared_ptr<gld::Node<gld::Component>> get_node(std::string& font, int flag, int idx, int size, uint32_t c)
 		{
+			auto[tex,wd] = get_texture(font, flag, idx, size, c);
+			if (tex)
+			{
+				return NodeGen::generate(tex, wd.value());
+			}
 			return nullptr;
 		}
 
@@ -190,4 +198,7 @@ namespace txt {
 		std::unordered_map<std::string,std::unordered_map<int,std::vector<PageTy>>> pages;
 		inline static std::shared_ptr<TextMgr> self;
 	};
+
+
+	typedef TextMgr<DefTextNodeGen, TexGenerate, DefTextRender, Page> DefTexMgr;
 }

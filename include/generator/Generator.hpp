@@ -88,5 +88,11 @@ namespace gld::gen{
         return mesh;
     }
 
+
+    std::vector<float> quad()
+    {
+        
+    }
+
     
 }
