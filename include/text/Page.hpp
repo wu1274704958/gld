@@ -28,8 +28,16 @@ namespace txt {
 			
 		}
 
+		Page(const Page&) = delete;
+		Page(Page&&) = default;
+
+		Page& operator=(const Page&) = delete;
+		Page& operator=(Page&&) = default;
+
 		bool test(int w,int h) const
 		{
+			if (curr_x + w >= surface.w())
+				return (curr_y + curr_h + h) < surface.h();
 			return (curr_y + h) < surface.h();
 		}
 
@@ -64,11 +72,12 @@ namespace txt {
 					static_cast<uint16_t>(advance));
 
 				Render::render(surface, *face, curr_x, curr_y);
-
+				word_map[c] = wd;
 				curr_x += w;
 				if (h > curr_h)
 					curr_h = h;
 				refresh();
+				return true;
 			}
 			else
 				return false;

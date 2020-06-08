@@ -30,6 +30,8 @@ namespace txt {
 		{
 			ptr = oth.ptr;
 			oth.ptr = nullptr;
+			w = oth.w;
+			h = oth.h;
 		}
 		GrayContent& operator=(const GrayContent&) = delete;
 		GrayContent& operator=(GrayContent&& oth)
@@ -41,6 +43,8 @@ namespace txt {
 			}
 			ptr = oth.ptr;
 			oth.ptr = nullptr;
+			w = oth.w;
+			h = oth.h;
 			return *this;
 		}
 
@@ -67,6 +71,14 @@ namespace txt {
 			auto temp = oth.ptr;
 			oth.ptr = this->ptr;
 			this->ptr = temp;
+
+			auto tt = oth.w;
+			oth.w = w;
+			w = tt;
+
+			tt = oth.h;
+			oth.h = h;
+			h = tt;
 		}
 
 		virtual void present(PRESENT_ARGS_TYPE a) const
