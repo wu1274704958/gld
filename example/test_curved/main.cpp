@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS
+﻿#define _CRT_SECURE_NO_WARNINGS
 #include <resource_mgr.hpp>
 #include <FindPath.hpp>
 #include <glad/glad.h>
@@ -34,6 +34,7 @@
 #include <generator/Generator.hpp>
 #include "../lighting_6/model.hpp"
 #include "../lighting_6/light.hpp"
+#include <text/TextMgr.hpp>
 
 
 using namespace gld;
@@ -56,6 +57,7 @@ glm::vec3 rd_vec3()
     return glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
 }
 
+#define test_text 0
 
 class Demo1 : public RenderDemoRotate {
 public:
@@ -89,7 +91,7 @@ public:
 
         light.sync(GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT);
 
-        auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
+        auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32,test_text);
 
         mesh->mode = GL_TRIANGLE_STRIP;
 
@@ -97,16 +99,35 @@ public:
         node->add_comp<Transform>(std::make_shared<Transform>());
         node->add_comp<def::Mesh>(mesh);
         node->add_comp<Render>(std::make_shared<Render>("base/curve_vs.glsl","base/curve_fg.glsl"));
-        
-        auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood.png",0);
-        auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood_spec.png",0);
 
-        auto plane_mat = std::shared_ptr<def::Material>(new def::Material(dif_plane,spec_plane));
+        auto dif_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood.png", 0);
+        auto spec_plane = DefDataMgr::instance()->load<DataType::Texture2D>("textures/wood_spec.png", 0);
+
+        #if test_text
+            std::string font = "fonts/SIMHEI.TTF";
+            for (auto k = L'A'; k <= L'Z'; ++k)
+                txt::DefTexMgr::instance()->put(font, 0, 0, 96, k);
+
+            for (auto k = L'我'; k <= L'我' + 500; ++k)
+            {
+                txt::DefTexMgr::instance()->put(font, 0, 0, 96, k);
+            }
+
+            auto [tex, wd] = txt::DefTexMgr::instance()->get_texture(font, 0, 0, 96, L'C');
+
+            auto plane_mat = std::shared_ptr<def::Material>(new def::Material(tex, spec_plane));
+        #else 
+            auto plane_mat = std::shared_ptr<def::Material>(new def::Material(dif_plane, spec_plane));
+        #endif
+
+        
         plane_mat->uambient_strength = 0.03f;
         plane_mat->ushininess = 256.f;
         plane_mat->uspecular_strength = 0.5f;
 
         node->add_comp<def::Material>(plane_mat);
+
+        node->get_comp<Transform>()->scale = glm::vec3(1.64f);
 
         cxts.push_back(node);
         

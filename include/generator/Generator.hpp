@@ -22,7 +22,7 @@ namespace gld::gen{
         return std::make_tuple(res,c);
     }
 
-    std::shared_ptr<def::Mesh> curved_surface(float w,float h,float curved_x,float curved_y,int curved_seg)
+    std::shared_ptr<def::Mesh> curved_surface(float w,float h,float curved_x,float curved_y,int curved_seg,bool flip_UV = false)
     {
         float by = h / 2.f;
         float bx = -(w / 2.f);
@@ -40,14 +40,14 @@ namespace gld::gen{
             v.pos = glm::vec3( -curve_arr[i].x + bx,by,curve_arr[i].y );
             glm::vec2 p_n = glm::normalize(curve_arr[i] - curve_center);
             v.normal = glm::vec3( p_n.x,0.f,p_n.y );
-            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f,1.f);
+            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f,flip_UV ? 0.f : 1.f);
 
             vertices.push_back(v);
 
             v.pos = glm::vec3( -curve_arr[i].x + bx,ey,curve_arr[i].y );
             p_n = glm::normalize(curve_arr[i] - curve_center);
             v.normal = glm::vec3( p_n.x,0.f,p_n.y );
-            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f,0.f);
+            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f, flip_UV ? 1.f : 0.f);
             
             vertices.push_back(v);
         }
@@ -60,14 +60,14 @@ namespace gld::gen{
             v.pos = glm::vec3( curve_arr[i].x + bx,by,curve_arr[i].y );
             glm::vec2 p_n = glm::normalize(curve_arr[i] - curve_center);
             v.normal = glm::vec3( p_n.x,0.f,p_n.y );
-            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f,1.f);
+            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f, flip_UV ? 0.f : 1.f);
 
             vertices.push_back(v);
 
             v.pos = glm::vec3( curve_arr[i].x + bx,ey,curve_arr[i].y );
             p_n = glm::normalize(curve_arr[i] - curve_center);
             v.normal = glm::vec3( p_n.x,0.f,p_n.y );
-            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f,0.f);
+            v.uv = glm::vec2((v.pos.x + 0.5f) / 1.f, flip_UV ? 1.f : 0.f);
             
             vertices.push_back(v);
         }
@@ -91,7 +91,9 @@ namespace gld::gen{
 
     std::vector<float> quad()
     {
-        
+        std::vector<float> res;
+
+        return res;
     }
 
     
