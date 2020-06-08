@@ -88,12 +88,23 @@ namespace gld::gen{
         return mesh;
     }
 
-
-    std::vector<float> quad()
+    template<bool HasNormal>
+    std::tuple<std::vector<float>,std::vector<int>> quad(bool flip_UV = true)
     {
-        std::vector<float> res;
+
+        std::vector<float> res = {
+             0.5f,   0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  0.0f, 0.0f,
+            -0.5f,   0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  0.0f, 0.0f,
+            -0.5f,  -0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  0.0f, 2.0f,
+                                       
+             0.5f,   0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  2.0f, 0.0f,
+            -0.5f,  -0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  0.0f, 2.0f,
+             0.5f,  -0.5f, 0.f,  0.0f,  0.0f,  -1.0f,  2.0f, 2.0f
+        };
+        std::vector<int> idx;
 
         return res;
+        
     }
 
     
