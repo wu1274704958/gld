@@ -176,9 +176,9 @@ namespace txt {
 			auto[tex,wd] = get_texture(font, flag, idx, size, c);
 			if (tex)
 			{
-				return std::make_tuple( NodeGen::generate(tex, wd.value()) , wd, PageTy::MAXSurfaceSize );
+				return std::make_tuple( NodeGen::generate(tex, wd.value(), PageTy::MAXSurfaceSize) , wd, PageTy::MAXSurfaceSize );
 			}
-			return std::make_tuple(nullptr, {}, PageTy::MAXSurfaceSize);
+			return std::make_tuple(nullptr, std::nullopt, PageTy::MAXSurfaceSize);
 		}
 
 	protected:

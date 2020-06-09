@@ -17,7 +17,7 @@ namespace txt {
 		WordData () {}
 	};
 
-	template <typename Gen,typename Render>
+	template <typename Gen,typename Render,size_t Off = 1>
 	class Page{
 	public:
 		constexpr static int MAXSurfaceSize = 2048;
@@ -36,9 +36,9 @@ namespace txt {
 
 		bool test(int w,int h) const
 		{
-			if (curr_x + w >= surface.w())
-				return (curr_y + curr_h + h) < surface.h();
-			return (curr_y + h) < surface.h();
+			if (curr_x + w + Off >= surface.w())
+				return (curr_y + curr_h + h + Off) < surface.h();
+			return (curr_y + h + Off) < surface.h();
 		}
 
 		bool test(uint32_t c) const
@@ -61,10 +61,10 @@ namespace txt {
 			{
 				auto [off_x, off_y, advance, w, h] = (*gd);
 				if (!test(w, h)) return false;
-				if (curr_x + w >= surface.w())
+				if (curr_x + w + Off >= surface.w())
 				{
 					curr_x = 0;
-					curr_y += curr_h > h ? curr_h : h;
+					curr_y += ((curr_h > h ? curr_h : h) + Off);
 					curr_h = 0;
 				}
 				WordData wd(static_cast<uint16_t>(curr_x), static_cast<uint16_t>(curr_y),
@@ -73,7 +73,7 @@ namespace txt {
 
 				Render::render(surface, *face, curr_x, curr_y);
 				word_map[c] = wd;
-				curr_x += w;
+				curr_x += (w + Off);
 				if (h > curr_h)
 					curr_h = h;
 				refresh();

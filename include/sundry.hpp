@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <string>
 #include <serialization.hpp>
+#include <random>
 
 #ifdef PF_ANDROID
 #include <EGL/egl.h>
@@ -176,6 +177,15 @@ namespace sundry
         }else{
             return std::make_tuple(true,nullptr);
         }
+    }
+
+    template<int M = 1000>
+    float rd_0_1()
+    {
+        std::random_device r;
+        std::default_random_engine e1(r());
+        std::uniform_int_distribution<int> uniform_dist(0, M);
+        return static_cast<float>(uniform_dist(e1)) / static_cast<float>(M);
     }
     
 } // namespace sundry

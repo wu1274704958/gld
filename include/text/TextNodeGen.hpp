@@ -15,7 +15,7 @@ namespace txt {
 
     struct DefTextMaterial :public gld::Component
     {
-        DefTextMaterial(std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex,glm::vec3 color) :
+        DefTextMaterial(std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex,glm::vec4 color) :
             udiffuseTex("diffuseTex"),
             color("textColor"),
             diffuseTex(std::move(diffuseTex))
@@ -29,7 +29,7 @@ namespace txt {
             diffuseTex(std::move(diffuseTex))
         {
             udiffuseTex = 0;
-            this->color = glm::vec3(1.f, 1.f, 1.f);
+            this->color = glm::vec4(1.f, 1.f, 1.f,1.f);
         }
         bool init() override
         {
@@ -38,6 +38,7 @@ namespace txt {
             auto n_ptr = get_node();
             auto render = n_ptr->get_comp<gld::Render>();
             udiffuseTex.attach_program(render->get());
+            color.attach_program(render->get());
 
             return f;
         }
@@ -56,7 +57,7 @@ namespace txt {
         }
 
         gld::GlmUniform<gld::UT::Sampler2D>   udiffuseTex;
-        gld::GlmUniform<gld::UT::Vec3>       color;
+        gld::GlmUniform<gld::UT::Vec4>       color;
         std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex;
     };
 }
