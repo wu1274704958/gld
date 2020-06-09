@@ -7,7 +7,8 @@
 
 using namespace gld;
 
-std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::shared_ptr<gld::Texture<gld::TexType::D2>> tex, WordData& wd,int texSize)
+std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::shared_ptr<gld::Texture<gld::TexType::D2>> tex, WordData& wd,
+    int texSize,float originX,float originY)
 {
     auto program = DefDataMgr::instance()->load<DataType::Program>("base/word_vs.glsl", "base/word_fg.glsl");
     if (!program) return nullptr;
@@ -20,7 +21,7 @@ std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::sh
     float w = static_cast<float>(wd.w);
     float h = static_cast<float>(wd.h);
 
-    auto [vertices, indices] = gen::quad<false>(x / tex_size, y / tex_size, w / tex_size, h / tex_size);
+    auto [vertices, indices] = gen::quad<false>(x / tex_size, y / tex_size, w / tex_size, h / tex_size,originX,originY);
 
 
     std::shared_ptr<gld::Node<gld::Component>> res = std::make_shared<gld::Node<gld::Component>>();

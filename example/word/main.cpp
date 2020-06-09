@@ -33,6 +33,7 @@
 #include <make_color.hpp>
 #include <generator/Generator.hpp>
 #include <text/TextMgr.hpp>
+#include <sundry.hpp>
 
 
 using namespace gld;
@@ -42,18 +43,8 @@ using  namespace dbg::literal;
 
 using namespace wws;
 using namespace gen;
-
-float rd_0_1()
-{
-    std::random_device r;
-    std::default_random_engine e1(r());
-    std::uniform_int_distribution<int> uniform_dist(0, 1000000);
-    return static_cast<float>(uniform_dist(e1)) / 100000.f;
-}
-glm::vec3 rd_vec3()
-{
-    return glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
-}
+using namespace txt;
+using namespace sundry;
 
 
 class Demo1 : public RenderDemoRotate {
@@ -76,19 +67,49 @@ public:
         fill_color = glm::vec3(0.f,1.0f,0.f);
         fill_color.sync();
 
-        
+        std::string font = "fonts/SHOWG.TTF";
+        std::string font2 = "fonts/SIMHEI.TTF";
 
         auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
 
-        mesh->mode = GL_TRIANGLE_STRIP;
+        /*mesh->mode = GL_TRIANGLE_STRIP;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
         node->add_comp<def::Mesh>(mesh);
         node->add_comp<Render>(std::make_shared<Render>("base/line_vs.glsl","base/line_fg.glsl"));
 
-        cxts.push_back(node);
-        
+        cxts.push_back(node);*/
+
+        for (auto k = L'!'; k <= L'~'; ++k)
+        {
+            auto [a, wd, size] = DefTexMgr::instance()->get_node(font, 0, 0, 126, k);
+            auto trans = a->get_comp<Transform>();
+            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.0f);
+            trans->scale = glm::vec3(0.1f);
+            auto mater = a->get_comp<DefTextMaterial>();
+            mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+            cxts.push_back(a);
+        }
+
+        for (auto k = L'Œ‚'; k <= L'Œ‚' + 300; ++k)
+        {
+            auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, k);
+            auto trans = a->get_comp<Transform>();
+            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.0f);
+            trans->scale = glm::vec3(0.1f);
+            auto mater = a->get_comp<DefTextMaterial>();
+            mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+            cxts.push_back(a);
+        }
+
+        /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'≈¿',1.f,0.f);
+        auto trans = a->get_comp<Transform>();
+        auto mater = a->get_comp<DefTextMaterial>();
+        mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+        cxts.push_back(a);*/
+       
+        glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
 
          for (auto& p : cxts)
@@ -101,12 +122,17 @@ public:
     void draw() override
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        program->use();
-        perspective.attach_program(program);
-        world.attach_program(program);
-      
-        perspective.sync();
-        world.sync();
+        for (auto n : cxts)
+        {
+            auto render = n->get_comp<Render>();
+            auto p = render->get();
+            p->use();
+            perspective.attach_program(p);
+            world.attach_program(p);
+
+            perspective.sync();
+            world.sync();
+        }
 
         for (auto& p : cxts)
             p->draw();

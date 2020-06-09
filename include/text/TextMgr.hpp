@@ -171,12 +171,12 @@ namespace txt {
 
 		
 		std::tuple<std::shared_ptr<gld::Node<gld::Component>>,std::optional<WordData>,int>
-			get_node(std::string& font, int flag, int idx, int size, uint32_t c)
+			get_node(std::string& font, int flag, int idx, int size, uint32_t c, float originX = 0.5f, float originY = 0.5f)
 		{
 			auto[tex,wd] = get_texture(font, flag, idx, size, c);
 			if (tex)
 			{
-				return std::make_tuple( NodeGen::generate(tex, wd.value(), PageTy::MAXSurfaceSize) , wd, PageTy::MAXSurfaceSize );
+				return std::make_tuple( NodeGen::generate(tex, wd.value(), PageTy::MAXSurfaceSize,originX,originY) , wd, PageTy::MAXSurfaceSize );
 			}
 			return std::make_tuple(nullptr, std::nullopt, PageTy::MAXSurfaceSize);
 		}

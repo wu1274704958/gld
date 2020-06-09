@@ -10,7 +10,8 @@ namespace txt {
 	struct WordData;
 
 	struct DefTextNodeGen {
-		static std::shared_ptr<gld::Node<gld::Component>> generate(std::shared_ptr < gld::Texture<gld::TexType::D2>> tex, WordData& wd, int texSize);
+		static std::shared_ptr<gld::Node<gld::Component>> generate(std::shared_ptr < gld::Texture<gld::TexType::D2>> tex, WordData& wd,
+            int texSize, float originX = 0.5f, float originY = 0.5f);
 	};
 
     struct DefTextMaterial :public gld::Component
