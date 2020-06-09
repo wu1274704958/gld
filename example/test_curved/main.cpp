@@ -57,7 +57,7 @@ glm::vec3 rd_vec3()
     return glm::vec3(rd_0_1(),rd_0_1(),rd_0_1());
 }
 
-#define test_text 0
+#define test_text 1
 
 class Demo1 : public RenderDemoRotate {
 public:
