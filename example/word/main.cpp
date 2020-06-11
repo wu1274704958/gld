@@ -34,6 +34,7 @@
 #include <generator/Generator.hpp>
 #include <text/TextMgr.hpp>
 #include <sundry.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 
 using namespace gld;
@@ -170,6 +171,24 @@ public:
         sundry::screencoord_to_ndc(width, height, x, y, &nx, &ny);
         dbg(std::make_tuple(nx,ny));
 
+        glm::vec3 raypos, raydir;
+        sundry::normalized2d_to_ray(nx, ny, glm::inverse( (*world) * (*perspective) ) , glm::vec3(0.f, 0.f, 0.0f), raypos, raydir);
+
+        dbg(std::make_tuple(raypos.x, raypos.y, raypos.z));
+        dbg(std::make_tuple(raydir.x, raydir.y, raydir.z));
+
+        for (auto& p : cxts)
+        {
+            glm::vec2 braypos; float distance;
+            auto mesh = p->get_comp<gld::def::MeshRayTest>();
+            if (mesh->ray_test(*world, raypos, raydir, braypos, distance))
+            {
+                dbg(std::make_tuple(braypos.x, braypos.y, distance));
+                auto mater = p->get_comp<txt::DefTextMaterial>();
+                mater->color = glm::vec4(sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1());
+            }
+        }
+            
     }
 
     void onWindowResize(int w, int h) override

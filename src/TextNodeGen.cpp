@@ -41,7 +41,11 @@ std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::sh
     vao->buffs().get<gld::ArrayBufferType::ELEMENT>().bind_data(indices, GL_STATIC_DRAW);
     vao->unbind();
 
-    res->add_comp<gld::def::Mesh>(std::shared_ptr<gld::def::Mesh>(new gld::def::Mesh(indices.size(), vertices.size() / 5, std::move(vao))));
+    res->add_comp<gld::def::MeshRayTest>(std::shared_ptr<gld::def::MeshRayTest>(new gld::def::MeshRayTest(indices.size(), vertices.size() / 5, std::move(vao),
+        std::shared_ptr<std::vector<float>>(new std::vector<float>(vertices)),
+        2,
+        std::shared_ptr<std::vector<int>>(new std::vector<int>(indices))
+            )));
 
     res->add_comp<DefTextMaterial>(std::shared_ptr<DefTextMaterial>(new DefTextMaterial(std::move(tex))));
 

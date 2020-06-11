@@ -4,6 +4,10 @@
 #include <gl_comm.hpp>
 #include <glm_uniform.hpp>
 #include <vertex_arr.hpp>
+#include <optional>
+#include <glm/glm.hpp>
+#include <glm/gtx/intersect.hpp>
+
 
 namespace gld::def{
 
@@ -104,6 +108,92 @@ namespace gld::def{
         size_t vertex_size;
         std::shared_ptr<gld::VertexArr> vao;
         GLenum mode;
+    };
+
+    struct MeshRayTest : public Component
+    {
+        MeshRayTest(
+            size_t index_size,
+            size_t vertex_size,
+            std::shared_ptr<gld::VertexArr> vao,
+            std::shared_ptr<std::vector<float>> vertices,
+            size_t off_vertex,
+            std::shared_ptr<std::vector<int>> indices = nullptr
+            )
+            : index_size(index_size),
+            vertex_size(vertex_size),
+            vao(std::move(vao)),
+            vertices(std::move(vertices)),
+            indices(std::move(indices)),
+            off_vertex(off_vertex),
+            mode(GL_TRIANGLES)
+        {
+
+        }
+        void draw() override
+        {
+            vao->bind();
+            if (vao->buffs().get<ArrayBufferType::ELEMENT>().good())
+            {
+                glDrawElements(mode, static_cast<GLsizei>(index_size), MapGlTypeEnum<unsigned int>::val, nullptr);
+            }
+            else {
+                glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_size));
+            }
+            vao->unbind();
+        }
+
+        void triangle(int idx, glm::vec4* v)
+        {
+            if (indices)
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    float* tt = &(*vertices)[(*indices)[((idx * 3) + i)] * (3 + off_vertex)];
+                    v[i].x = tt[0]; v[i].y = tt[1]; v[i].z = tt[2]; v[i].w = 1.f;
+                }
+            }
+            else {
+                for (int i = 0; i < 3; ++i)
+                {
+                    float* tt = &(*vertices)[idx * (3 + off_vertex) + i];
+                    v[i].x = tt[0]; v[i].y = tt[1]; v[i].z = tt[2]; v[i].w = 1.f;
+                }
+            }
+        }
+
+        bool ray_test(glm::mat4 const& view,glm::vec3 const& pos, glm::vec3 const& dir,glm::vec2 &barypos,float& distance)
+        {
+            auto n_ptr = get_node();
+            auto trans = n_ptr->get_comp<Transform>();
+            if (!trans)
+                return false;
+
+            glm::mat4 model = trans->get_model();
+
+            for (int i = 0; i < index_size / 3; ++i)
+            {
+                glm::vec4 vs[3];
+                triangle(i, vs);
+
+                glm::vec3 v1 = view * model * vs[0];
+                glm::vec3 v2 = view * model * vs[1];
+                glm::vec3 v3 = view * model * vs[2];
+                if (glm::intersectRayTriangle(pos, dir, v1, v2, v3, barypos, distance))
+                    return true;
+            }
+            return false;
+        }
+
+        int64_t idx() override { return 100; }
+
+        size_t index_size;
+        size_t vertex_size;
+        size_t off_vertex;
+        GLenum mode;
+        std::shared_ptr<gld::VertexArr> vao;
+        std::shared_ptr<std::vector<float>> vertices;
+        std::shared_ptr<std::vector<int>> indices;
     };
 
     struct MeshInstanced : public Component

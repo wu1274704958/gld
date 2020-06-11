@@ -9,6 +9,7 @@
 #include <string>
 #include <serialization.hpp>
 #include <random>
+#include <glm/gtc/random.hpp>
 
 #ifdef PF_ANDROID
 #include <EGL/egl.h>
@@ -179,13 +180,32 @@ namespace sundry
         }
     }
 
-    template<int M = 1000>
-    float rd_0_1()
+    inline float rd_0_1()
     {
-        std::random_device r;
-        std::default_random_engine e1(r());
-        std::uniform_int_distribution<int> uniform_dist(0, M);
-        return static_cast<float>(uniform_dist(e1)) / static_cast<float>(M);
+        return glm::linearRand<float>(0.f, 1.f);
+    }
+
+    inline void screencoord_to_ndc(int width, int height, int x, int y, float* nx, float* ny,bool flipY = true) 
+    {
+        *nx = (float)x / (float)width * 2 - 1;
+        *ny = ((float)y / (float)height * 2 - 1) * (flipY ? -1.f : 1.f); // reverte y axis
+    }
+
+    inline void
+        normalized2d_to_ray(float nx, float ny,glm::mat4 inverse_mvp,glm::vec3 camerapos, glm::vec3& raypos, glm::vec3& raydir) {
+        // 世界坐标 - 视图矩阵 - 透视矩阵 - 透视除法 - ndc
+        // 要得到反转得到世界坐标，先需要视图矩阵和透视矩阵的反转矩阵
+
+        // ndc 坐标系是左手坐标系，所以近平面的 z 坐标为远平面的 z 坐标要小
+        glm::vec4 nearpoint_ndc(nx, ny, -1, 1);
+        glm::vec4 nearpoint_world = inverse_mvp * nearpoint_ndc;
+
+        // 消除矩阵反转后，透视除法的影响
+        nearpoint_world /= nearpoint_world.w;
+
+        raypos = glm::vec3(nearpoint_world);
+        raydir = raypos - camerapos;
+        raydir = glm::normalize(raydir);
     }
     
 } // namespace sundry
