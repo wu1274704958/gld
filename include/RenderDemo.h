@@ -34,7 +34,7 @@ protected:
     virtual int init();
     virtual void run();
     virtual void onWindowResize(int w,int h);
-    virtual void onMouseButton(int,int,int);
+    virtual void onMouseButton(int,int,int,int,int);
     virtual void onMouseMove(double,double);
 
     WINDOW_TYPE get_window();
@@ -66,6 +66,7 @@ protected:
     static void unregOnMouseButtonListener(RenderDemo* rd);
 
     static void MouseButtonCallBack(WINDOW_TYPE,int,int,int);
+    static void MouseButtonCallBackEx(WINDOW_TYPE, int, int, int, int, int);
 //-----------------------------------------------------------
     static std::vector<RenderDemo*> MouseMoveListeners;
 

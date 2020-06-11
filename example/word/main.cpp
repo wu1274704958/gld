@@ -163,9 +163,13 @@ public:
 
     }
 
-    void onMouseButton(int btn,int action,int mode) override
+    void onMouseButton(int btn,int action,int mode,int x,int y) override
     {
-        RenderDemoRotate::onMouseButton(btn,action,mode);
+        RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
+        float nx, ny;
+        sundry::screencoord_to_ndc(width, height, x, y, &nx, &ny);
+        dbg(std::make_tuple(nx,ny));
+
     }
 
     void onWindowResize(int w, int h) override

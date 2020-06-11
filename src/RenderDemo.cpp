@@ -96,7 +96,7 @@ int RenderDemo::init()
     glfwSetCursorPosCallback(m_window,MouseMoveCallBack);
 #else
     m_window->set_window_size_callback(WindowResizeCallBack);
-    m_window->set_mouse_button_callback(MouseButtonCallBack);
+    m_window->set_mouse_button_callback(MouseButtonCallBackEx);
     m_window->set_cursor_pos_callback(MouseMoveCallBack);
 #endif
     return 0;
@@ -147,7 +147,18 @@ void RenderDemo::unregOnMouseButtonListener(RenderDemo* rd)
 
 void RenderDemo::MouseButtonCallBack(RenderDemo::WINDOW_TYPE window,int btn,int action,int mod)
 {
-    call_listeners<int,int,int>(MouseButtonListeners,window,&RenderDemo::onMouseButton,btn,action,mod);
+#ifndef PF_ANDROID
+    double _x, _y;
+    glfwGetCursorPos(window, &_x, &_y);
+    int x = static_cast<int>(_x);
+    int y = static_cast<int>(_y);
+    call_listeners<int, int, int, int, int>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, x, y);
+#endif // PF_ANDROID
+}
+
+void RenderDemo::MouseButtonCallBackEx(RenderDemo::WINDOW_TYPE window, int btn, int action, int mod,int x,int y)
+{
+    call_listeners<int,int,int ,int,int>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, x, y);
 }
 
 
@@ -188,7 +199,7 @@ void RenderDemo::onWindowResize(int w, int h)
 {
 }
 
-void RenderDemo::onMouseButton(int,int,int){}
+void RenderDemo::onMouseButton(int,int,int,int,int){}
 void RenderDemo::onMouseMove(double,double){}
 
 RenderDemo::~RenderDemo()

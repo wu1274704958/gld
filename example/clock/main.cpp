@@ -555,9 +555,9 @@ public:
 
     }
 
-    void onMouseButton(int btn,int action,int mode) override
+    void onMouseButton(int btn,int action,int mode,int x,int y) override
     {
-        RenderDemoRotate::onMouseButton(btn,action,mode);
+        RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
         if(btn == GLFW_MOUSE_BUTTON_2 && action == GLFW_PRESS)
         {
             auto ps = verex_data_surface();

@@ -15,7 +15,7 @@ namespace gld{
             regOnMouseMoveListener(this);
             return 0;
         }
-        void onMouseButton(int btn,int action,int mode) override
+        void onMouseButton(int btn,int action,int mode,int x,int y) override
         {
             if(btn == GLFW_MOUSE_BUTTON_1)
             {

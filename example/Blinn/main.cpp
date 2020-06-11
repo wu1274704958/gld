@@ -386,9 +386,9 @@ public:
 
     }
 
-    void onMouseButton(int btn,int action,int mode) override
+    void onMouseButton(int btn,int action,int mode,int x,int y) override
     {
-        RenderDemoRotate::onMouseButton(btn,action,mode);
+        RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
         if(action == GLFW_RELEASE && btn == GLFW_MOUSE_BUTTON_2)
         {
             int v = use_blinn;
