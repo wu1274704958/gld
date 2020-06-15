@@ -171,8 +171,11 @@ public:
         sundry::screencoord_to_ndc(width, height, x, y, &nx, &ny);
         dbg(std::make_tuple(nx,ny));
 
+        auto t_world = glm::mat4(1.0f);
+        t_world = glm::translate(t_world, glm::vec3(0.f, 0.f, -2.0f));
+
         glm::vec3 raypos, raydir;
-        sundry::normalized2d_to_ray(nx, ny, glm::inverse( (*world) * (*perspective) ) , glm::vec3(0.f, 0.f, 0.0f), raypos, raydir);
+        sundry::normalized2d_to_ray(nx, ny, glm::inverse(t_world * (*perspective)  ), glm::vec3(0.f, 0.f, 0.0f), raypos, raydir);
 
         dbg(std::make_tuple(raypos.x, raypos.y, raypos.z));
         dbg(std::make_tuple(raydir.x, raydir.y, raydir.z));
@@ -181,7 +184,7 @@ public:
         {
             glm::vec2 braypos; float distance;
             auto mesh = p->get_comp<gld::def::MeshRayTest>();
-            if (mesh->ray_test(*world, raypos, raydir, braypos, distance))
+            if (mesh->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance))
             {
                 dbg(std::make_tuple(braypos.x, braypos.y, distance));
                 auto mater = p->get_comp<txt::DefTextMaterial>();

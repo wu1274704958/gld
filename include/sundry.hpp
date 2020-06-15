@@ -197,7 +197,7 @@ namespace sundry
         // 要得到反转得到世界坐标，先需要视图矩阵和透视矩阵的反转矩阵
 
         // ndc 坐标系是左手坐标系，所以近平面的 z 坐标为远平面的 z 坐标要小
-        glm::vec4 nearpoint_ndc(nx, ny, -1, 1);
+        glm::vec4 nearpoint_ndc(nx, ny, -1.f, 1.f);
         glm::vec4 nearpoint_world = inverse_mvp * nearpoint_ndc;
 
         // 消除矩阵反转后，透视除法的影响

@@ -4,8 +4,10 @@
 #include <generator/Generator.hpp>
 #include <text/Page.hpp>
 #include <comps/Material.hpp>
+#include <res_cache_mgr.hpp>
 
 using namespace gld;
+
 
 std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::shared_ptr<gld::Texture<gld::TexType::D2>> tex, WordData& wd,
     int texSize,float originX,float originY)
@@ -41,10 +43,33 @@ std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::sh
     vao->buffs().get<gld::ArrayBufferType::ELEMENT>().bind_data(indices, GL_STATIC_DRAW);
     vao->unbind();
 
+    std::shared_ptr<std::vector<float>> vertices_;
+    std::shared_ptr<std::vector<int>> indices_;
+
+    using CacheMgr = typename gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>;
+    std::string v_k("No Normal Vertices");
+    std::string i_k("Indices");
+
+
+    if (gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->has(v_k))
+        vertices_ = gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->get(v_k);
+    else {
+        vertices_ = std::shared_ptr<std::vector<float>>(new std::vector<float>(vertices));
+        gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->cache(v_k, vertices_);
+    }
+        
+    if (gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->has(i_k))
+        indices_ = gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->get(i_k);
+    else {
+        indices_ = std::shared_ptr<std::vector<int>>(new std::vector<int>(indices));
+        gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->cache(i_k, indices_);
+    }
+    
+
     res->add_comp<gld::def::MeshRayTest>(std::shared_ptr<gld::def::MeshRayTest>(new gld::def::MeshRayTest(indices.size(), vertices.size() / 5, std::move(vao),
-        std::shared_ptr<std::vector<float>>(new std::vector<float>(vertices)),
+        vertices_,
         2,
-        std::shared_ptr<std::vector<int>>(new std::vector<int>(indices))
+        indices_
             )));
 
     res->add_comp<DefTextMaterial>(std::shared_ptr<DefTextMaterial>(new DefTextMaterial(std::move(tex))));

@@ -105,4 +105,9 @@ namespace gld{
         inline static std::shared_ptr<ResCacheMgr<Plugs...>> self;
         ResCacheMgr<Plugs...>(){}
     };
+
+    template<typename T,char ...CS>
+    struct DefCache{
+        using RetTy = T;
+    };
 }
