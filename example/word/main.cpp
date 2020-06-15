@@ -179,19 +179,18 @@ public:
 
         dbg(std::make_tuple(raypos.x, raypos.y, raypos.z));
         dbg(std::make_tuple(raydir.x, raydir.y, raydir.z));
-
         for (auto& p : cxts)
         {
-            glm::vec2 braypos; float distance;
+            glm::vec2 braypos; float distance; glm::vec3 pos;
             auto mesh = p->get_comp<gld::def::MeshRayTest>();
-            if (mesh->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance))
+            
+            if (mesh->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance,pos))
             {
                 dbg(std::make_tuple(braypos.x, braypos.y, distance));
                 auto mater = p->get_comp<txt::DefTextMaterial>();
                 mater->color = glm::vec4(sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1());
             }
         }
-            
     }
 
     void onWindowResize(int w, int h) override
