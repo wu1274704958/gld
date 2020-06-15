@@ -162,7 +162,7 @@ namespace gld::def{
             }
         }
 
-        bool ray_test(glm::mat4 const& view,glm::vec3 const& pos, glm::vec3 const& dir,glm::vec2 &barypos,float& distance)
+        bool ray_test(glm::mat4 const& view,glm::vec3 const& pos, glm::vec3 const& dir,glm::vec2 &barypos,float& distance,glm::vec3 &world_pos)
         {
             auto n_ptr = get_node();
             auto trans = n_ptr->get_comp<Transform>();
@@ -180,7 +180,10 @@ namespace gld::def{
                 glm::vec3 v2 = view * model * vs[1];
                 glm::vec3 v3 = view * model * vs[2];
                 if (glm::intersectRayTriangle(pos, dir, v1, v2, v3, barypos, distance))
+                {
+                    world_pos = (1.f - barypos.x - barypos.y) * v1 + barypos.x * v2 + barypos.y * v3;
                     return true;
+                }
             }
             return false;
         }
