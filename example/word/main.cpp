@@ -35,6 +35,7 @@
 #include <text/TextMgr.hpp>
 #include <sundry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <event/EventDispatcher.h>
 
 
 using namespace gld;
