@@ -110,37 +110,19 @@ namespace gld::def{
         GLenum mode;
     };
 
-    struct MeshRayTest : public Component
+    struct Collision : public Component
     {
-        MeshRayTest(
-            size_t index_size,
-            size_t vertex_size,
-            std::shared_ptr<gld::VertexArr> vao,
+        Collision(
             std::shared_ptr<std::vector<float>> vertices,
             size_t off_vertex,
             std::shared_ptr<std::vector<int>> indices = nullptr
             )
-            : index_size(index_size),
-            vertex_size(vertex_size),
-            vao(std::move(vao)),
+            :matrix(1.f),
             vertices(std::move(vertices)),
             indices(std::move(indices)),
-            off_vertex(off_vertex),
-            mode(GL_TRIANGLES)
+            off_vertex(off_vertex)
         {
 
-        }
-        void draw() override
-        {
-            vao->bind();
-            if (vao->buffs().get<ArrayBufferType::ELEMENT>().good())
-            {
-                glDrawElements(mode, static_cast<GLsizei>(index_size), MapGlTypeEnum<unsigned int>::val, nullptr);
-            }
-            else {
-                glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_size));
-            }
-            vao->unbind();
         }
 
         void triangle(int idx, glm::vec4* v)
@@ -170,15 +152,16 @@ namespace gld::def{
                 return false;
 
             glm::mat4 model = trans->get_model();
+            int index_size = indices ? static_cast<int>(indices->size()) : static_cast<int>(vertices->size());
 
             for (int i = 0; i < index_size / 3; ++i)
             {
                 glm::vec4 vs[3];
                 triangle(i, vs);
 
-                glm::vec3 v1 = view * model * vs[0];
-                glm::vec3 v2 = view * model * vs[1];
-                glm::vec3 v3 = view * model * vs[2];
+                glm::vec3 v1 = view * model * matrix * vs[0];
+                glm::vec3 v2 = view * model * matrix * vs[1];
+                glm::vec3 v3 = view * model * matrix * vs[2];
                 if (glm::intersectRayTriangle(pos, dir, v1, v2, v3, barypos, distance))
                 {
                     world_pos = (1.f - barypos.x - barypos.y) * v1 + barypos.x * v2 + barypos.y * v3;
@@ -187,16 +170,11 @@ namespace gld::def{
             }
             return false;
         }
-
-        int64_t idx() override { return 100; }
-
-        size_t index_size;
-        size_t vertex_size;
+        
         size_t off_vertex;
-        GLenum mode;
-        std::shared_ptr<gld::VertexArr> vao;
         std::shared_ptr<std::vector<float>> vertices;
         std::shared_ptr<std::vector<int>> indices;
+        glm::mat4 matrix;
     };
 
     struct MeshInstanced : public Component

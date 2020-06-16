@@ -64,13 +64,13 @@ std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::sh
         indices_ = std::shared_ptr<std::vector<int>>(new std::vector<int>(indices));
         gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->cache(i_k, indices_);
     }
-    
+    res->add_comp<gld::def::Mesh>(std::shared_ptr<gld::def::Mesh>(new gld::def::Mesh(
+        indices.size(), vertices.size() / 5, std::move(vao)
+    )));
 
-    res->add_comp<gld::def::MeshRayTest>(std::shared_ptr<gld::def::MeshRayTest>(new gld::def::MeshRayTest(indices.size(), vertices.size() / 5, std::move(vao),
-        vertices_,
-        2,
-        indices_
-            )));
+    res->add_comp<gld::def::Collision>(std::shared_ptr<gld::def::Collision>(new gld::def::Collision(
+        vertices_,2,indices_
+    )));
 
     res->add_comp<DefTextMaterial>(std::shared_ptr<DefTextMaterial>(new DefTextMaterial(std::move(tex))));
 

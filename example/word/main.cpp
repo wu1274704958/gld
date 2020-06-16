@@ -183,9 +183,9 @@ public:
         for (auto& p : cxts)
         {
             glm::vec2 braypos; float distance; glm::vec3 pos;
-            auto mesh = p->get_comp<gld::def::MeshRayTest>();
+            auto coll = p->get_comp<gld::def::Collision>();
             
-            if (mesh->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance,pos))
+            if (coll->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance,pos))
             {
                 dbg(std::make_tuple(braypos.x, braypos.y, distance));
                 auto mater = p->get_comp<txt::DefTextMaterial>();
