@@ -3,7 +3,9 @@
 #include "EventHandler.h"
 
 namespace evt {
-	
+	struct EventDispatcher {
+
+	};
 }
 
 

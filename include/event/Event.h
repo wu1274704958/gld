@@ -34,6 +34,7 @@ namespace evt {
 		using TargetTy = TarTy;
 		EventType type;
 		std::weak_ptr<TargetTy> target;
+		glm::vec3 raypos, raydir,camera_pos;
 		glm::vec3 pos;
 		int btn;
 
@@ -45,5 +46,52 @@ namespace evt {
 	};
 
 	
+    template<EventType ty, typename T>
+    struct EventUnitTy
+    {
+		static_assert(std::is_base_of_v<Event, T>,"This type must inherited from Event!");
+        constexpr static size_t event_type = static_cast<size_t>(ty);
+        using type = T;
+    };
 
+    template<size_t Rt, typename ...Ts>
+    struct MapEventTy;
+
+    template<size_t Rt, typename Fir, typename ...Ts>
+    struct MapEventTy<Rt, Fir, Ts...>
+    {
+        constexpr static decltype(auto) func()
+        {
+            if constexpr (Rt == Fir::event_type)
+            {
+                using T = typename Fir::type;
+                return std::declval<T>();
+            }
+            else
+            {
+                using T = typename MapEventTy<Rt, Ts...>::type;
+                if constexpr (std::is_same_v<T, void>)
+                {
+                    static_assert("Error Type!!!");
+                }
+                return std::declval<T>();
+            }
+        }
+        using type = typename std::remove_reference_t<decltype(func())>;
+    };
+
+	template<size_t Rt>
+	struct MapEventTy<Rt>
+	{
+		using type = void;
+	};
+
+	template<EventType t,typename Tar>
+	using map_event_t = typename MapEventTy<static_cast<size_t>(t),
+		EventUnitTy<EventType::None, Event<Tar>>,
+		EventUnitTy<EventType::MouseDown, MouseEvent<Tar>>,
+		EventUnitTy<EventType::MouseMove, MouseEvent<Tar>>,
+		EventUnitTy<EventType::MouseUp, MouseEvent<Tar>>,
+		EventUnitTy<EventType::MouseOut, MouseEvent<Tar>>,
+		EventUnitTy<EventType::Click, MouseEvent<Tar>>>::type;
 }
