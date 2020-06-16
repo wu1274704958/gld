@@ -26,6 +26,11 @@ namespace evt {
 		{
 
 		}
+
+		Event(EventType type) : type(type)
+		{
+
+		}
 	};
 
 	template<typename TarTy>
@@ -36,6 +41,7 @@ namespace evt {
 		std::weak_ptr<TargetTy> target;
 		glm::vec3 raypos, raydir,camera_pos;
 		glm::vec3 pos;
+		glm::vec2 w_pos;
 		int btn;
 
 		MouseEvent(EventType type, std::weak_ptr<TargetTy> target,glm::vec3& pos,int btn) : Event<TargetTy>(type,std::move(target)) ,
@@ -43,6 +49,12 @@ namespace evt {
 		{
 
 		}
+
+		MouseEvent(EventType type,int btn) : Event<TargetTy>(type), btn(btn)
+		{
+
+		}
+
 	};
 
 	

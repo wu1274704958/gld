@@ -2,6 +2,7 @@
 
 #include "Event.h"
 
+
 namespace evt {
 
 	template<typename TarTy>
@@ -53,9 +54,10 @@ namespace evt {
 					e->type == EventType::Click
 					)
 				{
-					MouseEvent<TargetTy> ce = *e;
+					MouseEvent<TargetTy> ce = *reinterpret_cast<MouseEvent<TargetTy>*>(e);
 					if (c->onHandleMouseEvent(&ce))
 					{
+						ce.target = c->get_target();
 						if (c->handle_event(e))
 							return true;
 					}
@@ -71,33 +73,37 @@ namespace evt {
 			switch (e->type)
 			{
 			case EventType::MouseDown:
-				return onMouseDown(dynamic_cast<MouseEvent<TargetTy>*>(e));
+				return onMouseDown(reinterpret_cast<MouseEvent<TargetTy>*>(e));
 				break;
 			case EventType::MouseUp:
-				return onMouseUp(dynamic_cast<MouseEvent<TargetTy>*>(e));
+				return onMouseUp(reinterpret_cast<MouseEvent<TargetTy>*>(e));
 				break;
 			case EventType::MouseOut:
-				return onMouseOut(dynamic_cast<MouseEvent<TargetTy>*>(e));
+				return onMouseOut(reinterpret_cast<MouseEvent<TargetTy>*>(e));
 				break;
 			case EventType::MouseMove:
-				return onMouseMove(dynamic_cast<MouseEvent<TargetTy>*>(e));
+				return onMouseMove(reinterpret_cast<MouseEvent<TargetTy>*>(e));
 				break;
 			case EventType::Click:
-				return onClick(dynamic_cast<MouseEvent<TargetTy>*>(e));
+				return onClick(reinterpret_cast<MouseEvent<TargetTy>*>(e));
 				break;
 			}
 			return false;
 		}
 
 		virtual std::vector<EventHandler<TargetTy>*> childlren() = 0;
-		virtual bool onMouseDown( MouseEvent<TargetTy>*) = 0;
-		virtual bool onMouseMove( MouseEvent<TargetTy>*) = 0;
-		virtual bool onMouseUp( MouseEvent<TargetTy>*) = 0;
-		virtual bool onMouseOut( MouseEvent<TargetTy>*) = 0;
-		virtual bool onClick( MouseEvent<TargetTy>*) = 0;
-		virtual bool onHandleMouseEvent (MouseEvent<TargetTy>*) = 0;
+		virtual bool onMouseDown(MouseEvent<TargetTy>*) { return false; }
+		virtual bool onMouseMove(MouseEvent<TargetTy>*) { return false; }
+		virtual bool onMouseUp( MouseEvent<TargetTy>*) { return false; }
+		virtual bool onMouseOut( MouseEvent<TargetTy>*) { return false; }
+		virtual bool onClick( MouseEvent<TargetTy>*) { return false; }
+		virtual bool onHandleMouseEvent(MouseEvent<TargetTy>*) = 0;
+		virtual std::weak_ptr<TargetTy> get_target() = 0;
 
-		unsigned long long handle_type = static_cast<unsigned long long>(EventType::Click);
+		unsigned long long handle_type = 
+				static_cast<unsigned long long>(EventType::Click) | 
+				static_cast<unsigned long long>(EventType::MouseDown) | 
+				static_cast<unsigned long long>(EventType::MouseUp);
 	protected:
 		
 		std::unordered_map<EventType, FUNC_TY> handle_func;

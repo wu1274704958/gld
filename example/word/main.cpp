@@ -177,7 +177,7 @@ public:
 
         glm::vec3 raypos, raydir;
         sundry::normalized2d_to_ray(nx, ny, glm::inverse(t_world * (*perspective)  ), glm::vec3(0.f, 0.f, 0.0f), raypos, raydir);
-
+        
         dbg(std::make_tuple(raypos.x, raypos.y, raypos.z));
         dbg(std::make_tuple(raydir.x, raydir.y, raydir.z));
         for (auto& p : cxts)
