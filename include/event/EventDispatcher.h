@@ -10,7 +10,7 @@ namespace evt {
 		
 		using TargetTy = TarTy;
 
-		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, std::function<std::vector<EventHandler<TargetTy>*>()> get_child, glm::vec3 camera_pos, glm::vec3 view_pos) :
+		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, glm::vec3 camera_pos, glm::vec3 view_pos) :
 			perspective(perspective),
 			world(world),
 			w(w), h(h), get_child(get_child), camera_pos(camera_pos), view_pos(view_pos)
@@ -18,6 +18,7 @@ namespace evt {
 
 		void onMouseDown(int btn, int mode, int x, int y)
 		{
+			cache_btn = btn;
 			auto chs = get_child();
 			if (!chs.empty())
 			{
@@ -69,32 +70,36 @@ namespace evt {
 					}
 				}
 			}
+			cache_btn = -1;
 		}
-		void onMouseMove(int btn, int x, int y)
+		void onMouseMove( int x, int y)
 		{
-			auto chs = get_child();
-			if (!chs.empty())
+			if (cache_btn >= 0)
 			{
-				glm::vec3 raypos, raydir;
-				mouse_ray(x, y, raypos, raydir);
-				for (auto c : chs)
+				auto chs = get_child();
+				if (!chs.empty())
 				{
-					if (c->handle_ty(EventType::MouseMove))
+					glm::vec3 raypos, raydir;
+					mouse_ray(x, y, raypos, raydir);
+					for (auto c : chs)
 					{
-						MouseEvent<TargetTy> ce(EventType::MouseMove,btn );
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
-						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-						if (c->onHandleMouseEvent(&ce))
+						if (c->handle_ty(EventType::MouseMove))
 						{
-							ce.target = c->get_target();
-							c->handle_event(&ce);
-						}
-						else {
-							if (c->last_type == EventType::MouseMove || c->last_type == EventType::MouseDown)
+							MouseEvent<TargetTy> ce(EventType::MouseMove, cache_btn);
+							ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
+							ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+							if (c->onHandleMouseEvent(&ce))
 							{
-								ce.type = EventType::MouseOut;
 								ce.target = c->get_target();
 								c->handle_event(&ce);
+							}
+							else {
+								if (c->last_type == EventType::MouseMove || c->last_type == EventType::MouseDown)
+								{
+									ce.type = EventType::MouseOut;
+									ce.target = c->get_target();
+									c->handle_event(&ce);
+								}
 							}
 						}
 					}
@@ -116,9 +121,9 @@ namespace evt {
 
 		glm::mat4& perspective, &world;
 		glm::vec3 camera_pos,view_pos;
-		int& w, h; 
+		int& w, &h; 
 		std::function<std::vector<EventHandler<TargetTy>*>()> get_child;
-
+		int cache_btn;
 	};
 }
 

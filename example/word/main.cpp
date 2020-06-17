@@ -48,14 +48,29 @@ using namespace wws;
 using namespace gen;
 using namespace txt;
 using namespace sundry;
-
+using namespace evt;
 
 class Demo1 : public RenderDemoRotate {
 public:
-    Demo1() : perspective("perspective"), world("world"), fill_color("fill_color")
+    Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
+        event_dispatcher(*perspective,(*world),width,height,
+             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, -2.f))
         {}
     int init() override
     {
+        event_dispatcher.get_child = [=]()->std::vector<EventHandler<Node<Component>>*> {
+            std::vector<evt::EventHandler<Node<Component>>*> res;
+            for (auto& ch : cxts)
+            {
+                try {
+                    auto p = dynamic_cast<evt::EventHandler<Node<Component>>*>(ch.get());
+                    if (p) res.push_back(p);
+                }
+                catch (std::bad_cast& e) {}
+            }
+            return res;
+        };
+
         RenderDemoRotate::init();
         
         program = DefDataMgr::instance()->load<DataType::Program>("base/line_vs.glsl","base/line_fg.glsl");
@@ -86,10 +101,16 @@ public:
 
         for (auto k = L'!'; k <= L'~'; ++k)
         {
-            auto [a, wd, size] = DefTexMgr::instance()->get_node(font, 0, 0, 126, k);
+            auto a = std::shared_ptr<Node<Component>>(new Word(font, 126, k));
+            auto w = dynamic_cast<Word*>(a.get());
+            w->load();
+            w->add_listener(EventType::Click, [w](Event<Node<Component>>* e)->bool {
+                auto mater = w->get_comp<DefTextMaterial>();
+                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+                return true;
+            });
             auto trans = a->get_comp<Transform>();
-            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.0f);
-            trans->scale = glm::vec3(0.1f);
+            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
             auto mater = a->get_comp<DefTextMaterial>();
             mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
             cxts.push_back(a);
@@ -97,10 +118,16 @@ public:
 
         for (auto k = L'Œ‚'; k <= L'Œ‚' + 300; ++k)
         {
-            auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, k);
+            auto a = std::shared_ptr<Node<Component>>(new Word(font2, 126, k));
+            auto w = dynamic_cast<Word*>(a.get());
+            w->load();
+            w->add_listener(EventType::Click, [w](Event<Node<Component>>* e)->bool {
+                auto mater = w->get_comp<DefTextMaterial>();
+                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+                return true;
+            });
             auto trans = a->get_comp<Transform>();
-            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.0f);
-            trans->scale = glm::vec3(0.1f);
+            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
             auto mater = a->get_comp<DefTextMaterial>();
             mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
             cxts.push_back(a);
@@ -120,7 +147,6 @@ public:
 
         return 0;
     }
-
 
     void draw() override
     {
@@ -147,7 +173,7 @@ public:
 
     void update_matrix()
     {
-        perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
+        perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 1024.0f);
         world = glm::mat4(1.0f);
 
         world = glm::translate(*world, glm::vec3(0.f,0.f, -2.0f));
@@ -169,30 +195,17 @@ public:
     void onMouseButton(int btn,int action,int mode,int x,int y) override
     {
         RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
-        float nx, ny;
-        sundry::screencoord_to_ndc(width, height, x, y, &nx, &ny);
-        dbg(std::make_tuple(nx,ny));
+        if(action == GLFW_PRESS)
+            event_dispatcher.onMouseDown(btn, mode, x, y);
+        else
+        if(action == GLFW_RELEASE)
+            event_dispatcher.onMouseUp(btn, mode, x, y);
+    }
 
-        auto t_world = glm::mat4(1.0f);
-        t_world = glm::translate(t_world, glm::vec3(0.f, 0.f, -2.0f));
-
-        glm::vec3 raypos, raydir;
-        sundry::normalized2d_to_ray(nx, ny, glm::inverse(t_world * (*perspective)  ), glm::vec3(0.f, 0.f, 0.0f), raypos, raydir);
-        
-        dbg(std::make_tuple(raypos.x, raypos.y, raypos.z));
-        dbg(std::make_tuple(raydir.x, raydir.y, raydir.z));
-        for (auto& p : cxts)
-        {
-            glm::vec2 braypos; float distance; glm::vec3 pos;
-            auto coll = p->get_comp<gld::def::Collision>();
-            
-            if (coll->ray_test(*world, glm::vec3(0.f, 0.f, 0.0f), raydir, braypos, distance,pos))
-            {
-                dbg(std::make_tuple(braypos.x, braypos.y, distance));
-                auto mater = p->get_comp<txt::DefTextMaterial>();
-                mater->color = glm::vec4(sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1(), sundry::rd_0_1());
-            }
-        }
+    void onMouseMove(double x, double y) override
+    {
+        RenderDemoRotate::onMouseMove(x, y);
+        event_dispatcher.onMouseMove(static_cast<int>(x), static_cast<int>(y));
     }
 
     void onWindowResize(int w, int h) override
@@ -205,6 +218,8 @@ private:
     GlmUniform<UT::Matrix4> world;
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
+    EventDispatcher<Node<Component>> event_dispatcher;
+    
 };
 
 #ifndef PF_ANDROID

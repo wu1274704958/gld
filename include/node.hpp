@@ -148,9 +148,9 @@ namespace gld{
         {
             return std::enable_shared_from_this<Node<Comp>>::weak_from_this();
         }
-        virtual onInit() {}
-        virtual onDraw() {}
-        virtual onUpdate() {}
+        virtual void onInit() {}
+        virtual void onDraw() {}
+        virtual void onUpdate() {}
         virtual ~Node() {}
         bool init()
         {
@@ -203,6 +203,65 @@ namespace gld{
             return static_cast<uint64_t>(components.size());
         }
         bool visible = true;
+
+        void attach_comps()
+        {
+            for (auto& comp : components)
+                comp->attach_node(weak_ptr());
+        }
+
+        void attach_children()
+        {
+            for (auto& ch : children)
+                ch->parent = weak_ptr();
+        }
+
+        Node<Comp>() {}
+
+        Node<Comp>(const Node<Comp>& oth)
+        {
+            components = oth.components;
+            children = oth.children;
+            parent = parent;
+
+            attach_comps();
+            attach_children();
+        }
+
+        Node<Comp>(Node<Comp>&& oth)
+        {
+            components = std::move(oth.components);
+            children = std::move(oth.children);
+            parent = std::move(parent);
+
+            attach_comps();
+            attach_children();
+        }
+
+        Node<Comp>& operator=(const Node<Comp>& oth)
+        {
+            components = oth.components;
+            children = oth.children;
+            parent = parent;
+
+            attach_comps();
+            attach_children();
+
+            return *this;
+        }
+
+        Node<Comp>& operator=(Node<Comp>&& oth)
+        {
+            components = std::move(oth.components);
+            children = std::move(oth.children);
+            parent = std::move(parent);
+
+            attach_comps();
+            attach_children();
+
+            return *this;
+        }
+
     protected:
         void clear_parent()
         {
