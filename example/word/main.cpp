@@ -98,16 +98,48 @@ public:
 
         cxts.push_back(node);*/
 
+        auto onclick = [](Event<Node<Component>>* e)->bool {
+            auto w = e->target.lock();
+            if (w)
+            {
+                auto mater = w->get_comp<DefTextMaterial>();
+                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+                return true;
+            }
+            return false;
+        };
+
+        auto onMove = [=](Event<Node<Component>>* e)->bool {
+            auto w = e->target.lock();
+            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
+            {
+                auto tra = w->get_comp<Transform>();
+                auto of = p->pos - down_pos; of.z = 0.f;
+                tra->pos += of;
+                down_pos = p->pos;
+                return true;
+            }
+            return false;
+        };
+
+        auto onDown = [=](Event<Node<Component>>* e)->bool {
+            auto w = e->target.lock();
+            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
+                down_pos = p->pos;
+            return false;
+        };
+
         for (auto k = L'!'; k <= L'~'; ++k)
         {
             auto a = std::shared_ptr<Node<Component>>(new Word(font, 126, k));
             auto w = dynamic_cast<Word*>(a.get());
+            w->handle_type |= static_cast<unsigned long long>(EventType::MouseMove);
             w->load();
-            w->add_listener(EventType::Click, [w](Event<Node<Component>>* e)->bool {
-                auto mater = w->get_comp<DefTextMaterial>();
-                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
-                return true;
-            });
+            w->add_listener(EventType::Click, onclick);
+            w->add_listener(EventType::MouseMove, onMove);
+            w->add_listener(EventType::MouseDown, onDown);
             auto trans = a->get_comp<Transform>();
             trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
             auto mater = a->get_comp<DefTextMaterial>();
@@ -115,16 +147,14 @@ public:
             cxts.push_back(a);
         }
 
-        for (auto k = L'Îâ'; k <= L'Îâ' + 300; ++k)
+        for (auto k = L'çù'; k <= L'çù' + 300; ++k)
         {
             auto a = std::shared_ptr<Node<Component>>(new Word(font2, 126, k));
             auto w = dynamic_cast<Word*>(a.get());
             w->load();
-            w->add_listener(EventType::Click, [w](Event<Node<Component>>* e)->bool {
-                auto mater = w->get_comp<DefTextMaterial>();
-                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
-                return true;
-            });
+            w->add_listener(EventType::Click, onclick);
+            w->add_listener(EventType::MouseMove, onMove);
+            w->add_listener(EventType::MouseDown, onDown);
             auto trans = a->get_comp<Transform>();
             trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
             auto mater = a->get_comp<DefTextMaterial>();
@@ -218,6 +248,7 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
     EventDispatcher<Node<Component>> event_dispatcher;
+    glm::vec3 down_pos;
     
 };
 

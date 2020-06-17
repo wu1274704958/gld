@@ -19,55 +19,38 @@ namespace evt {
 		void onMouseDown(int btn, int mode, int x, int y)
 		{
 			cache_btn = btn;
-			if (childlen_count() > 0)
+
+			MouseEvent<TargetTy> ce(EventType::MouseDown, btn);
+
+			auto c = onMouse(x, y, ce,
+				[&ce](EventHandler<TargetTy>* c)->bool {
+				return c->handle_ty(EventType::MouseDown);
+			});
+			if (c)
 			{
-				glm::vec3 raypos, raydir;
-				mouse_ray(x, y, raypos, raydir);
-				for (int i = 0;i < childlen_count();++i)
-				{
-					auto c = child(i);
-					if (c && c->handle_ty(EventType::MouseDown))
-					{
-						MouseEvent<TargetTy> ce(EventType::MouseDown, btn);
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
-						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-						if (c->onHandleMouseEvent(&ce))
-						{
-							ce.target = c->get_target();
-							c->handle_event(&ce);
-						}
-					}
-				}
+				ce.target = c->get_target();
+				c->handle_event(&ce);
 			}
 		}
 		void onMouseUp(int btn, int mode, int x, int y)
 		{
-			if (childlen_count() > 0)
+			MouseEvent<TargetTy> ce(EventType::MouseUp, btn);
+
+			auto c = onMouse(x,y,ce,
+				[&ce](EventHandler<TargetTy>* c)->bool {
+				return c->handle_ty(EventType::MouseUp);
+			});
+			if (c)
 			{
-				glm::vec3 raypos, raydir;
-				mouse_ray(x, y, raypos, raydir);
-				for (int i = 0; i < childlen_count(); ++i)
+				bool launch_click = c->last_type == EventType::MouseDown;
+
+				ce.target = c->get_target();
+				c->handle_event(&ce);
+
+				if (launch_click)
 				{
-					auto c = child(i);
-					if (c && c->handle_ty(EventType::MouseUp))
-					{
-						MouseEvent<TargetTy> ce(EventType::MouseUp, btn);
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
-						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-						if (c->onHandleMouseEvent(&ce))
-						{
-							bool launch_click = c->last_type == EventType::MouseDown;
-
-							ce.target = c->get_target();
-							c->handle_event(&ce);
-
-							if (launch_click)
-							{
-								ce.type = EventType::Click;
-								c->handle_event(&ce);
-							}
-						}
-					}
+					ce.type = EventType::Click;
+					c->handle_event(&ce);
 				}
 			}
 			cache_btn = -1;
@@ -76,35 +59,69 @@ namespace evt {
 		{
 			if (cache_btn >= 0)
 			{
-				if (childlen_count() > 0)
+				MouseEvent<TargetTy> ce(EventType::MouseMove, cache_btn);
+
+				auto c = onMouse(x,y,ce,
+					[&ce](EventHandler<TargetTy>* c)->bool {
+					return c->handle_ty(EventType::MouseMove) &&
+						(c->last_type == EventType::MouseMove || c->last_type == EventType::MouseDown);
+				},
+					[&ce](EventHandler<TargetTy>* c) {
+					ce.type = EventType::MouseOut;
+					ce.target = c->get_target();
+					c->handle_event(&ce);
+				});
+				if (c)
 				{
-					glm::vec3 raypos, raydir;
-					mouse_ray(x, y, raypos, raydir);
-					for (int i = 0; i < childlen_count(); ++i)
+					ce.type = EventType::MouseMove;
+					ce.target = c->get_target();
+					c->handle_event(&ce);
+				}
+			}
+		}
+
+		EventHandler<TargetTy>* onMouse(int x,int y,MouseEvent<TargetTy>& ce,
+			std::function<bool(EventHandler<TargetTy>*)> into,
+			std::function<void(EventHandler<TargetTy>*)> test_failed = std::function<void(EventHandler<TargetTy>*)>())
+		{
+			if (childlen_count() > 0)
+			{
+				glm::vec3 raypos, raydir;
+				mouse_ray(x, y, raypos, raydir);
+				
+				ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
+				ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+
+				float min_distance = std::numeric_limits<float>::max();
+				glm::vec3 curr_pos;
+				EventHandler<TargetTy>* curr = nullptr;
+
+				for (int i = 0; i < childlen_count(); ++i)
+				{
+					auto c = child(i);
+					if (c && into(c))
 					{
-						auto c = child(i);
-						if (c && c->handle_ty(EventType::MouseMove))
+						if (c->onHandleMouseEvent(&ce))
 						{
-							MouseEvent<TargetTy> ce(EventType::MouseMove, cache_btn);
-							ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
-							ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-							if (c->onHandleMouseEvent(&ce))
+							float dist = glm::length(ce.pos - camera_pos);
+							if (dist < min_distance)
 							{
-								ce.target = c->get_target();
-								c->handle_event(&ce);
+								curr_pos = ce.pos;
+								curr = c;
+								min_distance = dist;
 							}
-							else {
-								if (c->last_type == EventType::MouseMove || c->last_type == EventType::MouseDown)
-								{
-									ce.type = EventType::MouseOut;
-									ce.target = c->get_target();
-									c->handle_event(&ce);
-								}
-							}
+						}
+						else {
+							if(test_failed)
+								test_failed(c);
 						}
 					}
 				}
+				if(curr)
+					ce.pos = curr_pos;
+				return curr;
 			}
+			return nullptr;
 		}
 
 		void mouse_ray(int x, int y,glm::vec3& raypos,glm::vec3& raydir)
