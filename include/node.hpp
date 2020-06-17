@@ -148,8 +148,13 @@ namespace gld{
         {
             return std::enable_shared_from_this<Node<Comp>>::weak_from_this();
         }
+        virtual onInit() {}
+        virtual onDraw() {}
+        virtual onUpdate() {}
+        virtual ~Node() {}
         bool init()
         {
+            onInit();
             bool res = true;
             for(auto &comp : components)
                 res = comp->init();
@@ -162,6 +167,7 @@ namespace gld{
         {
             if(visible)
             {
+                onDraw();
                 for(auto &comp : components) 
                     comp->before_draw();
                 for(auto &comp : components) 
@@ -174,6 +180,7 @@ namespace gld{
         }
         void update()
         {
+            onUpdate();
             for(auto &comp : components)
                 comp->update();
             for(auto &ch : children)

@@ -10,8 +10,10 @@ namespace evt {
 		
 		using TargetTy = TarTy;
 
-		EventDispatcher(glm::mat4& perspective, int& w, int& h, std::function<std::vector<EventHandler<TargetTy>*>()> get_child, glm::vec3 camera_pos, glm::vec3 view_pos) :
-			perspective(perspective), w(w), h(h), get_child(get_child), camera_pos(camera_pos), view_pos(view_pos)
+		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, std::function<std::vector<EventHandler<TargetTy>*>()> get_child, glm::vec3 camera_pos, glm::vec3 view_pos) :
+			perspective(perspective),
+			world(world),
+			w(w), h(h), get_child(get_child), camera_pos(camera_pos), view_pos(view_pos)
 			{}
 
 		void onMouseDown(int btn, int mode, int x, int y)
@@ -26,7 +28,7 @@ namespace evt {
 					if (c->handle_ty(EventType::MouseDown))
 					{
 						MouseEvent<TargetTy> ce(EventType::MouseDown, btn);
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos;
+						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
 						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
 						if (c->onHandleMouseEvent(&ce))
 						{
@@ -49,7 +51,7 @@ namespace evt {
 					if (c->handle_ty(EventType::MouseUp))
 					{
 						MouseEvent<TargetTy> ce(EventType::MouseUp, btn);
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos;
+						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
 						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
 						if (c->onHandleMouseEvent(&ce))
 						{
@@ -80,7 +82,7 @@ namespace evt {
 					if (c->handle_ty(EventType::MouseMove))
 					{
 						MouseEvent<TargetTy> ce(EventType::MouseMove,btn );
-						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos;
+						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
 						ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
 						if (c->onHandleMouseEvent(&ce))
 						{
@@ -112,7 +114,7 @@ namespace evt {
 			sundry::normalized2d_to_ray(nx, ny, glm::inverse(t_world * perspective), camera_pos, raypos, raydir);
 		}
 
-		glm::mat4& perspective;
+		glm::mat4& perspective, &world;
 		glm::vec3 camera_pos,view_pos;
 		int& w, h; 
 		std::function<std::vector<EventHandler<TargetTy>*>()> get_child;

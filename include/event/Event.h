@@ -37,8 +37,7 @@ namespace evt {
 	struct MouseEvent : public Event<TarTy>
 	{
 		using TargetTy = TarTy;
-		EventType type;
-		std::weak_ptr<TargetTy> target;
+		glm::mat4 world;
 		glm::vec3 raypos, raydir,camera_pos;
 		glm::vec3 pos;
 		glm::vec2 w_pos;

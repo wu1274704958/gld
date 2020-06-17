@@ -8,7 +8,7 @@ namespace evt {
 	template<typename TarTy>
 	struct EventHandler
 	{
-		using TargetTy = TarTy; 
+		using TargetTy = TarTy;
 		using FUNC_TY = std::function<bool( Event<TargetTy>*)>;
 		
 		EventType last_type = EventType::None;
@@ -43,7 +43,7 @@ namespace evt {
 		{
 			last_type = e->type;
 
-			auto chs = childlren();
+			auto chs = evt_childlren();
 			
 			for (auto c : chs)
 			{
@@ -91,7 +91,7 @@ namespace evt {
 			return false;
 		}
 
-		virtual std::vector<EventHandler<TargetTy>*> childlren() = 0;
+		virtual std::vector<EventHandler<TargetTy>*> evt_childlren() = 0;
 		virtual bool onMouseDown(MouseEvent<TargetTy>*) { return false; }
 		virtual bool onMouseMove(MouseEvent<TargetTy>*) { return false; }
 		virtual bool onMouseUp( MouseEvent<TargetTy>*) { return false; }
