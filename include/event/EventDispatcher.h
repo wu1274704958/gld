@@ -13,20 +13,20 @@ namespace evt {
 		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, glm::vec3 camera_pos, glm::vec3 view_pos) :
 			perspective(perspective),
 			world(world),
-			w(w), h(h), get_child(get_child), camera_pos(camera_pos), view_pos(view_pos)
+			w(w), h(h), camera_pos(camera_pos), view_pos(view_pos)
 			{}
 
 		void onMouseDown(int btn, int mode, int x, int y)
 		{
 			cache_btn = btn;
-			auto chs = get_child();
-			if (!chs.empty())
+			if (childlen_count() > 0)
 			{
 				glm::vec3 raypos, raydir;
 				mouse_ray(x, y, raypos, raydir);
-				for (auto c : chs)
+				for (int i = 0;i < childlen_count();++i)
 				{
-					if (c->handle_ty(EventType::MouseDown))
+					auto c = child(i);
+					if (c && c->handle_ty(EventType::MouseDown))
 					{
 						MouseEvent<TargetTy> ce(EventType::MouseDown, btn);
 						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
@@ -42,14 +42,14 @@ namespace evt {
 		}
 		void onMouseUp(int btn, int mode, int x, int y)
 		{
-			auto chs = get_child();
-			if (!chs.empty())
+			if (childlen_count() > 0)
 			{
 				glm::vec3 raypos, raydir;
 				mouse_ray(x, y, raypos, raydir);
-				for (auto c : chs)
+				for (int i = 0; i < childlen_count(); ++i)
 				{
-					if (c->handle_ty(EventType::MouseUp))
+					auto c = child(i);
+					if (c && c->handle_ty(EventType::MouseUp))
 					{
 						MouseEvent<TargetTy> ce(EventType::MouseUp, btn);
 						ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
@@ -76,14 +76,14 @@ namespace evt {
 		{
 			if (cache_btn >= 0)
 			{
-				auto chs = get_child();
-				if (!chs.empty())
+				if (childlen_count() > 0)
 				{
 					glm::vec3 raypos, raydir;
 					mouse_ray(x, y, raypos, raydir);
-					for (auto c : chs)
+					for (int i = 0; i < childlen_count(); ++i)
 					{
-						if (c->handle_ty(EventType::MouseMove))
+						auto c = child(i);
+						if (c && c->handle_ty(EventType::MouseMove))
 						{
 							MouseEvent<TargetTy> ce(EventType::MouseMove, cache_btn);
 							ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
@@ -122,7 +122,8 @@ namespace evt {
 		glm::mat4& perspective, &world;
 		glm::vec3 camera_pos,view_pos;
 		int& w, &h; 
-		std::function<std::vector<EventHandler<TargetTy>*>()> get_child;
+		std::function<int()> childlen_count;
+		std::function<EventHandler<TargetTy>*(int)> child;
 		int cache_btn;
 	};
 }

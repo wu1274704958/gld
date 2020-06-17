@@ -42,11 +42,11 @@ namespace evt {
 		bool handle_event(Event<TargetTy>*e)
 		{
 			last_type = e->type;
-
-			auto chs = evt_childlren();
 			
-			for (auto c : chs)
+			for (int i = 0;i < evt_children_count();++i)
 			{
+				auto c = evt_child(i);
+				if (!c) continue;
 				if (e->type == EventType::MouseDown ||
 					e->type == EventType::MouseMove ||
 					e->type == EventType::MouseUp ||
@@ -91,7 +91,8 @@ namespace evt {
 			return false;
 		}
 
-		virtual std::vector<EventHandler<TargetTy>*> evt_childlren() = 0;
+		virtual int evt_children_count() = 0;
+		virtual EventHandler<TargetTy>* evt_child(int) = 0;
 		virtual bool onMouseDown(MouseEvent<TargetTy>*) { return false; }
 		virtual bool onMouseMove(MouseEvent<TargetTy>*) { return false; }
 		virtual bool onMouseUp( MouseEvent<TargetTy>*) { return false; }

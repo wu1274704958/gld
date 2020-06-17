@@ -37,17 +37,18 @@ namespace gld {
 			return false;
 		}
 
-		std::vector<evt::EventHandler<Node<Component>>*> evt_childlren() override
+		int evt_children_count() override
 		{
-			std::vector<evt::EventHandler<Node<Component>>*> res;
-			for (auto& ch : children)
-			{
-				try {
-					auto p = dynamic_cast<evt::EventHandler<Node<Component>>*>(ch.get());
-					if (p) res.push_back(p);
-				}catch(std::bad_cast &e){}
+			return static_cast<int>(children.size());
+		}
+
+		evt::EventHandler<Node<Component>>* evt_child(int i) override
+		{
+			try {
+				return dynamic_cast<evt::EventHandler<Node<Component>>*>(children[i].get());
 			}
-			return res;
+			catch (std::bad_cast& e) { return nullptr; }
+			return nullptr;
 		}
 
 		bool onHandleMouseEvent(evt::MouseEvent<Node<Component>>* e) override

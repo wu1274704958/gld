@@ -58,17 +58,16 @@ public:
         {}
     int init() override
     {
-        event_dispatcher.get_child = [=]()->std::vector<EventHandler<Node<Component>>*> {
-            std::vector<evt::EventHandler<Node<Component>>*> res;
-            for (auto& ch : cxts)
-            {
-                try {
-                    auto p = dynamic_cast<evt::EventHandler<Node<Component>>*>(ch.get());
-                    if (p) res.push_back(p);
-                }
-                catch (std::bad_cast& e) {}
+        event_dispatcher.child = [=](int i)->EventHandler<Node<Component>>* {
+            try {
+                return dynamic_cast<evt::EventHandler<Node<Component>>*>(cxts[i].get());
             }
-            return res;
+            catch (std::bad_cast& e) { return nullptr; }
+            return nullptr;
+        };
+        event_dispatcher.childlen_count = [=]()->int
+        {
+            return static_cast<int>(cxts.size());
         };
 
         RenderDemoRotate::init();
