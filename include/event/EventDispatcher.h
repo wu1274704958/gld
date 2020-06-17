@@ -128,7 +128,7 @@ namespace evt {
 		{
 			float nx, ny;
 			sundry::screencoord_to_ndc(w, h, x, y, &nx, &ny);
-			dbg(std::make_tuple(nx, ny));
+			//dbg(std::make_tuple(nx, ny));
 
 			auto t_world = glm::mat4(1.0f);
 			t_world = glm::translate(t_world, view_pos);

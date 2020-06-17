@@ -55,8 +55,8 @@ namespace gld {
 		{
 			auto coll = this->get_comp<gld::def::Collision>();
 			if (!coll) return false;
-			glm::vec2 braypos; float distance; glm::vec3 pos;
-			if (coll->ray_test(e->world, e->camera_pos, e->raydir, braypos, distance, pos))
+			glm::vec2 braypos; float distance; glm::vec3 pos,model_pos;
+			if (coll->ray_test(e->world, e->camera_pos, e->raydir, braypos, distance, pos,model_pos))
 			{
 				e->pos = pos;
 				return true;
