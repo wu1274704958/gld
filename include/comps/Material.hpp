@@ -164,12 +164,12 @@ namespace gld::def{
                 glm::vec3 v2 = view * model * matrix * vs[1];
                 glm::vec3 v3 = view * model * matrix * vs[2];
 
-                glm::mat4 tm(1.f);
-                tm = glm::scale(tm, trans->scale);
+                //glm::mat4 tm(1.f);
+                //tm = glm::scale(tm, trans->scale);
 
-                glm::vec3 mv1 = tm * matrix * vs[0];
-                glm::vec3 mv2 = tm * matrix * vs[1];
-                glm::vec3 mv3 = tm * matrix * vs[2];
+                glm::vec3 mv1 = matrix * vs[0];
+                glm::vec3 mv2 = matrix * vs[1];
+                glm::vec3 mv3 = matrix * vs[2];
                 if (glm::intersectRayTriangle(pos, dir, v1, v2, v3, barypos, distance))
                 {
                     world_pos = (1.f - barypos.x - barypos.y) * v1 + barypos.x * v2 + barypos.y * v3;
