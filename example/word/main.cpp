@@ -37,6 +37,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <event/EventDispatcher.h>
 #include <ui/word.h>
+#include <ui/clip.h>
 
 
 using namespace gld;

@@ -43,33 +43,16 @@ std::shared_ptr<gld::Node<gld::Component>> txt::DefTextNodeGen::generate(std::sh
     vao->buffs().get<gld::ArrayBufferType::ELEMENT>().bind_data(indices, GL_STATIC_DRAW);
     vao->unbind();
 
-    std::shared_ptr<std::vector<float>> vertices_;
-    std::shared_ptr<std::vector<int>> indices_;
+    std::shared_ptr<std::vector<float>> vertices_ =  DefDataMgr::instance()->load<DataType::SquareVertices>(originX, originY);
+    std::shared_ptr<std::vector<int>> indices_ =  DefDataMgr::instance()->load<DataType::SquareIndices>();
 
-    using CacheMgr = typename gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>;
-    std::string v_k("No Normal Vertices");
-    std::string i_k("Indices");
-
-
-    if (gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->has(v_k))
-        vertices_ = gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->get(v_k);
-    else {
-        vertices_ = std::shared_ptr<std::vector<float>>(new std::vector<float>(vertices));
-        gld::ResCache < DefCache<std::shared_ptr<std::vector<float>>, 'W', 'O', 'R', 'D'>>::instance()->cache(v_k, vertices_);
-    }
-        
-    if (gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->has(i_k))
-        indices_ = gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->get(i_k);
-    else {
-        indices_ = std::shared_ptr<std::vector<int>>(new std::vector<int>(indices));
-        gld::ResCache < DefCache<std::shared_ptr<std::vector<int>>, 'W', 'O', 'R', 'D'>>::instance()->cache(i_k, indices_);
-    }
+    
     res->add_comp<gld::def::Mesh>(std::shared_ptr<gld::def::Mesh>(new gld::def::Mesh(
         indices.size(), vertices.size() / 5, std::move(vao)
     )));
 
     res->add_comp<gld::def::Collision>(std::shared_ptr<gld::def::Collision>(new gld::def::Collision(
-        vertices_,2,indices_
+        vertices_,0,indices_
     )));
 
     res->add_comp<DefTextMaterial>(std::shared_ptr<DefTextMaterial>(new DefTextMaterial(std::move(tex))));

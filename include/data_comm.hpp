@@ -14,7 +14,9 @@ namespace gld{
         SceneWithGeometry,
         SceneWithGeometryNoMaterial,
         FontLibrary,
-        FontFace
+        FontFace,
+        SquareVertices,
+        SquareIndices
     };
 
     namespace data_ck{

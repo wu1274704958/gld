@@ -230,6 +230,24 @@ private:
         static RealRetTy load(std::tuple<const char* ,int,int> args);
     };
 
+    struct GenSquareVertices {
+        using RetTy = std::shared_ptr<std::vector<float>>;
+        using ArgsTy = std::tuple<float, float>;
+        using RealRetTy = std::tuple<bool, RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static RealRetTy load(ArgsTy args);
+        static ArgsTy default_args();
+    };
+
+    struct GenSquareIndices {
+        using RetTy = std::shared_ptr<std::vector<int>>;
+        using ArgsTy = std::tuple<>;
+        using RealRetTy = std::tuple<bool, RetTy>;
+        static std::string key_from_args(ArgsTy args);
+        static RealRetTy load(ArgsTy args);
+        static ArgsTy default_args();
+    };
+
     typedef DataMgr<DataLoadPlugTy<DataType::Program,LoadProgram>,
         DataLoadPlugTy<DataType::Texture2D,LoadTexture2D>,
         DataLoadPlugTy<DataType::Scene,LoadSceneNode<SceneLoadMode::Default>>,
@@ -239,6 +257,8 @@ private:
         DataLoadPlugTy<DataType::SceneWithGeometry,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry>>,
         DataLoadPlugTy<DataType::SceneWithGeometryNoMaterial,LoadSceneNodeWithGeom<SceneLoadMode::HasGeometry_NoMaterial>>,
         DataLoadPlugTy<DataType::FontLibrary,LoadFontLibrary>,
-        DataLoadPlugTy<DataType::FontFace,LoadFontFace>
+        DataLoadPlugTy<DataType::FontFace,LoadFontFace>,
+        DataLoadPlugTy<DataType::SquareIndices,GenSquareIndices>,
+        DataLoadPlugTy<DataType::SquareVertices,GenSquareVertices>
         > DefDataMgr;
 } // namespace gld

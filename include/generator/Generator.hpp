@@ -26,7 +26,7 @@ namespace gld::gen{
             };
             std::vector<int> idx = { 0,1,2,0,2,3 };
 
-            return std::make_tuple(res, idx);
+            return std::make_tuple(std::move(res), std::move(idx));
         }
         else {
             std::vector<float> res = {
@@ -37,8 +37,20 @@ namespace gld::gen{
             };
             std::vector<int> idx = { 0,1,2,0,2,3 };
 
-            return std::make_tuple(res, idx);
+            return std::make_tuple(std::move(res), std::move(idx));
         }
+    }
+
+    inline std::vector<float> quad(glm::vec2 origin = glm::vec2(0.5f, 0.5f))
+    {
+        std::vector<float> res = {
+            origin.x,       origin.y,       0.f,
+            origin.x - 1.f, origin.y,       0.f,
+            origin.x - 1.f, origin.y - 1.f, 0.f,
+            origin.x,       origin.y - 1.f, 0.f
+        };
+
+        return res;
     }
 
     template<bool HasNormal>
