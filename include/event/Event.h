@@ -38,7 +38,7 @@ namespace evt {
 	{
 		using TargetTy = TarTy;
 		glm::mat4 world;
-		glm::vec3 raypos, raydir,camera_pos;
+		glm::vec3 raypos, raydir,camera_pos,model_pos;
 		glm::vec3 pos;
 		glm::vec2 w_pos;
 		int btn;

@@ -58,6 +58,7 @@ namespace gld {
 			glm::vec2 braypos; float distance; glm::vec3 pos,model_pos;
 			if (coll->ray_test(e->world, e->camera_pos, e->raydir, braypos, distance, pos,model_pos))
 			{
+				e->model_pos = model_pos;
 				e->pos = pos;
 				return true;
 			}
