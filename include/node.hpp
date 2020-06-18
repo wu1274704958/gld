@@ -151,6 +151,8 @@ namespace gld{
         virtual void onInit() {}
         virtual void onDraw() {}
         virtual void onUpdate() {}
+        virtual void onDrawChildren() {}
+        virtual void onAfterDraw() {}
         virtual ~Node() {}
         bool init()
         {
@@ -174,8 +176,10 @@ namespace gld{
                     comp->draw();
                 for(int64_t i = static_cast<int64_t>(components.size() - 1);i >= 0;--i)
                     components[i]->after_draw();
+                onDrawChildren();
                 for(auto &ch : children)
                     ch->draw();
+                onAfterDraw();
             }
         }
         void update()
