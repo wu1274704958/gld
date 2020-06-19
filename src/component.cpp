@@ -1,5 +1,5 @@
 #include <component.h>
-
+#include <comps/sundry.h>
 namespace gld{
     bool Render::init()  
     {
@@ -95,6 +95,69 @@ namespace gld{
         rotate.z = glm::radians(x);
     }
     void Transform::setRotation(glm::vec3 r) {
+        rotate.x = glm::radians(r.x);
+        rotate.y = glm::radians(r.y);
+        rotate.z = glm::radians(r.z);
+    }
+
+
+    LocalTransForm::LocalTransForm(std::string local_key) : local_mat(std::move(local_key))
+    {
+        rotate = pos = glm::vec3(0.f, 0.f, 0.f);
+        scale = glm::vec3(1.f, 1.f, 1.f);
+    }
+
+    LocalTransForm::LocalTransForm() : local_mat("local_mat")
+    {
+        rotate = pos = glm::vec3(0.f, 0.f, 0.f);
+        scale = glm::vec3(1.f, 1.f, 1.f);
+    }
+
+    bool LocalTransForm::init()
+    {
+        auto n_ptr = get_node();
+        auto render = n_ptr->get_comp<Render>();
+        if (render)
+            local_mat.attach_program(render->get());
+        return true;
+    }
+
+    void LocalTransForm::draw()
+    {
+        glm::mat4 mat = get_model();
+        update_matrix(mat);
+    }
+
+    glm::mat4 LocalTransForm::get_model()
+    {
+        glm::mat4 mat(1.0f);
+
+        mat = glm::translate(mat, pos);
+
+        mat = glm::scale(mat, scale);
+
+        mat = glm::rotate(mat, rotate.x, glm::vec3(1.f, 0.f, 0.f));
+        mat = glm::rotate(mat, rotate.y, glm::vec3(0.f, 1.f, 0.f));
+        mat = glm::rotate(mat, rotate.z, glm::vec3(0.f, 0.f, 1.f));
+
+        return mat;
+    }
+
+    void LocalTransForm::update_matrix(glm::mat4 mat)
+    {
+        local_mat = glm::value_ptr(mat);
+    }
+
+    void LocalTransForm::setRotateX(float x) {
+        rotate.x = glm::radians(x);
+    }
+    void LocalTransForm::setRotateY(float x) {
+        rotate.y = glm::radians(x);
+    }
+    void LocalTransForm::setRotateZ(float x) {
+        rotate.z = glm::radians(x);
+    }
+    void LocalTransForm::setRotation(glm::vec3 r) {
         rotate.x = glm::radians(r.x);
         rotate.y = glm::radians(r.y);
         rotate.z = glm::radians(r.z);

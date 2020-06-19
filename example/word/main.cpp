@@ -55,7 +55,7 @@ class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
-             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, -2.f))
+             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, 2.f))
         {}
     int init() override
     {
