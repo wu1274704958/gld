@@ -72,6 +72,8 @@ public:
         };
 
         RenderDemoRotate::init();
+
+        ClipNode<Component>::enable();
         
         program = DefDataMgr::instance()->load<DataType::Program>("base/line_vs.glsl","base/line_fg.glsl");
         program->use();
@@ -134,34 +136,27 @@ public:
 
         for (auto k = L'!'; k <= L'~'; ++k)
         {
-            auto a = std::shared_ptr<Node<Component>>(new Word(font, 126, k));
-            auto w = dynamic_cast<Word*>(a.get());
-            w->handle_type |= static_cast<unsigned long long>(EventType::MouseMove);
-            w->load();
-            w->add_listener(EventType::Click, onclick);
-            w->add_listener(EventType::MouseMove, onMove);
-            w->add_listener(EventType::MouseDown, onDown);
-            auto trans = a->get_comp<Transform>();
-            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
-            auto mater = a->get_comp<DefTextMaterial>();
-            mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
-            cxts.push_back(a);
+            auto a = create_word(font, k, onclick, onMove, onDown);
+            //cxts.push_back(a);
         }
 
         for (auto k = L'çù'; k <= L'çù' + 300; ++k)
         {
-            auto a = std::shared_ptr<Node<Component>>(new Word(font2, 126, k));
-            auto w = dynamic_cast<Word*>(a.get());
-            w->load();
-            w->add_listener(EventType::Click, onclick);
-            w->add_listener(EventType::MouseMove, onMove);
-            w->add_listener(EventType::MouseDown, onDown);
-            auto trans = a->get_comp<Transform>();
-            trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
-            auto mater = a->get_comp<DefTextMaterial>();
-            mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
-            cxts.push_back(a);
+            auto a = create_word(font2, k, onclick, onMove, onDown);
+            //cxts.push_back(a);
         }
+
+
+
+        auto clip = std::shared_ptr<Clip>(new Clip(126,126,0.5f,0.5f));
+
+        clip->init();
+        clip->refresh();
+
+        clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown));
+        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+
+        cxts.push_back(clip);
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ÅÀ',1.f,0.f);
         auto trans = a->get_comp<Transform>();
@@ -178,20 +173,30 @@ public:
         return 0;
     }
 
+    std::shared_ptr<Node<Component>> create_word(std::string& font, uint32_t k, 
+        std::function<bool(Event<Node<Component>>*)> onclick,
+        std::function<bool(Event<Node<Component>>*)> onMove,
+        std::function<bool(Event<Node<Component>>*)> onDown
+        ,int size = 126,float ox = 0.5f,float oy = 0.5f)
+    {
+        auto a = std::shared_ptr<Node<Component>>(new Word(font, size, k,glm::vec2(ox,oy)));
+        auto w = dynamic_cast<Word*>(a.get());
+        w->load();
+        w->add_listener(EventType::Click, onclick);
+        w->add_listener(EventType::MouseMove, onMove);
+        w->add_listener(EventType::MouseDown, onDown);
+        auto trans = a->get_comp<Transform>();
+        trans->pos = glm::vec3((rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f, (rd_0_1() - 0.5f) * 5.f);
+        auto mater = a->get_comp<DefTextMaterial>();
+        mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+        return a;
+    }
+
     void draw() override
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        for (auto n : cxts)
-        {
-            auto render = n->get_comp<Render>();
-            auto p = render->get();
-            p->use();
-            perspective.attach_program(p);
-            world.attach_program(p);
-
-            perspective.sync();
-            world.sync();
-        }
+        
+        update_mat(cxts);
 
         for (auto& p : cxts)
             p->draw();
@@ -199,6 +204,26 @@ public:
         update();
         update_matrix();
 
+    }
+
+    void update_mat(std::vector<std::shared_ptr< gld::Node<gld::Component>>>& ns)
+    {
+        for (auto& n : ns)
+        {
+            auto render = n->get_comp<Render>();
+            if (render)
+            {
+                auto p = render->get();
+                p->use();
+                perspective.attach_program(p);
+                world.attach_program(p);
+
+                perspective.sync();
+                world.sync();
+            }
+            if (n->children_count() > 0)
+                update_mat(n->get_children());
+        }
     }
 
     void update_matrix()

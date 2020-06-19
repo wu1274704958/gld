@@ -10,20 +10,21 @@ namespace gld {
 
 	
 
-	struct Clip : public ClipNode<Component> {
+	struct Clip : public ClipNode<Component>, public evt::EventHandler<Node<Component>> {
 
 		Clip(float w, float h,float originX = 0.f,float originY = 0.f) : width(w),height(h),originX(originX),originY(originY)
 		{
-			init();
-			refresh();
+			
 		}
 
 		void init()
 		{
 			auto render = std::shared_ptr<Render>( new Render("base/empty_vs.glsl", "base/empty_fg.glsl") );
-			if (render->get()->uniform_id("perspective") == -1)
+			auto program = DefDataMgr::instance()->load<DataType::Program>("base/empty_vs.glsl", "base/empty_fg.glsl");
+
+			if (program->uniform_id("perspective") == -1)
 			{
-				render->get()->locat_uniforms("perspective", "world", "model", "local_mat");
+				program->locat_uniforms("perspective", "world", "model", "local_mat");
 			}								   
 			this->add_comp(render);
 			
@@ -45,11 +46,21 @@ namespace gld {
 				indices_->size(), vertices_->size() / 3, std::move(vao)
 			)));
 
+			auto coll = std::shared_ptr<gld::def::Collision>(new gld::def::Collision(
+				vertices_, 0, indices_
+			));
+
+			add_comp<gld::def::Collision>(coll);
+
 			add_comp<gld::Transform>(std::make_shared<gld::Transform>());
 			local = std::make_shared<gld::LocalTransForm>();
 			add_comp<gld::LocalTransForm>(local);
 			node = std::make_shared< NodeWithEvent>();
 			node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
+
+			node->add_comp<gld::def::Collision>(coll);
+			
+			add_child(node);
 		}									   
 
 		void set_size(float w, float h)
@@ -61,10 +72,47 @@ namespace gld {
 		void refresh()
 		{
 			local->scale = glm::vec3(width * Word::WORD_SCALE, height * Word::WORD_SCALE, 1.0f);
+			get_comp<gld::def::Collision>()->matrix = glm::scale(glm::mat4(1.f), local->scale);
 		}
+
+		int evt_children_count() override
+		{
+			return static_cast<int>(children.size());
+		}
+
+		evt::EventHandler<Node<Component>>* evt_child(int i) override
+		{
+			try {
+				return dynamic_cast<evt::EventHandler<Node<Component>>*>(children[i].get());
+			}
+			catch (std::bad_cast& e) { return nullptr; }
+			return nullptr;
+		}
+
+		bool onHandleMouseEvent(evt::MouseEvent<Node<Component>>* e) override
+		{
+			auto coll = this->get_comp<gld::def::Collision>();
+			if (!coll) return false;
+			glm::vec2 braypos; float distance; glm::vec3 pos, model_pos;
+			if (coll->ray_test(e->world, e->camera_pos, e->raydir, braypos, distance, pos, model_pos))
+			{
+				e->model_pos = model_pos;
+				e->pos = pos;
+				return true;
+			}
+			return false;
+		}
+
+		std::weak_ptr<Node<Component>> get_target() override
+		{
+			auto ptr = dynamic_cast<Node<Component>*>(this);
+			return ptr->weak_from_this();
+		}
+
+
+		std::shared_ptr< NodeWithEvent> node;
 	protected:
 		float width, height,originX,originY;
 		std::shared_ptr< LocalTransForm> local;
-		std::shared_ptr< NodeWithEvent> node;
 	};
 }

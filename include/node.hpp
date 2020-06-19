@@ -266,6 +266,16 @@ namespace gld{
             return *this;
         }
 
+        const std::vector<std::shared_ptr<Node<Comp>>>& get_children() const
+        {
+            return children;
+        }
+
+        std::vector<std::shared_ptr<Node<Comp>>>& get_children()
+        {
+            return children;
+        }
+
     protected:
         void clear_parent()
         {
