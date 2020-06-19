@@ -137,13 +137,13 @@ public:
         for (auto k = L'!'; k <= L'~'; ++k)
         {
             auto a = create_word(font, k, onclick, onMove, onDown);
-            //cxts.push_back(a);
+            cxts.push_back(a);
         }
 
         for (auto k = L'çù'; k <= L'çù' + 300; ++k)
         {
             auto a = create_word(font2, k, onclick, onMove, onDown);
-            //cxts.push_back(a);
+            cxts.push_back(a);
         }
 
 

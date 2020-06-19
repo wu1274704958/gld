@@ -64,6 +64,8 @@ namespace evt {
 				}
 			}
 
+			e->target = get_target();
+
 			if (has_listener(e->type))
 			{
 				return (handle_func[e->type])(e);
