@@ -55,7 +55,7 @@ class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
-             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, 2.f))
+             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, 0.f))
         {}
     int init() override
     {
@@ -285,7 +285,7 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 460, "Clock"))
+    if (d.initWindow(1800, 960, "Clock"))
     {
         printf("init window failed\n");
         return -1;

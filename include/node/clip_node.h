@@ -18,15 +18,18 @@ namespace gld {
 		void onDraw() override 
 		{
 			glStencilMask(0xff);
+			glColorMask(0x0, 0x0, 0x0, 0x0);
 			glDepthMask(0x0);
 			glStencilOp(GL_ZERO, GL_REPLACE, GL_REPLACE);
 			glStencilFunc(GL_ALWAYS, stencil_val, 0xff);
+			
 		}
 		void onDrawChildren() override 
 		{
 			glStencilFunc(GL_EQUAL, stencil_val, 0xff);
 			glStencilMask(0x0);
 			glDepthMask(0xff);
+			glColorMask(0xff, 0xff, 0xff, 0xff);
 		}
 		void onAfterDraw() override 
 		{
