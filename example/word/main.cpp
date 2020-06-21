@@ -71,6 +71,8 @@ public:
             return static_cast<int>(cxts.size());
         };
 
+        camera_dir = glm::vec3(0.0f, 0.f, -1.f);
+
         RenderDemoRotate::init();
 
         ClipNode<Component>::enable();
@@ -156,7 +158,7 @@ public:
         clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,0.0f,0.0f));
         clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(2.f,2.f,0.f);
 
-        cxts.push_back(clip);
+        //cxts.push_back(clip);
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ÅÀ',1.f,0.f);
         auto trans = a->get_comp<Transform>();
@@ -235,14 +237,6 @@ public:
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
-
-        glm::mat4 tw(1.f);
-        tw = glm::rotate(tw, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
-        tw = glm::rotate(tw, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
-        tw = glm::rotate(tw, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
-
-        camera_dir = glm::normalize(tw * glm::vec4(0.0f, 0.f, 1.f,1.f));
-        dbg(std::make_tuple( camera_dir.x,camera_dir.y, camera_dir.z));
         
     }
 
