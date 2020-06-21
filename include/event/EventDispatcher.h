@@ -10,10 +10,10 @@ namespace evt {
 		
 		using TargetTy = TarTy;
 
-		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, glm::vec3 camera_pos, glm::vec3 view_pos) :
+		EventDispatcher(glm::mat4& perspective, glm::mat4& world, int& w, int& h, glm::vec3 camera_pos,glm::vec3 &camera_dir, glm::vec3 view_pos) :
 			perspective(perspective),
 			world(world),
-			w(w), h(h), camera_pos(camera_pos), view_pos(view_pos)
+			w(w), h(h),camera_dir(camera_dir), camera_pos(camera_pos), view_pos(view_pos)
 			{}
 
 		void onMouseDown(int btn, int mode, int x, int y)
@@ -101,7 +101,7 @@ namespace evt {
 					auto c = child(i);
 					if (c && into(c))
 					{
-						if (c->onHandleMouseEvent(&ce))
+						if (c->onHandleMouseEvent(&ce) && glm::dot(glm::normalize(camera_dir), glm::normalize(ce.pos - camera_pos)) >= 0.f)
 						{
 							float dist = glm::length(ce.pos - camera_pos);
 							if (dist < min_distance)
@@ -137,8 +137,9 @@ namespace evt {
 		}
 
 		glm::mat4& perspective, &world;
-		glm::vec3 camera_pos,view_pos;
-		int& w, &h; 
+		int& w, & h;
+		glm::vec3& camera_dir;
+		glm::vec3 camera_pos, view_pos;
 		std::function<int()> childlen_count;
 		std::function<EventHandler<TargetTy>*(int)> child;
 		int cache_btn;

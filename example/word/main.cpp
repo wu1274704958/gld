@@ -55,7 +55,7 @@ class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
-             glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 0.f, 0.f))
+             glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f))
         {}
     int init() override
     {
@@ -148,13 +148,13 @@ public:
 
 
 
-        auto clip = std::shared_ptr<Clip>(new Clip(126,126,0.5f,0.5f));
+        auto clip = std::shared_ptr<Clip>(new Clip(1260,1260,1.f,0.0f));
 
         clip->init();
         clip->refresh();
 
-        clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown));
-        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+        clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,0.0f,0.0f));
+        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(2.f,2.f,0.f);
 
         cxts.push_back(clip);
 
@@ -235,6 +235,15 @@ public:
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
+
+        glm::mat4 tw(1.f);
+        tw = glm::rotate(tw, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
+        tw = glm::rotate(tw, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
+        tw = glm::rotate(tw, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));
+
+        camera_dir = glm::normalize(tw * glm::vec4(0.0f, 0.f, 1.f,1.f));
+        dbg(std::make_tuple( camera_dir.x,camera_dir.y, camera_dir.z));
+        
     }
 
     void update()
@@ -274,7 +283,7 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
     EventDispatcher<Node<Component>> event_dispatcher;
-    glm::vec3 down_pos;
+    glm::vec3 down_pos, camera_dir = glm::vec3(0.0f, 1.f, 0.f);
     
 };
 
