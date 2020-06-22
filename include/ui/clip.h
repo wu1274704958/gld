@@ -12,7 +12,7 @@ namespace gld {
 
 	struct Clip : public ClipNode<Component>, public evt::EventHandler<Node<Component>> {
 
-		Clip(float w, float h,float originX = 0.f,float originY = 0.f) : width(w),height(h),originX(originX),originY(originY)
+		Clip(float w, float h,float originX = 0.f,float originY = 0.f) : width(w * Word::WORD_SCALE),height(h * Word::WORD_SCALE),originX(originX),originY(originY)
 		{
 			
 		}
@@ -65,13 +65,13 @@ namespace gld {
 
 		void set_size(float w, float h)
 		{
-			width = w;
-			height = h;
+			width = w * Word::WORD_SCALE;
+			height = h * Word::WORD_SCALE;
 		}
 
 		void refresh()
 		{
-			local->scale = glm::vec3(width * Word::WORD_SCALE, height * Word::WORD_SCALE, 1.0f);
+			local->scale = glm::vec3(width , height , 1.0f);
 			get_comp<gld::def::Collision>()->matrix = glm::scale(glm::mat4(1.f), local->scale);
 		}
 

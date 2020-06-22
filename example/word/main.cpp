@@ -38,6 +38,7 @@
 #include <event/EventDispatcher.h>
 #include <ui/word.h>
 #include <ui/clip.h>
+#include <ui/label.h>
 
 
 using namespace gld;
@@ -158,7 +159,13 @@ public:
         clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,126,1.0f,0.0f));
         clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
         clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
-        cxts.push_back(clip);
+        //cxts.push_back(clip);
+
+        auto label = std::shared_ptr<Label>(new Label());
+        label->set_text("¶ÏÇÅ²ÐÑ©ÔÚº¼ÖÝ!\n³¬ºÃÍæ! Hello!");
+
+        cxts.push_back(label);
+
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ÅÀ',1.f,0.f);
         auto trans = a->get_comp<Transform>();
