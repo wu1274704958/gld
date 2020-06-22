@@ -17,7 +17,7 @@ namespace gld {
 			
 		}
 
-		void init()
+		void create()
 		{
 			auto render = std::shared_ptr<Render>( new Render("base/empty_vs.glsl", "base/empty_fg.glsl") );
 			auto program = DefDataMgr::instance()->load<DataType::Program>("base/empty_vs.glsl", "base/empty_fg.glsl");

@@ -133,7 +133,7 @@ public:
             auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
             if (w && p->btn == GLFW_MOUSE_BUTTON_2)
                 down_pos = p->pos;
-            return false;
+            return true;
         };
 
         for (auto k = L'!'; k <= L'~'; ++k)
@@ -150,15 +150,15 @@ public:
 
 
 
-        auto clip = std::shared_ptr<Clip>(new Clip(1260,1260,1.f,0.0f));
+        auto clip = std::shared_ptr<Clip>(new Clip(126,126,1.0f,0.0f));
 
-        clip->init();
+        clip->create();
         clip->refresh();
 
-        clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,0.0f,0.0f));
-        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(2.f,2.f,0.f);
-
-        //cxts.push_back(clip);
+        clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,126,1.0f,0.0f));
+        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+        clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
+        cxts.push_back(clip);
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ÅÀ',1.f,0.f);
         auto trans = a->get_comp<Transform>();

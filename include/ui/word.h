@@ -22,7 +22,7 @@ namespace gld {
 
 		bool load()
 		{
-			auto [a, wd_, size] = txt::DefTexMgr::instance()->get_node(face, 0, 0, font_size, word);
+			auto [a, wd_, size] = txt::DefTexMgr::instance()->get_node(face, 0, 0, font_size, word,anchor.x,anchor.y);
 			if (a)
 			{
 				this->wd = wd_.value();
