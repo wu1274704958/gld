@@ -16,6 +16,8 @@ namespace gld {
 		Right
 	};
 
+	
+
 	struct Label : public Clip {
 		Label( std::function<void(float, float)> onSizeChange) : 
 			Clip(1.f,1.f,1.f,0.f),
@@ -26,7 +28,7 @@ namespace gld {
 		}
 
 		Label(float w,float h) :
-			Clip(w,h,1.f,0.f)
+			Clip(w,h,1.f,0.f),auto_size(false)
 		{
 			
 		}
@@ -51,7 +53,20 @@ namespace gld {
 				Clip::create();
 
 			auto unicode = cvt::ansi2unicode(text);
-			set_word(unicode);
+			switch (align)
+			{
+			case Align::Left:
+				set_word(unicode);
+				break;
+			case Align::Right:
+				set_word_right(unicode);
+				break;
+			case Align::Center:
+				set_word_right(unicode);
+				break;
+			default:
+				break;
+			}
 		}
 
 		void set_word(const std::wstring& unicode)
@@ -70,28 +85,7 @@ namespace gld {
 
 			for (auto i = 0; i < unicode.size(); ++i)
 			{
-				enter = false;
-				if (unicode[i] == L' ')
-					x += SPACE_RATIO * static_cast<float>(size) * Word::WORD_SCALE;
-				else if (unicode[i] == L'\t')
-					x += SPACE_RATIO * static_cast<float>(size) * TAB_SIZE * Word::WORD_SCALE;
-				else if (unicode[i] == L'\n')
-					do_enter();
-				else {
-					auto a = std::shared_ptr<Word>(new Word(font, size, unicode[i], glm::vec2(1.f, 0.f)));
-					a->load();
-					a->get_comp<Transform>()->pos = glm::vec3(x, y - static_cast<float>(a->wd.off_y) * Word::WORD_SCALE, 0.f);
-					a->get_comp<txt::DefTextMaterial>()->color = color;
-
-					if (word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
-						do_enter();
-					else
-					{
-						x += a->wd.advance * Word::WORD_SCALE;
-					}
-
-					node->add_child(a);
-				}
+				set_word_inside(enter, unicode[i], x, y, do_enter);
 			}
 			if (x > mw) mw = x;
 			if (!enter) mh += h;
@@ -104,6 +98,69 @@ namespace gld {
 			}
 			refresh_margin();
 		}
+
+		void set_word_right(const std::wstring& unicode)
+		{
+			float x = 0.f, y = 0.f, h = static_cast<float>(size) * Word::WORD_SCALE;
+			float mw = 0.f, mh = 0.f;
+			bool enter = false;
+			std::vector<Row> rs;
+
+			auto do_enter = [&]() {
+				Row r;
+				enter = true;
+				y -= h + leading * Word::WORD_SCALE;
+				if (x > mw) mw = x;
+				r.w = x;
+				x = 0.f;
+				mh = -y;
+				r.b = rs.empty() ? 0 : rs.back().e;
+				r.e = node->children_count();
+				rs.push_back(r);
+			};
+
+			for (auto i = 0; i < unicode.size(); ++i)
+			{
+				set_word_inside(enter, unicode[i], x, y, do_enter);
+			}
+
+			if (!enter && !rs.empty())
+			{
+				Row r;
+				r.w = x;
+				r.b = rs.back().e;
+				r.e = node->children_count();
+				rs.push_back(r);
+			}
+
+			if (x > mw) mw = x;
+			if (!enter) mh += h;
+
+			float max_row_w = mw;
+			if (!auto_size) max_row_w = width;
+
+			for (auto i = 0; i < rs.size(); ++i)
+			{
+				//if (rs[i].w < max_row_w)
+				{
+					float off = align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f;
+					for (auto j = rs[i].b; j < rs[i].e; ++j)
+					{
+						node->get_child(j)->get_comp<Transform>()->pos.x += off;
+					}
+				}
+			}
+			
+			on_text_size_change(mw, mh);
+
+			if (auto_size)
+			{
+				width = mw; height = mh;
+			}
+			refresh_margin();
+		}
+
+
 
 		void refresh_margin()
 		{
@@ -177,5 +234,36 @@ namespace gld {
 			if (onSizeChange)
 				onSizeChange(w, h);
 		}
+
+		void set_word_inside(bool & enter,wchar_t c,float& x,float &y,std::function<void()> do_enter)
+		{
+			enter = false;
+			if (c == L' ')
+				x += SPACE_RATIO * static_cast<float>(size) * Word::WORD_SCALE;
+			else if (c == L'\t')
+				x += SPACE_RATIO * static_cast<float>(size) * TAB_SIZE * Word::WORD_SCALE;
+			else if (c == L'\n')
+				do_enter();
+			else {
+				auto a = std::shared_ptr<Word>(new Word(font, size, c, glm::vec2(1.f, 0.f)));
+				a->load();
+				a->get_comp<Transform>()->pos = glm::vec3(x, y - static_cast<float>(a->wd.off_y) * Word::WORD_SCALE, 0.f);
+				a->get_comp<txt::DefTextMaterial>()->color = color;
+
+				if (word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
+					do_enter();
+				else
+				{
+					x += a->wd.advance * Word::WORD_SCALE;
+				}
+
+				node->add_child(a);
+			}
+		}
+
+		struct Row {
+			size_t b = 0, e = 0;
+			float w = 0.f;
+		};
 	};
 }
