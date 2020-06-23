@@ -134,6 +134,12 @@ namespace gld{
             return false;
         }
 
+
+        void remove_all()
+        {
+            children.clear();
+        }
+
         bool has_parent()
         {
             auto pare = parent.lock();
