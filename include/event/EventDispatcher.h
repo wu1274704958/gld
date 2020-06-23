@@ -141,6 +141,8 @@ namespace evt {
 						if (c->onHandleMouseEvent(&ce) && glm::dot(glm::normalize(camera_dir), glm::normalize(ce.pos - camera_pos)) >= 0.f)
 						{
 							float dist = glm::length(ce.pos - camera_pos);
+							if (dist < skip_min_distance)
+								continue;
 							for (auto j = 0; j < len; ++j)
 							{
 								if (dist < std::get<2>(ehs[j]))
@@ -181,7 +183,7 @@ namespace evt {
 		glm::vec3 camera_pos, view_pos;
 		std::function<int()> childlen_count;
 		std::function<EventHandler<TargetTy>*(int)> child;
-		int cache_btn;
+		int cache_btn; float skip_min_distance = 0.0f;
 	};
 }
 
