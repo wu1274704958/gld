@@ -166,8 +166,17 @@ public:
         //cxts.push_back(back);
 
         auto label = std::shared_ptr<Label>(new Label());
-        //label->align = Align::Center;
+        label->align = Align::Left;
         label->set_text("¶ÏÇÅ²ĞÑ©ÔÚº¼Öİ!\n³¬ºÃÍæ! Hello? go!go!go!");
+
+        label->add_listener(EventType::Click, [](Event<Node<Component>>* e)->bool {
+            auto p = dynamic_cast<Label*>( e->target.lock().get() );
+            int v = static_cast<int>(p->align);
+            ++v;
+            if (v == 3) v = 0;
+            p->set_align(static_cast<Align>(v));
+            return true;
+        });
 
         cxts.push_back(label);
 
@@ -228,12 +237,15 @@ public:
             if (render)
             {
                 auto p = render->get();
-                p->use();
-                perspective.attach_program(p);
-                world.attach_program(p);
+                if (p)
+                {
+                    p->use();
+                    perspective.attach_program(p);
+                    world.attach_program(p);
 
-                perspective.sync();
-                world.sync();
+                    perspective.sync();
+                    world.sync();
+                }
             }
             if (n->children_count() > 0)
                 update_mat(n->get_children());

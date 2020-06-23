@@ -44,29 +44,45 @@ namespace gld {
 		{
 			text = txt;
 			if(!txt.empty())
-				reset();
+				refresh_ui();
 		}
 
-		void reset()
+		void refresh_ui()
 		{
 			if (!node)
 				Clip::create();
+			else {
+				node->remove_all();
+			}
+
+			rs.clear();
 
 			auto unicode = cvt::ansi2unicode(text);
-			switch (align)
+			set_word_right(unicode);
+		}
+
+		void set_align(Align al)
+		{
+
+			if (align != al)
 			{
-			case Align::Left:
-				set_word(unicode);
-				break;
-			case Align::Right:
-				set_word_right(unicode);
-				break;
-			case Align::Center:
-				set_word_right(unicode);
-				break;
-			default:
-				break;
+				align = al;
+				if (!text.empty())
+				{
+					if (node && node->children_count() > 0)
+					{
+						refresh_align();
+					}
+					else {
+						refresh_ui();
+					}
+				}
 			}
+		}
+
+		void refresh_align()
+		{
+			apply_row_offset(width);
 		}
 
 		void set_word(const std::wstring& unicode)
@@ -104,7 +120,6 @@ namespace gld {
 			float x = 0.f, y = 0.f, h = static_cast<float>(size) * Word::WORD_SCALE;
 			float mw = 0.f, mh = 0.f;
 			bool enter = false;
-			std::vector<Row> rs;
 
 			auto do_enter = [&]() {
 				Row r;
@@ -139,17 +154,8 @@ namespace gld {
 			float max_row_w = mw;
 			if (!auto_size) max_row_w = width;
 
-			for (auto i = 0; i < rs.size(); ++i)
-			{
-				//if (rs[i].w < max_row_w)
-				{
-					float off = align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f;
-					for (auto j = rs[i].b; j < rs[i].e; ++j)
-					{
-						node->get_child(j)->get_comp<Transform>()->pos.x += off;
-					}
-				}
-			}
+			if(align != Align::Left)
+				apply_row_offset(max_row_w);
 			
 			on_text_size_change(mw, mh);
 
@@ -160,6 +166,23 @@ namespace gld {
 			refresh_margin();
 		}
 
+		void apply_row_offset(float max_row_w)
+		{
+			
+			for (auto i = 0; i < rs.size(); ++i)
+			{
+				//if (rs[i].w < max_row_w)
+				{
+					float off_ = -node->get_child(rs[i].b)->get_comp<Transform>()->pos.x;
+					float off = off_ + (align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f);
+					if (align == Align::Left) off = off_;
+					for (auto j = rs[i].b; j < rs[i].e; ++j)
+					{
+						node->get_child(j)->get_comp<Transform>()->pos.x += off;
+					}
+				}
+			}
+		}
 
 
 		void refresh_margin()
@@ -202,7 +225,7 @@ namespace gld {
 		{
 			margin.w = v * Word::WORD_SCALE;
 		}
-
+		
 		std::string text,font = "fonts/SIMHEI.TTF";
 		float text_width,text_height;
 		bool auto_size = false,
@@ -265,5 +288,7 @@ namespace gld {
 			size_t b = 0, e = 0;
 			float w = 0.f;
 		};
+
+		std::vector<Label::Row> rs;
 	};
 }
