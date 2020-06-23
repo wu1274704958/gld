@@ -71,8 +71,7 @@ public:
         {
             return static_cast<int>(cxts.size());
         };
-
-        camera_dir = glm::vec3(0.0f, 0.f, -1.f);
+        event_dispatcher.skip_min_distance = 0.1f;
 
         RenderDemoRotate::init();
 
@@ -161,8 +160,14 @@ public:
         clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
         //cxts.push_back(clip);
 
+        auto back = create_word(font2, 29830, onclick, onMove, onDown, 126, 1.0f, 0.0f);
+        back->get_comp<Transform>()->pos = glm::vec3(0.f, 0.f, 2.6f);
+
+        //cxts.push_back(back);
+
         auto label = std::shared_ptr<Label>(new Label());
-        label->set_text("¶ÏÇÅ²ÐÑ©ÔÚº¼ÖÝ!\n³¬ºÃÍæ! Hello!");
+        //label->align = Align::Center;
+        label->set_text("¶ÏÇÅ²ÐÑ©ÔÚº¼ÖÝ!\n³¬ºÃÍæ! Hello? go!go!go!");
 
         cxts.push_back(label);
 
@@ -284,7 +289,7 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
     EventDispatcher<Node<Component>> event_dispatcher;
-    glm::vec3 down_pos, camera_dir = glm::vec3(0.0f, 1.f, 0.f);
+    glm::vec3 down_pos,camera_dir = glm::vec3(0.f,0.f,-1.f);
     
 };
 
