@@ -131,6 +131,7 @@ namespace gld {
 				mh = -y;
 				r.b = rs.empty() ? 0 : rs.back().e;
 				r.e = node->children_count();
+				r.off_x = node->get_child(r.b)->get_comp<Transform>()->pos.x;
 				rs.push_back(r);
 			};
 
@@ -145,6 +146,7 @@ namespace gld {
 				r.w = x;
 				r.b = rs.back().e;
 				r.e = node->children_count();
+				r.off_x = node->get_child(r.b)->get_comp<Transform>()->pos.x;
 				rs.push_back(r);
 			}
 
@@ -173,7 +175,7 @@ namespace gld {
 			{
 				//if (rs[i].w < max_row_w)
 				{
-					float off_ = -node->get_child(rs[i].b)->get_comp<Transform>()->pos.x;
+					float off_ = -node->get_child(rs[i].b)->get_comp<Transform>()->pos.x + rs[i].off_x;
 					float off = off_ + (align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f);
 					if (align == Align::Left) off = off_;
 					for (auto j = rs[i].b; j < rs[i].e; ++j)
@@ -286,7 +288,7 @@ namespace gld {
 
 		struct Row {
 			size_t b = 0, e = 0;
-			float w = 0.f;
+			float w = 0.f, off_x = 0.f;
 		};
 
 		std::vector<Label::Row> rs;
