@@ -169,7 +169,7 @@ public:
         label->align = Align::Left;
         label->set_text("¶ÏÇÅ²ĞÑ© -- ĞíáÔ\nºÃÌı! Hello? go!go!go!\n");
 
-        label->add_listener(EventType::Click, [font](Event<Node<Component>>* e)->bool {
+        label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
             auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
             auto p = dynamic_cast<Label*>(e->target.lock().get());
             if (me->btn == GLFW_MOUSE_BUTTON_1)
@@ -179,9 +179,14 @@ public:
                 if (v == 3) v = 0;
                 p->set_align(static_cast<Align>(v));
             }
-            else {
-                //p->font = font;
+            else if (me->btn == GLFW_MOUSE_BUTTON_2) {
+                p->font = font;
                 p->set_text("I Love You\n Forever!!!");
+                p->node->init();
+            }
+            else if (me->btn == GLFW_MOUSE_BUTTON_3) {
+                p->font = font2;
+                p->set_text("¶ÏÇÅ²ĞÑ© -- ĞíáÔ\nºÃÌı! Hello? go!go!go!\n");
                 p->node->init();
             }
             return true;
