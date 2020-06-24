@@ -39,6 +39,7 @@
 #include <ui/word.h>
 #include <ui/clip.h>
 #include <ui/label.h>
+#include <ui/sphere.h>
 
 
 using namespace gld;
