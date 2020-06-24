@@ -137,64 +137,74 @@ public:
             return true;
         };
 
-        for (auto k = L'!'; k <= L'~'; ++k)
-        {
-            auto a = create_word(font, k, onclick, onMove, onDown);
-            cxts.push_back(a);
-        }
+        //for (auto k = L'!'; k <= L'~'; ++k)
+        //{
+        //    auto a = create_word(font, k, onclick, onMove, onDown);
+        //    cxts.push_back(a);
+        //}
+        //
+        //for (auto k = L'Á˘'; k <= L'Á˘' + 300; ++k)
+        //{
+        //    auto a = create_word(font2, k, onclick, onMove, onDown);
+        //    cxts.push_back(a);
+        //}
 
-        for (auto k = L'Á˘'; k <= L'Á˘' + 300; ++k)
-        {
-            auto a = create_word(font2, k, onclick, onMove, onDown);
-            cxts.push_back(a);
-        }
 
 
-
-        auto clip = std::shared_ptr<Clip>(new Clip(126,126,1.0f,0.0f));
-
-        clip->create();
-        clip->refresh();
-
-        clip->node->add_child(create_word(font2, L'Á˘', onclick, onMove, onDown,126,1.0f,0.0f));
-        clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
-        clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
+        //auto clip = std::shared_ptr<Clip>(new Clip(126,126,1.0f,0.0f));
+        //
+        //clip->create();
+        //clip->refresh();
+        //
+        //clip->node->add_child(create_word(font2, L'Á˘', onclick, onMove, onDown,126,1.0f,0.0f));
+        //clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+        //clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
         //cxts.push_back(clip);
 
-        auto back = create_word(font2, 29830, onclick, onMove, onDown, 126, 1.0f, 0.0f);
-        back->get_comp<Transform>()->pos = glm::vec3(0.f, 0.f, 2.6f);
+        //auto back = create_word(font2, 29830, onclick, onMove, onDown, 126, 1.0f, 0.0f);
+        //back->get_comp<Transform>()->pos = glm::vec3(0.f, 0.f, 2.6f);
 
         //cxts.push_back(back);
 
-        auto label = std::shared_ptr<Label>(new Label());
-        label->align = Align::Left;
-        label->set_text("∂œ«≈≤–—© -- –Ì·‘\n∫√Ã˝! Hello? go!go!go!\n");
+        //auto label = std::shared_ptr<Label>(new Label());
+        //label->align = Align::Left;
+        //label->set_text("∂œ«≈≤–—© -- –Ì·‘\n∫√Ã˝! Hello? go!go!go!\n");
+        //
+        //label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
+        //    auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+        //    auto p = dynamic_cast<Label*>(e->target.lock().get());
+        //    if (me->btn == GLFW_MOUSE_BUTTON_1)
+        //    {
+        //        int v = static_cast<int>(p->align);
+        //        ++v;
+        //        if (v == 3) v = 0;
+        //        p->set_align(static_cast<Align>(v));
+        //    }
+        //    else if (me->btn == GLFW_MOUSE_BUTTON_2) {
+        //        p->font = font;
+        //        p->set_text("I Love You\n Forever!!!");
+        //        p->node->init();
+        //    }
+        //    else if (me->btn == GLFW_MOUSE_BUTTON_3) {
+        //        p->font = font2;
+        //        p->set_text("∂œ«≈≤–—© -- –Ì·‘\n∫√Ã˝! Hello? go!go!go!\n");
+        //        p->node->init();
+        //    }
+        //    return true;
+        //});
 
-        label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
-            auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
-            auto p = dynamic_cast<Label*>(e->target.lock().get());
-            if (me->btn == GLFW_MOUSE_BUTTON_1)
-            {
-                int v = static_cast<int>(p->align);
-                ++v;
-                if (v == 3) v = 0;
-                p->set_align(static_cast<Align>(v));
-            }
-            else if (me->btn == GLFW_MOUSE_BUTTON_2) {
-                p->font = font;
-                p->set_text("I Love You\n Forever!!!");
-                p->node->init();
-            }
-            else if (me->btn == GLFW_MOUSE_BUTTON_3) {
-                p->font = font2;
-                p->set_text("∂œ«≈≤–—© -- –Ì·‘\n∫√Ã˝! Hello? go!go!go!\n");
-                p->node->init();
-            }
-            return true;
-        });
+        //cxts.push_back(label);
 
-        cxts.push_back(label);
-
+        auto she = std::shared_ptr<Sphere>(new Sphere(94,38));
+        she->create();
+        cxts.push_back(she);
+        uint32_t cc = L'Á˘';
+        for (auto& r : she->standBy)
+        {
+            auto w = create_word(font2, cc++ , onclick, onMove, onDown, 64, 1.0f, 0.0f);
+            w->get_comp<Transform>()->pos = r;
+            she->add_child(w);
+        }
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'≈¿',1.f,0.f);
         auto trans = a->get_comp<Transform>();

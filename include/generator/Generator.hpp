@@ -65,12 +65,12 @@ namespace gld::gen{
 
     inline std::vector<glm::vec3> circle(float y,float r,int seg,float x0 = 0.f,float y0 = 0.f)
     {
-        float m = glm::pi<float>() / 2.f;
+        float m = glm::pi<float>() * 2.f;
         std::vector<glm::vec3> res;
         for(int i = 0;i < seg;++i)
         { 
             float angle = (float)i / (float)seg * m;
-            res.push_back(glm::vec3(glm::sin(angle) + x0, y, glm::cos(angle) + y0));
+            res.push_back(glm::vec3(glm::sin(angle) * r + x0, y, glm::cos(angle) * r + y0));
         }
         return res;
     }
