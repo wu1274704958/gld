@@ -74,4 +74,41 @@ namespace gld::gen{
         }
         return res;
     }
+
+    inline std::tuple<std::vector<float>, std::vector<int>> cube()
+    {
+        std::vector<float > vertices = {
+            0.5f, 0.5f, -0.5f,
+           -0.5f, 0.5f, -0.5f,
+            0.5f,-0.5f, -0.5f,
+           -0.5f,-0.5f, -0.5f,
+            0.5f, 0.5f,  0.5f,
+           -0.5f, 0.5f,  0.5f,
+            0.5f,-0.5f,  0.5f,
+           -0.5f,-0.5f,  0.5f
+        };
+
+        std::vector<int> indices = {
+            //front
+            0,2,1,
+            1,2,3,
+            //top
+            4,0,1,
+            4,1,5,
+            //bottom
+            6,2,3,
+            6,3,7,
+            //left
+            4,6,2,
+            4,2,0,
+            //right
+            1,3,7,
+            1,7,5,
+            //back
+            5,7,6,
+            5,6,4
+        };
+
+        return { vertices,indices };
+    }
 }

@@ -54,7 +54,15 @@ namespace gld {
 					standBy.push_back(glm::rotateY(r, angle));
 				angle -= off_angle;
 			}
-				
+			auto [vertices,indices] = gen::cube();
+			add_comp(std::shared_ptr<def::Collision>(
+				new def::Collision(
+					std::shared_ptr<std::vector<float>>(new std::vector<float>(std::move(vertices))),
+					0, 
+					std::shared_ptr<std::vector<int>>(new std::vector<int>(std::move(indices)))
+				)
+			));
+			
 		}
 
 		bool add(size_t idx, std::shared_ptr<Node<Component>> n)
@@ -109,6 +117,46 @@ namespace gld {
 		{
 			return standBy.size() - pos_map.size();
 		}
+
+		bool onMouseDown(evt::MouseEvent<Node<Component>>* e) override 
+		{
+			auto w = e->target.lock();
+			if (w && e->btn == GLFW_MOUSE_BUTTON_2)
+				pressed_pos = e->pos;
+			return true;
+		}
+
+		bool onMouseMove(evt::MouseEvent<Node<Component>>* e) override
+		{
+			auto w = e->target.lock();
+			if (w && e->btn == GLFW_MOUSE_BUTTON_2)
+			{
+				auto of = e->pos - pressed_pos;
+				slot_rotate_y += of.x;
+				slot_rotate_x -= of.y;
+				set_slot_rotate();
+				pressed_pos = e->pos;
+				return true;
+			}
+			return false;
+		}
+
+		
+		void set_slot_rotate()
+		{
+			glm::mat4 matrix(1.f);
+
+			matrix = glm::rotate(matrix, slot_rotate_x, glm::vec3(1.f, 0.f, 0.f));
+			matrix = glm::rotate(matrix, slot_rotate_y, glm::vec3(0.f, 1.f, 0.f));
+
+			for (auto& v : pos_map)
+			{
+				v.second->get_comp<Transform>()->pos = glm::mat3(matrix) * standBy[v.first];
+			}
+		}
+
+		float slot_rotate_x = 0.f;
+		float slot_rotate_y = 0.f;
 		
 	protected:
 
@@ -128,6 +176,7 @@ namespace gld {
 		std::unordered_map < size_t , std::shared_ptr<Node<Component>>> pos_map;
 		std::vector<glm::vec3> standBy;
 		float off_angle = 0.01f;
+		glm::vec3 pressed_pos;
 
 	};
 }
