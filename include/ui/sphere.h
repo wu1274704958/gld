@@ -132,8 +132,8 @@ namespace gld {
 			if (w && e->btn == GLFW_MOUSE_BUTTON_2)
 			{
 				auto of = e->pos - pressed_pos;
-				slot_rotate_y += of.x;
-				slot_rotate_x -= of.y;
+				slot_rotate_y += of.x * slot_rotate_rate;
+				slot_rotate_x -= of.y * slot_rotate_rate;
 				set_slot_rotate();
 				pressed_pos = e->pos;
 				return true;
@@ -157,6 +157,7 @@ namespace gld {
 
 		float slot_rotate_x = 0.f;
 		float slot_rotate_y = 0.f;
+		float slot_rotate_rate = 0.7f;
 		
 	protected:
 

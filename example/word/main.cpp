@@ -195,14 +195,14 @@ public:
 
         //cxts.push_back(label);
 
-        auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
+        auto she = std::shared_ptr<Sphere>(new Sphere());//36,31));
         she->create();
         she->get_comp<Transform>()->scale = glm::vec3(2.f);
         cxts.push_back(she);
         uint32_t cc = L'çù';
         for (int i = 0;i < she->slot_count(); ++i)
         {
-            auto w = create_word(font2, cc++ , onclick, onMove, onDown, 24);
+            auto w = create_word(font2, cc++ , onclick, nullptr, nullptr, 24);
             she->add(i,w);
         }
 

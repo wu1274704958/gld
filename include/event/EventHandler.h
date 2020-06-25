@@ -10,6 +10,8 @@ namespace evt {
 	{
 		using TargetTy = TarTy;
 		using FUNC_TY = std::function<bool( Event<TargetTy>*)>;
+
+		constexpr static size_t ReserveCount = 5;
 		
 		EventType last_type = EventType::None;
 
@@ -42,11 +44,9 @@ namespace evt {
 		bool handle_event(Event<TargetTy>*e)
 		{
 			last_type = e->type;
-			
-			for (int i = 0;i < evt_children_count();++i)
+
+			if (evt_children_count() > 0)
 			{
-				auto c = evt_child(i);
-				if (!c) continue;
 				if (e->type == EventType::MouseDown ||
 					e->type == EventType::MouseMove ||
 					e->type == EventType::MouseUp ||
@@ -55,18 +55,49 @@ namespace evt {
 					)
 				{
 					MouseEvent<TargetTy> ce = *reinterpret_cast<MouseEvent<TargetTy>*>(e);
-					if (c->onHandleMouseEvent(&ce))
+					std::tuple<EventHandler<TargetTy>*, glm::vec3, float> ehs[ReserveCount];
+					for (auto i = 0; i < wws::arrLen(ehs); ++i)
 					{
-						ce.target = c->get_target();
-						if (c->handle_event(e))
-							return true;
+						std::get<0>(ehs[i]) = nullptr;
+						std::get<1>(ehs[i]) = glm::vec3(0.f, 0.f, 0.f);
+						std::get<2>(ehs[i]) = std::numeric_limits<float>::max();
+					}
+
+					for (int i = 0; i < evt_children_count(); ++i)
+					{
+						auto c = evt_child(i);
+						if (!c) continue;
+						if (c->onHandleMouseEvent(&ce))
+						{
+							float dist = glm::length(ce.pos - ce.camera_pos);
+							for (auto j = 0; j < wws::arrLen(ehs); ++j)
+							{
+								if (dist < std::get<2>(ehs[j]))
+								{
+									if (j + 1 < wws::arrLen(ehs) && std::get<0>(ehs[j]))
+										ehs[j + 1] = ehs[j];
+									std::get<1>(ehs[j]) = ce.pos;
+									std::get<0>(ehs[j]) = c;
+									std::get<2>(ehs[j]) = dist;
+									break;
+								}
+							}
+						}
+					}
+					for (auto i = 0; i < wws::arrLen(ehs); ++i)
+					{
+						if (std::get<0>(ehs[i]))
+						{
+							ce.pos = std::get<1>(ehs[i]);
+							ce.target = std::get<0>(ehs[i])->get_target();
+							if (std::get<0>(ehs[i])->handle_event(&ce))
+								return true;
+						}
 					}
 				}
 			}
 
-			e->target = get_target();
-
-			if (has_listener(e->type))
+			if (has_listener(e->type) && handle_func[e->type])
 			{
 				return (handle_func[e->type])(e);
 			}
