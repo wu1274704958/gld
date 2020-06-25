@@ -195,15 +195,15 @@ public:
 
         //cxts.push_back(label);
 
-        auto she = std::shared_ptr<Sphere>(new Sphere(94,38));
+        auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         she->create();
+        she->get_comp<Transform>()->scale = glm::vec3(2.f);
         cxts.push_back(she);
         uint32_t cc = L'Á˘';
-        for (auto& r : she->standBy)
+        for (int i = 0;i < she->slot_count(); ++i)
         {
-            auto w = create_word(font2, cc++ , onclick, onMove, onDown, 64, 1.0f, 0.0f);
-            w->get_comp<Transform>()->pos = r;
-            she->add_child(w);
+            auto w = create_word(font2, cc++ , onclick, onMove, onDown, 24);
+            she->add(i,w);
         }
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'≈¿',1.f,0.f);
