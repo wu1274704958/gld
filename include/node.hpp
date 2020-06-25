@@ -282,6 +282,18 @@ namespace gld{
             return children;
         }
 
+        template<typename T>
+        T* get_user_data()
+        {
+            return reinterpret_cast<T*>(userData);
+        }
+
+        template<typename T>
+        void set_user_data(T* p)
+        {
+            userData = reinterpret_cast<void*>(p);
+        }
+
     protected:
         void clear_parent()
         {
@@ -292,5 +304,6 @@ namespace gld{
         std::vector<std::shared_ptr<Comp>>  components;
         std::vector<std::shared_ptr<Node<Comp>>> children;
         std::weak_ptr<Node<Comp>> parent;
+        void* userData;
     };
 }

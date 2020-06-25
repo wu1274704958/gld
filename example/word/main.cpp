@@ -195,7 +195,7 @@ public:
 
         //cxts.push_back(label);
 
-        auto she = std::shared_ptr<Sphere>(new Sphere());//36,31));
+        auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         she->create();
         she->get_comp<Transform>()->scale = glm::vec3(2.f);
         cxts.push_back(she);
