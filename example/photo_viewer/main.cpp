@@ -229,6 +229,14 @@ public:
         {
             pos.y -= 0.1f;
         }
+        if (btn == GLFW_MOUSE_BUTTON_4 && action == GLFW_PRESS)
+        {
+            pos.z -= 0.1f;
+        }
+        if (btn == GLFW_MOUSE_BUTTON_5 && action == GLFW_PRESS)
+        {
+            pos.z += 0.1f;
+        }
         if (btn == GLFW_MOUSE_BUTTON_3 && action == GLFW_PRESS)
         {
             glfwSetWindowShouldClose(m_window, 1);
@@ -269,8 +277,8 @@ int main()
 
     Demo1 d;
     if (d.initWindow(1920, 1080, "Clock", []() {
-        glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-        glfwWindowHint(GLFW_DECORATED, GL_FALSE);
+        //glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+        //glfwWindowHint(GLFW_DECORATED, GL_FALSE);
     }))
     {
         printf("init window failed\n");
