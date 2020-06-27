@@ -65,11 +65,11 @@ namespace gld{
 
         mat = glm::translate(mat, pos);
 
-        mat = glm::scale(mat, scale);
-
         mat = glm::rotate(mat, rotate.x, glm::vec3(1.f, 0.f, 0.f));
         mat = glm::rotate(mat, rotate.y, glm::vec3(0.f, 1.f, 0.f));
         mat = glm::rotate(mat, rotate.z, glm::vec3(0.f, 0.f, 1.f));
+
+        mat = glm::scale(mat, scale);
 
         auto n_ptr = get_node();
         if(n_ptr && n_ptr->has_parent())
