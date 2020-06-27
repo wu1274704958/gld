@@ -157,6 +157,33 @@ namespace gld{
         
     };
 
+    
+    template<TexType Tt>
+    struct Measure;
+
+    template<>
+    struct Measure<TexType::D1>
+    {
+        int width;
+    };
+
+    template<>
+    struct Measure<TexType::D2>
+    {
+        int width,height;
+    };
+
+    template<>
+    struct Measure<TexType::D3>
+    {
+        int width, height ,depth;
+    };
+
+    template<>
+    struct Measure<TexType::CUBE>
+    {
+    };
+
     template<TexType Tt>
     class Texture{
     public:
@@ -294,6 +321,7 @@ namespace gld{
         {
             return id;
         }
+        Measure<Tt> measure;
     protected:
         Glid id;
     };

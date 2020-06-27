@@ -190,6 +190,8 @@ gld::LoadTexture2D::RealRetTy   gld::LoadTexture2D::load(gld::LoadTexture2D::Arg
         res->set_paramter<TexOption::MAG_FILTER,TexOpVal::LINEAR>();
 
         res->generate_mipmap();
+        res->measure.width = image->width;
+        res->measure.height = image->height;
         
         res->unbind();
         s = true;
