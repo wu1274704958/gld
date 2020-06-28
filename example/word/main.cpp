@@ -199,18 +199,26 @@ public:
         she->create();
         she->get_comp<Transform>()->scale = glm::vec3(2.f);
         cxts.push_back(she);
-        uint32_t cc = L'琦';
+        /*uint32_t cc = L'琦';
         for (int i = 0;i < she->slot_count(); ++i)
         {
-            auto w = create_word(font2, cc++ , onclick, nullptr, nullptr, 24);
+            auto w = create_word(font2, cc++ , onclick, nullptr, nullptr, 24,1.0f,0.f);
             she->add(i,w);
-        }
+        }*/
 
         /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'爬',1.f,0.f);
         auto trans = a->get_comp<Transform>();
         auto mater = a->get_comp<DefTextMaterial>();
         mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
         cxts.push_back(a);*/
+
+        she->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
+        {
+            auto& p = c->get_comp<Transform>()->scale;
+            return glm::vec3(p.x / 2.f, p.y / 2.f, 1.f);
+        };
+
+        push_names(she,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
@@ -219,6 +227,18 @@ public:
             p->init();
 
         return 0;
+    }
+
+    void push_names(std::shared_ptr<Sphere>& sp,std::vector<std::string>&& v)
+    {
+        for (auto& s : v)
+        {
+            auto label = std::shared_ptr<Label>(new Label());
+            label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(),rd_0_1());
+            label->align = Align::Center;
+            label->set_text(s);
+            sp->rand_add(label);
+        }
     }
 
     std::shared_ptr<Node<Component>> create_word(std::string& font, uint32_t k, 

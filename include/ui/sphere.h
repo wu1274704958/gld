@@ -158,7 +158,7 @@ namespace gld {
 		float slot_rotate_x = 0.f;
 		float slot_rotate_y = 0.f;
 		float slot_rotate_rate = 0.7f;
-		
+		std::function<glm::vec3(const std::shared_ptr<Node<Component>>&)> onAddOffset;
 	protected:
 
 		void _add(size_t idx, std::shared_ptr<Node<Component>> n)
@@ -168,7 +168,14 @@ namespace gld {
 				remove_child(pos_map[idx]);
 			}
 			pos_map[idx] = n;
-			n->get_comp<Transform>()->pos = standBy[idx];
+			if (onAddOffset)
+			{
+				n->get_comp<Transform>()->pos = standBy[idx] + onAddOffset(n);
+			}
+			else {
+				n->get_comp<Transform>()->pos = standBy[idx];
+			}
+			
 			add_child(n);
 		}
 

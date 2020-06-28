@@ -13,7 +13,7 @@ if(WIN32)
     else()
         add_link_options(/SAFESEH:NO /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
     endif()
-    message(${CMAKE_EXE_LINKER_FLAGS})
+    message("${CMAKE_EXE_LINKER_FLAGS}")
 else()
 
 
