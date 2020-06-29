@@ -112,6 +112,7 @@ namespace txt {
 					return true;
 			}
 			auto& page = tp_pages.get().back();
+			page.get_face()->set_pixel_size(size, size);
 			if ( page.test(c) )
 			{
 				return page.put(c);
@@ -138,6 +139,7 @@ namespace txt {
 					return std::make_tuple(true,std::make_optional(std::ref(page)));
 			}
 			auto& page = tp_pages.get().back();
+			page.get_face()->set_pixel_size(size, size);
 			if (page.test(c))
 			{
 				bool f = page.put(c);

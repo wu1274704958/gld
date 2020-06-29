@@ -110,6 +110,10 @@ namespace txt {
 			}
 			return generate_ptr;
 		}
+		std::shared_ptr<ft2::Face>& get_face()
+		{
+			return face;
+		}
 
 	protected:
 		void generate()
