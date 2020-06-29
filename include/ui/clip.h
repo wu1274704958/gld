@@ -69,6 +69,12 @@ namespace gld {
 			height = h * Word::WORD_SCALE;
 		}
 
+		void set_size_no_scale(float w, float h)
+		{
+			width = w;
+			height = h;
+		}
+
 		void refresh()
 		{
 			local->scale = glm::vec3(width , height , 1.0f);

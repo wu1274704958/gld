@@ -138,7 +138,7 @@ public:
             return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
         };
 
-        push_names(list_ui,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传","这个歌名超级长啊啊啊啊!"
+        push_names(list_ui,{"这个歌名超级长啊啊啊啊!", "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传"
             ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
             ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
             ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
@@ -160,13 +160,22 @@ public:
         int i = 0;
         for (auto& s : v)
         {
-            auto label = std::shared_ptr<Label>(new Label(32 * 6,32));
+            auto label = std::shared_ptr<Label>(new Label());
             label->auto_scroll = true;
             label->font = font2;
             label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(),rd_0_1());
             label->align = Align::Center;
             label->size = 32;
+            label->onTextSizeChange = [&label](float w, float h)
+            {
+                constexpr float max_w = 32.f * 4.f * Word::WORD_SCALE;
+                label->set_size_no_scale(w > max_w ? max_w : w , h);
+                label->refresh();
+            };
             label->set_text(s);
+            label->add_listener(EventType::Click, [=](Event<Node<Component>>* e)->bool {
+                return this->onClickPlay(e);
+            });
             sp->rand_add(label);
         }
     }
@@ -188,6 +197,18 @@ public:
         auto mater = a->get_comp<DefTextMaterial>();
         mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
         return a;
+    }
+
+    bool onClickPlay(Event<Node<Component>>* e)
+    {
+        auto tar = e->target.lock();
+        auto p = dynamic_cast<Label*>(tar.get());
+        curr_play->set_text(p->text);
+        for (auto& c : curr_play->get_children())
+        {
+            c->init();
+        }
+        return true;
     }
 
     void draw() override
