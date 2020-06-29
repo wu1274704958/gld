@@ -111,6 +111,16 @@ namespace gld {
 
 
 		std::shared_ptr< NodeWithEvent> node;
+
+		float get_width()
+		{
+			return width;
+		}
+		float get_height()
+		{
+			return height;
+		}
+
 	protected:
 		float width, height,originX,originY;
 		std::shared_ptr< LocalTransForm> local;

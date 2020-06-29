@@ -167,8 +167,8 @@ public:
         //cxts.push_back(back);
 
         //auto label = std::shared_ptr<Label>(new Label());
-        //label->align = Align::Left;
-        //label->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
+        //label->align = Align::Center;
+        //label->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
         //
         //label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
         //    auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
@@ -194,6 +194,7 @@ public:
         //});
 
         //cxts.push_back(label);
+        //label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);
 
         auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         she->create();
@@ -214,11 +215,17 @@ public:
 
         she->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
         {
-            auto& p = c->get_comp<Transform>()->scale;
-            return glm::vec3(p.x / 2.f, p.y / 2.f, 1.f);
+            auto p = dynamic_cast<Label*>(c.get());
+            return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
         };
 
-        push_names(she,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
+        push_names(she,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传"
+            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传",
+            "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
@@ -231,13 +238,15 @@ public:
 
     void push_names(std::shared_ptr<Sphere>& sp,std::vector<std::string>&& v)
     {
+        int i = 0;
         for (auto& s : v)
         {
             auto label = std::shared_ptr<Label>(new Label());
             label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(),rd_0_1());
             label->align = Align::Center;
+            label->size = 24;
             label->set_text(s);
-            sp->rand_add(label);
+            sp->add(i++,label);
         }
     }
 
