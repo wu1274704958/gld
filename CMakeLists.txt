@@ -113,6 +113,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR clock2 FILES main.cpp)
     CreateExample(DIR word FILES main.cpp)
     CreateExample(DIR photo_viewer FILES main.cpp)
+    CreateExample(DIR music_player FILES main.cpp)
 endif()
 
         

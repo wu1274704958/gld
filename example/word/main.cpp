@@ -91,7 +91,7 @@ public:
         fill_color.sync();
 
         std::string font = "fonts/SHOWG.TTF";
-        std::string font2 = "fonts/SIMHEI.TTF";
+        std::string font2 = "fonts/huang_you.ttf";
 
         auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
 
@@ -166,40 +166,45 @@ public:
 
         //cxts.push_back(back);
 
-        //auto label = std::shared_ptr<Label>(new Label());
-        //label->align = Align::Center;
-        //label->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
-        //
-        //label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
-        //    auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
-        //    auto p = dynamic_cast<Label*>(e->target.lock().get());
-        //    if (me->btn == GLFW_MOUSE_BUTTON_1)
-        //    {
-        //        int v = static_cast<int>(p->align);
-        //        ++v;
-        //        if (v == 3) v = 0;
-        //        p->set_align(static_cast<Align>(v));
-        //    }
-        //    else if (me->btn == GLFW_MOUSE_BUTTON_2) {
-        //        p->font = font;
-        //        p->set_text("I Love You\n Forever!!!");
-        //        p->node->init();
-        //    }
-        //    else if (me->btn == GLFW_MOUSE_BUTTON_3) {
-        //        p->font = font2;
-        //        p->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
-        //        p->node->init();
-        //    }
-        //    return true;
-        //});
+        auto label = std::shared_ptr<Label>(new Label());
+        label->align = Align::Center;
+        label->font = font2;
+        label->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
+        
+        label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
+            auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+            auto p = dynamic_cast<Label*>(e->target.lock().get());
+            if (me->btn == GLFW_MOUSE_BUTTON_1)
+            {
+                int v = static_cast<int>(p->align);
+                ++v;
+                if (v == 3) v = 0;
+                p->set_align(static_cast<Align>(v));
+            }
+            else if (me->btn == GLFW_MOUSE_BUTTON_2) {
+                p->font = font;
+                p->set_text("I Love You\n Forever!!!");
+                p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
+                p->node->init();
+                
+            }
+            else if (me->btn == GLFW_MOUSE_BUTTON_3) {
+                p->font = font2;
+                p->mulitline = true;
+                p->set_text("断桥残雪 -- 许嵩\n好听! Hello? go!go!go!\n");
+                p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
+                p->node->init();
+            }
+            return true;
+        });
 
-        //cxts.push_back(label);
-        //label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);
+        cxts.push_back(label);
+        label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);
 
-        auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
-        she->create();
+        //auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
+        //she->create();
         //she->get_comp<Transform>()->scale = glm::vec3(2.f);
-        cxts.push_back(she);
+        //cxts.push_back(she);
         /*uint32_t cc = L'琦';
         for (int i = 0;i < she->slot_count(); ++i)
         {
@@ -213,19 +218,19 @@ public:
         mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
         cxts.push_back(a);*/
 
-        she->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
-        {
-            auto p = dynamic_cast<Label*>(c.get());
-            return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
-        };
-
-        push_names(she,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传"
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传",
-            "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
+        //she->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
+        //{
+        //    auto p = dynamic_cast<Label*>(c.get());
+        //    return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
+        //};
+        //
+        //push_names(she,{ "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传"
+        //    ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+        //    ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+        //    ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+        //    ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
+        //    ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传",
+        //    "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);

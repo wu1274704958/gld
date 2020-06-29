@@ -227,12 +227,26 @@ namespace gld {
 		{
 			margin.w = v * Word::WORD_SCALE;
 		}
+
+		void onUpdate()
+		{
+			if (auto_scroll && !mulitline && text_width > width)
+			{
+				auto& p = node->get_comp<Transform>()->pos;
+				if (p.x < -(text_width - width))
+					scroll_dir = 1.f;
+				else if (p.x >= 0.f)
+					scroll_dir = -1.f;
+				p.x += scroll_dir * FrameRate::get_ms() * scroll_rate * (float)size * Word::WORD_SCALE;
+			}
+		}
 		
 		std::string text,font = "fonts/SIMHEI.TTF";
 		float text_width,text_height;
 		bool auto_size = false,
 			mulitline = false,
-			word_warp = false;
+			word_warp = false,
+			auto_scroll = false;
 		Align align = Align::Left;
 		glm::vec4 color = glm::vec4(1.f);
 		std::function<void(float, float)> onSizeChange;
@@ -240,7 +254,7 @@ namespace gld {
 		glm::vec4 margin = glm::vec4( 0.f,0.f,0.f,0.f );
 		int size = 96;
 		float leading = 0.f;
-
+		float scroll_rate = 0.0026f;
 		constexpr static float TAB_SIZE = 4;
 		constexpr static float SPACE_RATIO = 0.5f;
 
@@ -268,14 +282,17 @@ namespace gld {
 			else if (c == L'\t')
 				x += SPACE_RATIO * static_cast<float>(size) * TAB_SIZE * Word::WORD_SCALE;
 			else if (c == L'\n')
-				do_enter();
+			{
+				if(mulitline)
+					do_enter();
+			}
 			else {
 				auto a = std::shared_ptr<Word>(new Word(font, size, c, glm::vec2(1.f, 0.f)));
 				a->load();
 				a->get_comp<Transform>()->pos = glm::vec3(x, y - static_cast<float>(a->wd.off_y) * Word::WORD_SCALE, 0.f);
 				a->get_comp<txt::DefTextMaterial>()->color = color;
 
-				if (word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
+				if (mulitline && word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
 					do_enter();
 				else
 				{
@@ -292,5 +309,6 @@ namespace gld {
 		};
 
 		std::vector<Label::Row> rs;
+		float scroll_dir = -1.f;
 	};
 }
