@@ -122,7 +122,7 @@ namespace gld {
 			auto w = e->target.lock();
 			if (w && e->btn == GLFW_MOUSE_BUTTON_2)
 			{
-				pressed_pos = e->pos;
+				pressed_pos = e->w_pos;
 				enable_mouse_move = true;
 			}
 			return true;
@@ -133,12 +133,12 @@ namespace gld {
 			auto w = e->target.lock();
 			if (enable_mouse_move && w && e->btn == GLFW_MOUSE_BUTTON_2)
 			{
-				auto of = e->pos - pressed_pos;
+				auto of = e->w_pos - pressed_pos;
 				slot_rotate_y += of.x * slot_rotate_rate;
-				slot_rotate_x -= of.y * slot_rotate_rate;
+				slot_rotate_x += of.y * slot_rotate_rate;
 				set_slot_rotate();
 				//update_collision();
-				pressed_pos = e->pos;
+				pressed_pos = e->w_pos;
 				return true;
 			}
 			return false;
@@ -183,7 +183,7 @@ namespace gld {
 
 		float slot_rotate_x = 0.f;
 		float slot_rotate_y = 0.f;
-		float slot_rotate_rate = 0.7f;
+		float slot_rotate_rate = 0.007f;
 		std::function<glm::vec3(const std::shared_ptr<Node<Component>>&)> onAddOffset;
 	protected:
 
@@ -210,7 +210,7 @@ namespace gld {
 		std::unordered_map < size_t , std::shared_ptr<Node<Component>>> pos_map;
 		std::vector<glm::vec3> standBy;
 		float off_angle = 0.01f;
-		glm::vec3 pressed_pos;
+		glm::vec2 pressed_pos;
 		bool enable_mouse_move = false;
 
 	};

@@ -198,7 +198,7 @@ public:
 
         auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         she->create();
-        she->get_comp<Transform>()->scale = glm::vec3(2.f);
+        //she->get_comp<Transform>()->scale = glm::vec3(2.f);
         cxts.push_back(she);
         /*uint32_t cc = L'çù';
         for (int i = 0;i < she->slot_count(); ++i)
@@ -246,7 +246,7 @@ public:
             label->align = Align::Center;
             label->size = 24;
             label->set_text(s);
-            sp->add(i++,label);
+            sp->rand_add(label);
         }
     }
 
