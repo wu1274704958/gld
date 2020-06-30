@@ -40,6 +40,7 @@
 #include <ui/clip.h>
 #include <ui/label.h>
 #include <ui/sphere.h>
+#include <tools/executor.h>
 
 
 using namespace gld;
@@ -166,11 +167,13 @@ public:
             label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(),rd_0_1());
             label->align = Align::Center;
             label->size = 32;
-            label->onTextSizeChange = [&label](float w, float h)
+            label->onTextSizeChange = [label,this](float w, float h)
             {
-                constexpr float max_w = 32.f * 4.f * Word::WORD_SCALE;
-                label->set_size_no_scale(w > max_w ? max_w : w , h);
-                label->refresh();
+                exec.delay([label,w,h]() {
+                    constexpr float max_w = 32.f * 6.f * Word::WORD_SCALE;
+                    label->set_size_no_scale(w > max_w ? max_w : w, h);
+                    label->refresh();
+                });
             };
             label->set_text(s);
             label->add_listener(EventType::Click, [=](Event<Node<Component>>* e)->bool {
@@ -203,6 +206,7 @@ public:
     {
         auto tar = e->target.lock();
         auto p = dynamic_cast<Label*>(tar.get());
+        dbg(p->text);
         curr_play->set_text(p->text);
         for (auto& c : curr_play->get_children())
         {
@@ -222,7 +226,7 @@ public:
 
         update();
         update_matrix();
-
+        exec.do_loop();
     }
 
     void update_mat(std::vector<std::shared_ptr< gld::Node<gld::Component>>>& ns)
@@ -302,6 +306,7 @@ private:
     std::shared_ptr<Label> curr_play;
     std::string font = "fonts/SHOWG.TTF";
     std::string font2 = "fonts/happy.ttf";
+    Executor exec;
 };
 
 #ifndef PF_ANDROID
