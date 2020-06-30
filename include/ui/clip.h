@@ -58,7 +58,7 @@ namespace gld {
 			node = std::make_shared< NodeWithEvent>();
 			node->add_comp<gld::Transform>(std::make_shared<gld::Transform>());
 
-			node->add_comp<gld::def::Collision>(coll);
+			//node->add_comp<gld::def::Collision>(coll);
 			
 			add_child(node);
 		}									   

@@ -93,6 +93,9 @@ namespace evt {
 							if (std::get<0>(ehs[i])->handle_event(&ce))
 								return true;
 						}
+						else {
+							break;
+						}
 					}
 				}
 			}
