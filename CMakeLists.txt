@@ -28,6 +28,7 @@ find_package(ASSIMP)
 find_package(FT2PP)
 find_package(freetype)
 find_package(SPY)
+find_package(BASS24)
 
 add_definitions(-DNOMINMAX)
 
@@ -113,7 +114,12 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR clock2 FILES main.cpp)
     CreateExample(DIR word FILES main.cpp)
     CreateExample(DIR photo_viewer FILES main.cpp)
-    CreateExample(DIR music_player FILES main.cpp)
+
+
+    CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp)
+    target_include_directories(music_player PRIVATE ${BASS24_INCLUDE_DIR})
+    target_link_libraries(music_player ${BASS24_LIBRARYS} )
+
 endif()
 
         
