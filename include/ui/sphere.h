@@ -107,6 +107,12 @@ namespace gld {
 			return false;
 		}
 
+		void remove_all()
+		{
+			pos_map.clear();
+			Node::remove_all();
+		}
+
 		size_t slot_count()
 		{
 			return standBy.size();
@@ -194,12 +200,17 @@ namespace gld {
 				remove_child(pos_map[idx]);
 			}
 			pos_map[idx] = n;
+			glm::mat4 matrix(1.f);
+
+			matrix = glm::rotate(matrix, slot_rotate_x, glm::vec3(1.f, 0.f, 0.f));
+			matrix = glm::rotate(matrix, slot_rotate_y, glm::vec3(0.f, 1.f, 0.f));
+
 			if (onAddOffset)
 			{
-				n->get_comp<Transform>()->pos = standBy[idx] + onAddOffset(n);
+				n->get_comp<Transform>()->pos = glm::mat3(matrix) * (standBy[idx] + onAddOffset(n));
 			}
 			else {
-				n->get_comp<Transform>()->pos = standBy[idx];
+				n->get_comp<Transform>()->pos = glm::mat3(matrix) * standBy[idx];
 			}
 			
 			add_child(n);
