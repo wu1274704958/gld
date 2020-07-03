@@ -16,7 +16,7 @@ fv::MusicPlayer::MusicPlayer(bool enable3d)
 	{
 		if (!BASS_Init(-1, 44100, 0, NULL, NULL))
 		{
-			throw "BASS init failed";
+			//throw "BASS init failed";
 		}
 	}
 	IsEnable3D = enable3d;

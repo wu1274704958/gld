@@ -41,13 +41,19 @@
 #include <ui/label.h>
 #include <ui/sphere.h>
 #include <tools/executor.h>
+#include "MusicPlayer.h"
+#include "Pumper.h"
 
+#ifndef  PF_ANDROID
+static std::pair<const char**, int> LaunchArgs;
+#endif // ! PF_ANDROID
 
 using namespace gld;
 namespace fs = std::filesystem;
 
 using  namespace dbg::literal;
 
+using namespace fv;
 using namespace wws;
 using namespace gen;
 using namespace txt;
@@ -58,10 +64,14 @@ class Demo1 : public RenderDemoRotate {
 public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
-             glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f))
+             glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f)),
+            pumper(player)
         {}
     int init() override
     {
+        if (LaunchArgs.second < 2)
+            return -1;
+
         event_dispatcher.child = [=](int i)->EventHandler<Node<Component>>* {
             try {
                 return dynamic_cast<evt::EventHandler<Node<Component>>*>(cxts[i].get());
@@ -139,13 +149,17 @@ public:
             return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
         };
 
-        push_names(list_ui,{"这个歌名超级长啊啊啊啊!", "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传"
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" 
-            ,"断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传",
-            "断桥残雪","大时代","阿萨德","哦IP技术","陪我i看到","北京","白蛇传" });
+        pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
+            
+            list_ui->remove_all(); 
+            int idx = 0;
+            
+            for (auto& s : *list)
+            {
+                push_name(list_ui, s.get_name(),idx++);
+            }
+        });
+        
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
@@ -153,34 +167,44 @@ public:
          for (auto& p : cxts)
             p->init();
 
+         pumper.init(LaunchArgs.first[1]);
+
         return 0;
     }
 
     void push_names(std::shared_ptr<Sphere>& sp,std::vector<std::string>&& v)
     {
-        int i = 0;
+        int idx = 0;
         for (auto& s : v)
         {
-            auto label = std::shared_ptr<Label>(new Label());
-            label->auto_scroll = true;
-            label->font = font2;
-            label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(),rd_0_1());
-            label->align = Align::Center;
-            label->size = 32;
-            label->onTextSizeChange = [label,this](float w, float h)
-            {
-                exec.delay([label,w,h]() {
-                    constexpr float max_w = 32.f * 6.f * Word::WORD_SCALE;
-                    label->set_size_no_scale(w > max_w ? max_w : w, h);
-                    label->refresh();
-                });
-            };
-            label->set_text(s);
-            label->add_listener(EventType::Click, [=](Event<Node<Component>>* e)->bool {
-                return this->onClickPlay(e);
-            });
-            sp->rand_add(label);
+            push_name(sp,s,idx++);
         }
+    }
+
+    template<typename T>
+    void push_name(std::shared_ptr<Sphere>& sp, T& v,int idx)
+    {
+        auto label = std::shared_ptr<Label>(new Label());
+        label->auto_scroll = true;
+        label->font = font2;
+        label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
+        label->align = Align::Center;
+        label->size = 32;
+        label->onTextSizeChange = [sp,label, this](float w, float h)
+        {
+            exec.delay([sp,label, w, h]() {
+                constexpr float max_w = 32.f * 6.f * Word::WORD_SCALE;
+                label->set_size_no_scale(w > max_w ? max_w : w, h);
+                label->refresh();
+                sp->rand_add(label);
+            });
+        };
+        label->set_user_data((int*)idx);
+        label->set_text(std::move(v));
+        label->add_listener(EventType::Click, [=](Event<Node<Component>>* e)->bool {
+            return this->onClickPlay(e);
+        });
+        label->init();
     }
 
     std::shared_ptr<Node<Component>> create_word(std::string& font, uint32_t k, 
@@ -208,10 +232,13 @@ public:
         auto p = dynamic_cast<Label*>(tar.get());
         dbg(p->text);
         curr_play->set_text(p->text);
+        int idx = (int)(p->get_user_data<int*>());
+        pumper.onclick(idx);
         for (auto& c : curr_play->get_children())
         {
             c->init();
         }
+        
         return true;
     }
 
@@ -307,11 +334,16 @@ private:
     std::string font = "fonts/SHOWG.TTF";
     std::string font2 = "fonts/happy.ttf";
     Executor exec;
+    MusicPlayer player;
+    Pumper pumper;
 };
 
 #ifndef PF_ANDROID
-int main()
+
+int main(int argc,const char**args)
 {
+    LaunchArgs = std::make_pair(args, argc);
+    
     fs::path root = wws::find_path(3, "res", true);
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
@@ -321,7 +353,8 @@ int main()
         printf("init window failed\n");
         return -1;
     }
-    d.init();
+    int err = 0;
+    if ((err = d.init()) != 0) return err;
     d.run();
 
     return 0;

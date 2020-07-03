@@ -5,7 +5,7 @@
 
 
 
-fv::Pumper::Pumper(std::stack<std::shared_ptr<std::vector<MMFile>>> &root, MusicPlayer &player) : m_root(root),m_player(player)
+fv::Pumper::Pumper( MusicPlayer &player) : m_player(player)
 {
 	m_mode = NONE;
 	pump_dir = false;
@@ -76,7 +76,7 @@ void fv::Pumper::setPumpDir(bool pump_dir)
 	this->pump_dir = pump_dir;
 }
 
-void fv::Pumper::setFillMusicFunc(std::function<void()> f)
+void fv::Pumper::setFillMusicFunc(std::function<void(const std::shared_ptr<std::vector<MMFile>>&)> f)
 {
 	fill_music_func = f;
 }
@@ -114,7 +114,7 @@ void fv::Pumper::all_templet()
 			temp->reserve(5);
 			GetFileName::getFileNameW(*temp, m_root.top()->at(m_index).getAbsolutePath());
 			m_root.push(temp);
-			fill_music_func();
+			fill_music_func(temp);
 			m_index = 0;
 		}
 		else {
@@ -146,4 +146,48 @@ void fv::Pumper::cleanup()
 		delete next_music;
 		next_music = nullptr;
 	}
+}
+
+void fv::Pumper::init(const char* root_dir)
+{
+	std::shared_ptr<std::vector<MMFile>> temp = std::make_shared<std::vector<MMFile>>();
+	temp->reserve(5);
+	GetFileName::getFileNameA(*temp, root_dir);
+	m_root.push(temp);
+	fill_music_func(temp);
+	m_index = 0;
+}
+
+std::shared_ptr<std::vector<MMFile>> fv::Pumper::pop()
+{
+	if (m_root.size() <= 1)
+		return nullptr;
+	std::shared_ptr<std::vector<MMFile>> res = m_root.top();
+	m_root.pop();
+	return res;
+}
+
+void fv::Pumper::onclick(int idx)
+{
+	auto& mfs = m_root.top();
+	if (mfs && mfs->size() > idx)
+	{
+		auto& pmf = (*mfs)[idx];
+		if (pmf.getType() == MMFile::TYPE_DIR)
+		{
+			auto temp_v = std::make_shared<std::vector<MMFile>>();
+			temp_v->reserve(5);
+			GetFileName::getFileNameW(*temp_v, pmf.getAbsolutePath());
+
+			//std::lock_guard<std::mutex> lock(load_file_name_mutex);
+			m_root.push(temp_v);
+			m_index = 0;
+			fill_music_func(temp_v);
+		}
+		else {
+			m_player.playStream(pmf);
+			setIndex(idx + 1);
+		}
+	}
+
 }

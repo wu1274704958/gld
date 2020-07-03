@@ -48,6 +48,26 @@ public:
 
     virtual  ~MMFile();
 
+    const std::wstring& get_name() const
+    {
+        return *name;
+    }
+
+    const std::wstring& get_path() const
+    {
+        return *path;
+    }
+
+    const std::wstring& get_suffix() const
+    {
+        return *suffix;
+    }
+
+    const std::wstring& get_absolutePath() const
+    {
+        return *absolutePath;
+    }
+
 
 private:
 	void cleanup();
