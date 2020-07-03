@@ -43,7 +43,16 @@ namespace gld {
 		void set_text(const std::string& txt)
 		{
 			text = txt;
+			w_text = cvt::ansi2unicode(txt);
 			if(!txt.empty())
+				refresh_ui();
+		}
+
+		void set_text(const std::wstring& txt)
+		{
+			text = cvt::unicode2ansi(txt);
+			w_text = txt;
+			if (!txt.empty())
 				refresh_ui();
 		}
 
@@ -56,9 +65,8 @@ namespace gld {
 			}
 
 			rs.clear();
-
-			auto unicode = cvt::ansi2unicode(text);
-			set_word_right(unicode);
+			
+			set_word_right(w_text);
 		}
 
 		void set_align(Align al)
@@ -240,7 +248,7 @@ namespace gld {
 				p.x += scroll_dir * FrameRate::get_ms() * scroll_rate * (float)size * Word::WORD_SCALE;
 			}
 		}
-		
+		std::wstring w_text;
 		std::string text,font = "fonts/SIMHEI.TTF";
 		float text_width,text_height;
 		bool auto_size = false,
