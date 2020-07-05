@@ -43,6 +43,7 @@
 #include <tools/executor.h>
 #include "MusicPlayer.h"
 #include "Pumper.h"
+#include "tools/tween.hpp"
 
 #ifndef  PF_ANDROID
 static std::pair<const char**, int> LaunchArgs;
