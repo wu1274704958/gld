@@ -192,11 +192,11 @@ public:
         };
         constexpr float dur = 500.f;
         std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
-        App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Expo::easeOut);
-        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [ tra, f, dur,func]() {
+        App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Circ::easeOut);
+        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Circ::easeOut, f, [ tra, f, dur,func]() {
             func();
-            App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Expo::easeIn, f);
-            App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Expo::easeIn);
+            App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Circ::easeIn, f);
+            App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Circ::easeIn);
         });
     }
 
