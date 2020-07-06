@@ -10,7 +10,7 @@ namespace fv {
 		MusicPlayer(bool enable3d = false);
 		~MusicPlayer();
 
-		void playStream(const  MMFile& file, bool loop = false);
+		int playStream(const  MMFile& file, bool loop = false);
 		void play(bool loop = false);
 		void pause();
 		void stop();
@@ -28,9 +28,12 @@ namespace fv {
 		bool isEnable3D();
 		bool isSupport3D();
 
-	private:
+		int get_init_err_code();
+
+	protected:
 		HSTREAM chan = 0;
 		QWORD chan_max_len = 0;
+		int init_error_code = 0;
 		bool IsEnable3D = false;
 		bool IsSupport3D = false;
 	};

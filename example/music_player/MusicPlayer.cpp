@@ -16,8 +16,10 @@ fv::MusicPlayer::MusicPlayer(bool enable3d)
 	{
 		if (!BASS_Init(-1, 44100, 0, NULL, NULL))
 		{
-			throw "BASS init failed";
+			init_error_code = BASS_ErrorGetCode();
+			//throw "BASS init failed";
 		}
+		
 	}
 	IsEnable3D = enable3d;
 }
@@ -29,8 +31,10 @@ fv::MusicPlayer::~MusicPlayer()
 	BASS_Free();
 }
 
-void fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
+int fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
 {
+	if (init_error_code != 0)
+		return init_error_code;
 	if (chan)
 	{
 		if (BASS_ChannelIsActive(chan) != BASS_ACTIVE_STOPPED)
@@ -97,6 +101,7 @@ void fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
 	{
 		printf("%d \n", BASS_ErrorGetCode());
 	}
+	return 0;
 }
 
 void fv::MusicPlayer::play(bool loop)
@@ -195,6 +200,11 @@ bool fv::MusicPlayer::isEnable3D()
 bool fv::MusicPlayer::isSupport3D()
 {
 	return IsSupport3D;
+}
+
+int fv::MusicPlayer::get_init_err_code()
+{
+	return init_error_code;
 }
 
 
