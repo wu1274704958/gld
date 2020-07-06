@@ -44,6 +44,7 @@
 #include "MusicPlayer.h"
 #include "Pumper.h"
 #include "tools/tween.hpp"
+#include "tools/app.h"
 
 #ifndef  PF_ANDROID
 static std::pair<const char**, int> LaunchArgs;
@@ -66,7 +67,7 @@ public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
              glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f)),
-            pumper(player),tween(exec)
+            pumper(player)
         {}
     int init() override
     {
@@ -191,11 +192,11 @@ public:
         };
         constexpr float dur = 500.f;
         std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
-        tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Expo::easeOut);
-        tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [this, tra, f, dur,func]() {
+        App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Expo::easeOut);
+        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [ tra, f, dur,func]() {
             func();
-            tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Expo::easeIn, f);
-            tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Expo::easeIn);
+            App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Expo::easeIn, f);
+            App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Expo::easeIn);
         });
     }
 
@@ -210,7 +211,7 @@ public:
         label->size = 32;
         label->onTextSizeChange = [sp,label, this](float w, float h)
         {
-            exec.delay([sp,label, w, h]() {
+            App::instance()->exec.delay([sp,label, w, h]() {
                 constexpr float max_w = 32.f * 6.f * Word::WORD_SCALE;
                 label->set_size_no_scale(w > max_w ? max_w : w, h);
                 label->refresh();
@@ -255,13 +256,13 @@ public:
         
         constexpr float dur = 500.f;
         std::weak_ptr<Transform> tra = curr_play->get_comp_ex<Transform>();
-        tween.to(tra, &Transform::pos, &glm::vec3::z, dur, -5.f, 0.f, tween::Circ::easeInOut, [this, tra, dur, n_text = std::move(new_text)]() mutable {
+        App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, -5.f, 0.f, tween::Circ::easeInOut, [this, tra, dur, n_text = std::move(new_text)]() mutable {
             curr_play->set_text(n_text);
             for (auto& c : curr_play->get_children())
             {
                 c->init();
             }
-            tween.to(tra, &Transform::pos, &glm::vec3::z, dur, 0.f, -5.f, tween::Circ::easeInOut);
+            App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, 0.f, -5.f, tween::Circ::easeInOut);
         });
         return true;
     }
@@ -277,7 +278,7 @@ public:
 
         update();
         update_matrix();
-        exec.do_loop();
+        App::instance()->exec.do_loop();
     }
 
     void update_mat(std::vector<std::shared_ptr< gld::Node<gld::Component>>>& ns)
@@ -357,10 +358,8 @@ private:
     std::shared_ptr<Label> curr_play;
     std::string font = "fonts/SHOWG.TTF";
     std::string font2 = "fonts/happy.ttf";
-    Executor exec;
     MusicPlayer player;
     Pumper pumper;
-    Tween tween;
 };
 
 #ifndef PF_ANDROID
@@ -368,7 +367,7 @@ private:
 int main(int argc,const char**args)
 {
     LaunchArgs = std::make_pair(args, argc);
-    
+
     fs::path root = wws::find_path(3, "res", true);
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
