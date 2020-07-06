@@ -20,6 +20,18 @@ namespace gld{
             }
             return nullptr;
         }
+
+        template<typename T>
+        std::shared_ptr<T> get_comp_ex()
+        {
+            const std::type_info& ty_id = typeid(T);
+            for (int i = 0; i < components.size(); ++i)
+            {
+                if (comp_ty_id(i) == ty_id)
+                    return std::dynamic_pointer_cast<T>(components[i]);
+            }
+            return nullptr;
+        }
         template<typename T>
         bool add_comp(std::shared_ptr<T> comp)
         {

@@ -66,7 +66,7 @@ public:
     Demo1() : perspective("perspective"), world("world"), fill_color("fill_color"),
         event_dispatcher(*perspective,(*world),width,height,
              glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f)),
-            pumper(player)
+            pumper(player),tween(exec)
         {}
     int init() override
     {
@@ -159,6 +159,7 @@ public:
             {
                 push_name(list_ui, s.get_name(),idx++);
             }
+            list_ani();
         });
         
        
@@ -180,6 +181,20 @@ public:
         {
             push_name(sp,s,idx++);
         }
+    }
+
+    void list_ani()
+    {
+        std::function<glm::vec3(float)> f = [](float v)->glm::vec3 {
+            return glm::vec3(v, v, v);
+        };
+        constexpr float dur = 500.f;
+        std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
+        tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Expo::easeOut);
+        tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [this, tra, f, dur]() {
+            tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Expo::easeIn, f);
+            tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Expo::easeIn);
+        });
     }
 
     template<typename T>
@@ -337,6 +352,7 @@ private:
     Executor exec;
     MusicPlayer player;
     Pumper pumper;
+    Tween tween;
 };
 
 #ifndef PF_ANDROID

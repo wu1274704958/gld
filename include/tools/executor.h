@@ -27,21 +27,31 @@ namespace gld {
 
 		void delay(std::function<void()> f)
 		{
-			std::lock_guard<std::mutex> guard(mtx);
-			que.push_back(Task(f));
+			push(Task(f));
 		}
 
 		void delay(std::function<void()> f, int ms)
 		{
 			auto end = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::system_clock::now().time_since_epoch() ).count() + ms;
-			std::lock_guard<std::mutex> guard(mtx);
-			que.push_back(Task(f,TaskType::DelayMS,end));
+			push(Task(f,TaskType::DelayMS,end));
 		}
 
 		void delay_frame(std::function<void()> f, int frame)
 		{
-			std::lock_guard<std::mutex> guard(mtx);
-			que.push_back(Task(f, TaskType::DelayFrame, frame));
+			push(Task(f, TaskType::DelayFrame, frame));
+		}
+
+		void push(Task t)
+		{
+			if (mtx.try_lock())
+			{
+				que.push_back(std::move(t));
+				mtx.unlock();
+			}
+			else {
+				std::lock_guard<std::mutex> guard(temp_mtx);
+				temp_que.push_back(std::move(t));
+			}
 		}
 
 		void do_loop()
@@ -63,7 +73,8 @@ namespace gld {
 						it = que.erase(it);
 						continue;
 					}
-				}else if(it->ty == TaskType::DelayMS)
+				}
+				else if (it->ty == TaskType::DelayMS)
 				{
 					auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 					if (now >= it->val)
@@ -75,9 +86,18 @@ namespace gld {
 				}
 				++it;
 			}
+			std::lock_guard<std::mutex> t_guard(temp_mtx);
+			if (!temp_que.empty())
+			{
+				for (auto& t : temp_que)
+					que.push_back(std::move(t));
+				temp_que.clear();
+			}
+				
 		}
 	protected:
 		std::vector<Task> que;
-		std::mutex mtx;
+		std::vector<Task> temp_que;
+		std::mutex mtx,temp_mtx;
 	};
 }
