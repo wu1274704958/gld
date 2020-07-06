@@ -151,15 +151,16 @@ public:
         };
 
         pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
-            
-            list_ui->remove_all(); 
-            int idx = 0;
-            
-            for (auto& s : *list)
-            {
-                push_name(list_ui, s.get_name(),idx++);
-            }
-            list_ani();
+        
+            list_ani([this,list]() {
+                list_ui->remove_all();
+                int idx = 0;
+
+                for (auto& s : *list)
+                {
+                    push_name(list_ui, s.get_name(), idx++);
+                }
+            });
         });
         
        
@@ -183,7 +184,7 @@ public:
         }
     }
 
-    void list_ani()
+    void list_ani(std::function<void()> func)
     {
         std::function<glm::vec3(float)> f = [](float v)->glm::vec3 {
             return glm::vec3(v, v, v);
@@ -191,7 +192,8 @@ public:
         constexpr float dur = 500.f;
         std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
         tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Expo::easeOut);
-        tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [this, tra, f, dur]() {
+        tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Expo::easeOut, f, [this, tra, f, dur,func]() {
+            func();
             tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Expo::easeIn, f);
             tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Expo::easeIn);
         });
@@ -247,14 +249,20 @@ public:
         auto tar = e->target.lock();
         auto p = dynamic_cast<Label*>(tar.get());
         dbg(p->text);
-        curr_play->set_text(p->text);
+        auto new_text = p->text;
         int idx = (int)(p->get_user_data<int*>());
         pumper.onclick(idx);
-        for (auto& c : curr_play->get_children())
-        {
-            c->init();
-        }
         
+        constexpr float dur = 500.f;
+        std::weak_ptr<Transform> tra = curr_play->get_comp_ex<Transform>();
+        tween.to(tra, &Transform::pos, &glm::vec3::z, dur, -5.f, 0.f, tween::Circ::easeInOut, [this, tra, dur, n_text = std::move(new_text)]() mutable {
+            curr_play->set_text(n_text);
+            for (auto& c : curr_play->get_children())
+            {
+                c->init();
+            }
+            tween.to(tra, &Transform::pos, &glm::vec3::z, dur, 0.f, -5.f, tween::Circ::easeInOut);
+        });
         return true;
     }
 
