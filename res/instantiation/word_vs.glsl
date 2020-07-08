@@ -15,15 +15,19 @@ void main()
     gl_Position = perspective * world * vmodel * local * vec4(vposition,1.0f);
     if(gl_VertexID == 0)
     {
+        //oUv = vec2(1.0f,0.0f);
         oUv = vuv.xy;
     }else if(gl_VertexID == 1)
     {
+        //oUv = vec2(0.0f,0.0f);
         oUv = vuv.zw;
     }else if(gl_VertexID == 2)
     {
-        oUv = vuv2.xy;
+        //oUv = vec2(0.0f,1.0f);
+         oUv = vuv2.xy;
     }else if(gl_VertexID == 3)
     {
+        //oUv = vec2(1.0f,1.0f);
         oUv = vuv2.zw;
     }
     

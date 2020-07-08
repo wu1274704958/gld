@@ -40,6 +40,7 @@
 #include <ui/clip.h>
 #include <ui/label.h>
 #include <ui/sphere.h>
+#include <ui/word_patch.h>
 
 
 using namespace gld;
@@ -92,6 +93,7 @@ public:
 
         std::string font = "fonts/SHOWG.TTF";
         std::string font2 = "fonts/huang_you.ttf";
+        std::string font3 = "fonts/SIMHEI.TTF";
 
         auto mesh = curved_surface(0.7f,0.8f,0.15f,0.08f,32);
 
@@ -136,18 +138,27 @@ public:
                 down_pos = p->pos;
             return true;
         };
+        cxts.push_back(std::shared_ptr<Node<Component>>(new WordPatch));
+        
+        WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
+        wp->create();
+        auto a = create_word(font2,L'Îâ', onclick, onMove, onDown);
+        a->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+        wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(0.5f, 0.5f));
 
-        //for (auto k = L'!'; k <= L'~'; ++k)
-        //{
-        //    auto a = create_word(font, k, onclick, onMove, onDown);
-        //    cxts.push_back(a);
-        //}
-        //
-        //for (auto k = L'çù'; k <= L'çù' + 300; ++k)
-        //{
-        //    auto a = create_word(font2, k, onclick, onMove, onDown);
-        //    cxts.push_back(a);
-        //}
+        for (auto k = L'!'; k <= L'~'; ++k)
+        {
+            auto a = create_word(font, k, onclick, onMove, onDown);
+            wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(1.0f, 0.0f));
+            //cxts.push_back(a);
+        }
+       
+       for (auto k = L'çù'; k <= L'çù' + 300; ++k)
+       {
+           auto a = create_word(font2, k, onclick, onMove, onDown);
+           wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(1.0f, 0.0f));
+           //cxts.push_back(a);
+       }
 
 
 
@@ -166,7 +177,7 @@ public:
 
         //cxts.push_back(back);
 
-        auto label = std::shared_ptr<Label>(new Label());
+        /*auto label = std::shared_ptr<Label>(new Label());
         label->align = Align::Center;
         label->font = font2;
         label->set_text("¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n");
@@ -199,7 +210,7 @@ public:
         });
 
         cxts.push_back(label);
-        label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);
+        label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);*/
 
         //auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         //she->create();

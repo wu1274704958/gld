@@ -151,6 +151,8 @@ public:
             return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
         };
 
+        list_ui->get_comp<Transform>()->pos = glm::vec3(0.f,-0.385407,0.32f);
+
         pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
         
             list_ani([this,list]() {

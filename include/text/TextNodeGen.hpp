@@ -61,4 +61,46 @@ namespace txt {
         gld::GlmUniform<gld::UT::Vec4>       color;
         std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex;
     };
+
+    struct PatchTextMaterial :public gld::Component
+    {
+        PatchTextMaterial(std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex) :
+            udiffuseTex("diffuseTex"),
+            diffuseTex(std::move(diffuseTex))
+        {
+            udiffuseTex = 0;
+        }
+ 
+
+        PatchTextMaterial() :
+            udiffuseTex("diffuseTex")
+        {
+            udiffuseTex = 0;
+        }
+        bool init() override
+        {
+            bool f = true;
+
+            auto n_ptr = get_node();
+            auto render = n_ptr->get_comp<gld::Render>();
+            udiffuseTex.attach_program(render->get());
+
+            return f;
+        }
+        void draw() override
+        {
+            if (diffuseTex)
+                diffuseTex->active<gld::ActiveTexId::_0>();
+
+            udiffuseTex.sync();
+        }
+
+        void after_draw() override
+        {
+            diffuseTex->unbind();
+        }
+
+        gld::GlmUniform<gld::UT::Sampler2D>   udiffuseTex;
+        std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex;
+    };
 }

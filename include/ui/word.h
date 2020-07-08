@@ -26,6 +26,12 @@ namespace gld {
 			if (a)
 			{
 				this->wd = wd_.value();
+
+				float tex_size = static_cast<float>(size);
+				rect.x = static_cast<float>(wd.x)/tex_size;
+				rect.y = static_cast<float>(wd.y)/tex_size;
+				rect.z = static_cast<float>(wd.w)/tex_size;
+				rect.w = static_cast<float>(wd.h)/tex_size;
 				
 				auto * ptr = dynamic_cast<Node<Component>*>(this);
 				*ptr = std::move(*a);
@@ -42,6 +48,7 @@ namespace gld {
 		int font_size;
 		uint32_t word;
 		txt::WordData wd;
+		glm::vec4 rect;
 		glm::vec2 anchor;
 	};
 }
