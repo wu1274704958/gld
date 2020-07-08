@@ -4,6 +4,7 @@
 #include <node.hpp>
 #include <component.h>
 #include <text/TextMgr.hpp>
+#include <comps/Material.hpp>
 
 namespace gld {
 	struct NodeWithEvent : public Node<Component>, public evt::EventHandler<Node<Component>> {
