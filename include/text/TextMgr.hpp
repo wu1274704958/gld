@@ -4,6 +4,7 @@
 #include "TextRender.hpp"
 #include <data_mgr.hpp>
 #include "TextNodeGen.hpp"
+#include <res_cache_mgr.hpp>
 
 namespace txt {
 
@@ -20,7 +21,7 @@ namespace txt {
 
 		bool has(std::string& key, int size, uint32_t c)
 		{
-			if (auto it = pages.find(key); it != pages.end())
+			if (auto it = pages->find(key); it != pages->end())
 			{
 				if (auto size_it = it->second.find(size); size_it != it->second.end())
 				{
@@ -41,7 +42,7 @@ namespace txt {
 		std::optional<std::reference_wrapper<PageTy>> get_page(std::string& font, int flag, int idx, int size, uint32_t c)
 		{
 			auto key = gen_key(font, flag, idx);
-			if (auto it = pages.find(key); it != pages.end())
+			if (auto it = pages->find(key); it != pages->end())
 			{
 				if (auto size_it = it->second.find(size); size_it != it->second.end())
 				{
@@ -67,7 +68,7 @@ namespace txt {
 
 		std::reference_wrapper<std::vector<PageTy>> get_pages_for_size(std::string& key, int size)
 		{
-			if (auto it = pages.find(key); it != pages.end())
+			if (auto it = pages->find(key); it != pages->end())
 			{
 				if (auto size_it = it->second.find(size); size_it != it->second.end())
 				{
@@ -81,9 +82,9 @@ namespace txt {
 			}
 			else
 			{
-				pages[key] = std::unordered_map<int, std::vector<PageTy>>();
-				pages[key][size] = std::vector<PageTy>();
-				return std::ref(pages[key][size]);
+				(*pages)[key] = std::unordered_map<int, std::vector<PageTy>>();
+				(*pages)[key][size] = std::vector<PageTy>();
+				return std::ref((*pages)[key][size]);
 			}
 		}
 
@@ -183,6 +184,21 @@ namespace txt {
 			return std::make_tuple(nullptr, std::nullopt, PageTy::MAXSurfaceSize);
 		}
 
+		using PageCacheTy = gld::DefCache < std::shared_ptr<std::unordered_map<std::string, std::unordered_map<int, std::vector<PageTy>>>>, 'T', 'E', 'X', 'T', 'M', 'G', 'R'>;
+
+		TextMgr()
+		{
+			std::string cache_key = "Default";
+			if (gld::ResCache<PageCacheTy>::instance()->has(cache_key))
+			{
+				pages = gld::ResCache<PageCacheTy>::instance()->get(cache_key);
+			}
+			else {
+				pages = std::make_shared< std::unordered_map<std::string, std::unordered_map<int, std::vector<PageTy>>>>();
+				gld::ResCache<PageCacheTy>::instance()->cache(cache_key, pages);
+			}
+		}
+
 	protected:
 		bool put_new_page(std::string& font, int flag, int idx, int size, uint32_t c,std::vector<PageTy>& pages)
 		{
@@ -198,7 +214,7 @@ namespace txt {
 
 
 
-		std::unordered_map<std::string,std::unordered_map<int,std::vector<PageTy>>> pages;
+		std::shared_ptr<std::unordered_map<std::string,std::unordered_map<int,std::vector<PageTy>>>> pages;
 		inline static std::shared_ptr<TextMgr> self;
 	};
 
