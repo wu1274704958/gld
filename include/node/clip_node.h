@@ -20,7 +20,7 @@ namespace gld {
 			glColorMask(0x0, 0x0, 0x0, 0x0);
 			glStencilMask(0xff);
 			glDepthMask(0x0);
-			glStencilOp(GL_ZERO, GL_REPLACE, GL_REPLACE);
+			glStencilOp(GL_ZERO, GL_KEEP, GL_REPLACE);
 			glStencilFunc(GL_ALWAYS, stencil_val, 0xff);		
 		}
 		void onDrawChildren() override 
