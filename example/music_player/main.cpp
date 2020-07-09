@@ -116,7 +116,7 @@ public:
             return true;
         };
 
-        curr_play = std::shared_ptr<Label>(new Label(760 * 6,760));
+        curr_play = std::shared_ptr<Label>(new Label(760 * 12,760));
         curr_play->font = font2;
         curr_play->auto_scroll = true;
         curr_play->create();
