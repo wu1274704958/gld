@@ -45,6 +45,7 @@
 #include "Pumper.h"
 #include "tools/tween.hpp"
 #include "tools/app.h"
+#include "view1.h"
 
 #ifndef  PF_ANDROID
 static std::pair<const char**, int> LaunchArgs;
@@ -165,7 +166,14 @@ public:
                 }
             });
         });
+        glPointSize(2.4f);
+        auto v1 = std::make_shared<View1>();
+        v1->create();
         
+        std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
+        App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Circ::easeInOut);
+        App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Circ::easeInOut);
+        cxts.push_back(v1);
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
@@ -189,17 +197,20 @@ public:
 
     void list_ani(std::function<void()> func)
     {
-        std::function<glm::vec3(float)> f = [](float v)->glm::vec3 {
-            return glm::vec3(v, v, v);
-        };
+        
         constexpr float dur = 500.f;
+        std::function<glm::vec3(float)> f = k2vec3;
         std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
         App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Circ::easeOut);
-        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Circ::easeOut, f, [ tra, f, dur,func]() {
+        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Circ::easeOut, f, [ tra, f,dur,func]() {
             func();
             App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Circ::easeIn, f);
             App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Circ::easeIn);
         });
+    }
+
+    static glm::vec3 k2vec3(float v) {
+        return glm::vec3(v, v, v);
     }
 
     template<typename T>
