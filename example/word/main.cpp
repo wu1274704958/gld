@@ -138,27 +138,27 @@ public:
                 down_pos = p->pos;
             return true;
         };
-        //cxts.push_back(std::shared_ptr<Node<Component>>(new WordPatch));
-        //
-        //WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
-        //wp->create();
+        cxts.push_back(std::shared_ptr<Node<Component>>(new WordPatch));
+        
+        WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
+        wp->create();
         //auto a = create_word(font2,L'Îâ', onclick, onMove, onDown);
         //a->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
         //wp->add_word(std::dynamic_pointer_cast<Word>( a), glm::vec2(0.5f, 0.5f));
-        //
-        //for (auto k = L'!'; k <= L'~'; ++k)
-        //{
-        //    auto a = create_word(font, k, onclick, onMove, onDown);
-        //    wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
-        //    //cxts.push_back(a);
-        //}
+        
+        for (auto k = L'!'; k <= L'~'; ++k)
+        {
+            auto a = create_word(font, k, onclick, onMove, onDown);
+            wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
+            //cxts.push_back(a);
+        }
        
-        //for (auto k = L'çù'; k <= L'çù' + 300; ++k)
-        //{
-        //    auto a = create_word(font2, k, onclick, onMove, onDown);
-        //    wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
-        //    //cxts.push_back(a);
-        //}
+        for (auto k = L'çù'; k <= L'çù' + 300; ++k)
+        {
+            auto a = create_word(font2, k, onclick, onMove, onDown);
+            wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
+            //cxts.push_back(a);
+        }
 
 
 
