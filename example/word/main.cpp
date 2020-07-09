@@ -77,7 +77,7 @@ public:
 
         RenderDemoRotate::init();
 
-        ClipNode<Component>::enable();
+        //ClipNode<Component>::enable();
         
         program = DefDataMgr::instance()->load<DataType::Program>("base/line_vs.glsl","base/line_fg.glsl");
         program->use();
@@ -138,27 +138,27 @@ public:
                 down_pos = p->pos;
             return true;
         };
-        cxts.push_back(std::shared_ptr<Node<Component>>(new WordPatch));
-        
-        WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
-        wp->create();
-        auto a = create_word(font2,L'Îâ', onclick, onMove, onDown);
-        a->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
-        wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(0.5f, 0.5f));
-
-        for (auto k = L'!'; k <= L'~'; ++k)
-        {
-            auto a = create_word(font, k, onclick, onMove, onDown);
-            wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(1.0f, 0.0f));
-            //cxts.push_back(a);
-        }
+        //cxts.push_back(std::shared_ptr<Node<Component>>(new WordPatch));
+        //
+        //WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
+        //wp->create();
+        //auto a = create_word(font2,L'Îâ', onclick, onMove, onDown);
+        //a->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
+        //wp->add_word(std::dynamic_pointer_cast<Word>( a), glm::vec2(0.5f, 0.5f));
+        //
+        //for (auto k = L'!'; k <= L'~'; ++k)
+        //{
+        //    auto a = create_word(font, k, onclick, onMove, onDown);
+        //    wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
+        //    //cxts.push_back(a);
+        //}
        
-       for (auto k = L'çù'; k <= L'çù' + 300; ++k)
-       {
-           auto a = create_word(font2, k, onclick, onMove, onDown);
-           wp->add_word(*dynamic_cast<Word*>(a.get()), glm::vec2(1.0f, 0.0f));
-           //cxts.push_back(a);
-       }
+        //for (auto k = L'çù'; k <= L'çù' + 300; ++k)
+        //{
+        //    auto a = create_word(font2, k, onclick, onMove, onDown);
+        //    wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
+        //    //cxts.push_back(a);
+        //}
 
 
 
@@ -177,7 +177,7 @@ public:
 
         //cxts.push_back(back);
 
-        /*auto label = std::shared_ptr<Label>(new Label());
+        auto label = std::shared_ptr<Label>(new Label());
         label->align = Align::Center;
         label->font = font2;
         label->set_text("¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n");
@@ -196,7 +196,6 @@ public:
                 p->font = font;
                 p->set_text("I Love You\n Forever!!!");
                 p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
-                p->node->init();
                 
             }
             else if (me->btn == GLFW_MOUSE_BUTTON_3) {
@@ -204,13 +203,12 @@ public:
                 p->mulitline = true;
                 p->set_text("¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n");
                 p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
-                p->node->init();
             }
             return true;
         });
 
         cxts.push_back(label);
-        label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);*/
+        label->get_comp<Transform>()->pos = glm::vec3(label->get_width() / -2.f, label->get_height() / 2.f, 0.f);
 
         //auto she = std::shared_ptr<Sphere>(new Sphere(36,31));
         //she->create();

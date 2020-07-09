@@ -131,13 +131,22 @@ namespace gld {
 	}
 
 	
-	void WordPatch::submit_word_(std::shared_ptr<Texture<TexType::D2>>& tex, WordData& res)
+	size_t WordPatch::submit_word_(std::shared_ptr<Texture<TexType::D2>>& tex, WordData& res)
 	{
 		if (!has(tex))
 		{
 			word_data[tex] = std::vector<WordData>();
+			word_data[tex].reserve(32);
 		}
 		word_data[tex].push_back(res);
+		return word_data[tex].size() - 1;
+	}
+	void WordPatch::submit_word_(std::shared_ptr<Texture<TexType::D2>>& tex, size_t idx, WordData& res)
+	{
+		if (has(tex) && idx < word_data[tex].size())
+		{
+			word_data[tex][idx] = res;
+		}
 	}
 
 	bool WordPatch::has(std::shared_ptr<Texture<TexType::D2>>& tex)
@@ -148,37 +157,78 @@ namespace gld {
 	void WordPatch::clear()
 	{
 		word_data.clear();
+		ws.clear();
+		//ws_map.clear();
 	}
 
 	void WordPatch::add_word(std::shared_ptr<Word> w,glm::vec2 origin)
 	{
 		ws.push_back(std::make_pair(w,origin));
-		WordData wd;
-		create_word_data(ws.back(), wd);
+		//WordData wd;
+		//create_word_data(ws.back(), wd);
+		//ws_map[ws.size() - 1] = submit_word_(w->get_comp<txt::DefTextMaterial>()->diffuseTex, wd);
 	}
 
 	void WordPatch::create_word_data(std::pair<std::shared_ptr<Word>, glm::vec2>& pair, WordData& res)
 	{
-		auto [w, origin] = pair;
 		glm::mat4 local(1.f);
-		local = glm::translate(local, glm::vec3(origin.x, origin.y, 0.f));
-		auto trans = w->get_comp<Transform>();
+		local = glm::translate(local, glm::vec3(pair.second.x, pair.second.y, 0.f));
+		auto trans = pair.first->get_comp<Transform>();
 		auto parent = get_parent();
 		auto model = trans->get_model();
-		auto mater = w->get_comp<txt::DefTextMaterial>();
+		auto mater = pair.first->get_comp<txt::DefTextMaterial>();
 		if (parent)
 			model = parent->get_comp<Transform>()->get_model() * model;
 		//glm::vec2 uv[] = {
-		//	glm::vec2(w->rect.x + w->rect.z, w->rect.y),
-		//	glm::vec2(w->rect.x,  w->rect.y),
-		//	glm::vec2(w->rect.x,  w->rect.y + w->rect.w),
-		//	glm::vec2(w->rect.x + w->rect.z, w->rect.y + w->rect.w)
+		//	glm::vec2(pair.first->rect.x + pair.first->rect.z, pair.first->rect.y),
+		//	glm::vec2(pair.first->rect.x,  pair.first->rect.y),
+		//	glm::vec2(pair.first->rect.x,  pair.first->rect.y + pair.first->rect.w),
+		//	glm::vec2(pair.first->rect.x + pair.first->rect.z, pair.first->rect.y + pair.first->rect.w)
 		//};
 		res.color = mater->color;
 		res.local = local;
 		res.model = model;
-		res.uv = glm::vec4(w->rect.x + w->rect.z, w->rect.y, w->rect.x, w->rect.y);
-		res.uv2 = glm::vec4(w->rect.x, w->rect.y + w->rect.w, w->rect.x + w->rect.z, w->rect.y + w->rect.w);
+		res.uv = glm::vec4(pair.first->rect.x + pair.first->rect.z, pair.first->rect.y, pair.first->rect.x, pair.first->rect.y);
+		res.uv2 = glm::vec4(pair.first->rect.x, pair.first->rect.y + pair.first->rect.w, pair.first->rect.x + pair.first->rect.z, pair.first->rect.y + pair.first->rect.w);
+	}
+
+	bool WordPatch::refresh(size_t i)
+	{
+		if (i < ws.size())
+		{
+			WordData wd;
+			create_word_data(ws[i], wd);
+			//submit_word_(ws[i].first->get_comp<txt::DefTextMaterial>()->diffuseTex,ws_map[i], wd);
+			return true;
+		}
+		return false;
+	}
+	void WordPatch::refresh()
+	{
+		word_data.clear();
+		//ws_map.clear();
+		//int i = 0;
+		for (auto& w : ws)
+		{
+			WordData wd;
+			create_word_data(w, wd);
+			submit_word_(w.first->get_comp<txt::DefTextMaterial>()->diffuseTex, wd);
+			//ws_map[i++] = submit_word_(w.first->get_comp<txt::DefTextMaterial>()->diffuseTex, wd);
+		}
+	}
+	size_t WordPatch::word_count()
+	{
+		return ws.size();
+	}
+
+	std::shared_ptr<Word> WordPatch::get_word(size_t idx)
+	{
+		return ws[idx].first;
+	}
+
+	void WordPatch::onDraw()
+	{
+		refresh();
 	}
 
 }

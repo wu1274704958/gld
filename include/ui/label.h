@@ -6,6 +6,7 @@
 #include "clip.h"
 #include "tools/convert.h"
 #include "word.h"
+#include "ui/word_patch.h"
 
 namespace gld {
 
@@ -16,35 +17,35 @@ namespace gld {
 		Right
 	};
 
-	
+
 
 	struct Label : public Clip {
-		Label( std::function<void(float, float)> onSizeChange) : 
-			Clip(1.f,1.f,1.f,0.f),
+		Label(std::function<void(float, float)> onSizeChange) :
+			Clip(1.f, 1.f, 1.f, 0.f),
 			auto_size(true),
 			onSizeChange(onSizeChange)
 		{
-			
+
 		}
 
-		Label(float w,float h) :
-			Clip(w,h,1.f,0.f),auto_size(false)
+		Label(float w, float h) :
+			Clip(w, h, 1.f, 0.f), auto_size(false)
 		{
-			
+
 		}
 
 		Label() :
 			Clip(1.f, 1.f, 1.f, 0.f),
 			auto_size(true)
 		{
-			
+
 		}
 
 		void set_text(const std::string& txt)
 		{
 			text = txt;
 			w_text = cvt::ansi2unicode(txt);
-			if(!txt.empty())
+			if (!txt.empty())
 				refresh_ui();
 		}
 
@@ -56,16 +57,25 @@ namespace gld {
 				refresh_ui();
 		}
 
+		void create() override
+		{
+			Clip::create();
+			word_patch = std::make_shared<WordPatch>();
+			word_patch->create();
+			node->add_child(word_patch);
+		}
+
 		void refresh_ui()
 		{
 			if (!node)
-				Clip::create();
+				create();
 			else {
-				node->remove_all();
+				//node->remove_all();
+				word_patch->clear();
 			}
 
 			rs.clear();
-			
+
 			set_word_right(w_text);
 		}
 
@@ -77,7 +87,7 @@ namespace gld {
 				align = al;
 				if (!text.empty())
 				{
-					if (node && node->children_count() > 0)
+					if (word_patch && word_patch->word_count() > 0)//(node && node->children_count() > 0)
 					{
 						refresh_align();
 					}
@@ -115,7 +125,7 @@ namespace gld {
 			if (!enter) mh += h;
 			on_text_size_change(mw, mh);
 
-			
+
 			if (auto_size)
 			{
 				width = mw; height = mh;
@@ -138,8 +148,8 @@ namespace gld {
 				x = 0.f;
 				mh = -y;
 				r.b = rs.empty() ? 0 : rs.back().e;
-				r.e = node->children_count();
-				r.off_x = node->get_child(r.b)->get_comp<Transform>()->pos.x;
+				r.e = word_patch->word_count(); //node->children_count();
+				r.off_x = word_patch->get_word(r.b)->get_comp<Transform>()->pos.x; //node->get_child(r.b)->get_comp<Transform>()->pos.x;
 				rs.push_back(r);
 			};
 
@@ -153,8 +163,8 @@ namespace gld {
 				Row r;
 				r.w = x;
 				r.b = rs.back().e;
-				r.e = node->children_count();
-				r.off_x = node->get_child(r.b)->get_comp<Transform>()->pos.x;
+				r.e = word_patch->word_count(); //node->children_count();
+				r.off_x = word_patch->get_word(r.b)->get_comp<Transform>()->pos.x; //node->get_child(r.b)->get_comp<Transform>()->pos.x;
 				rs.push_back(r);
 			}
 
@@ -164,9 +174,9 @@ namespace gld {
 			float max_row_w = mw;
 			if (!auto_size) max_row_w = width;
 
-			if(align != Align::Left)
+			if (align != Align::Left)
 				apply_row_offset(max_row_w);
-			
+
 			on_text_size_change(mw, mh);
 
 			if (auto_size)
@@ -178,17 +188,31 @@ namespace gld {
 
 		void apply_row_offset(float max_row_w)
 		{
-			
+
+			//for (auto i = 0; i < rs.size(); ++i)
+			//{
+			//	//if (rs[i].w < max_row_w)
+			//	{
+			//		float off_ = -node->get_child(rs[i].b)->get_comp<Transform>()->pos.x + rs[i].off_x;
+			//		float off = off_ + (align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f);
+			//		if (align == Align::Left) off = off_;
+			//		for (auto j = rs[i].b; j < rs[i].e; ++j)
+			//		{
+			//			node->get_child(j)->get_comp<Transform>()->pos.x += off;
+			//		}
+			//	}
+			//}
 			for (auto i = 0; i < rs.size(); ++i)
 			{
 				//if (rs[i].w < max_row_w)
 				{
-					float off_ = -node->get_child(rs[i].b)->get_comp<Transform>()->pos.x + rs[i].off_x;
+					float off_ = -word_patch->get_word(rs[i].b)->get_comp<Transform>()->pos.x + rs[i].off_x;
 					float off = off_ + (align == Align::Right ? max_row_w - rs[i].w : (max_row_w - rs[i].w) / 2.f);
 					if (align == Align::Left) off = off_;
 					for (auto j = rs[i].b; j < rs[i].e; ++j)
 					{
-						node->get_child(j)->get_comp<Transform>()->pos.x += off;
+						word_patch->get_word(j)->get_comp<Transform>()->pos.x += off;
+						//word_patch->refresh(j);
 					}
 				}
 			}
@@ -197,8 +221,13 @@ namespace gld {
 
 		void refresh_margin()
 		{
-			node->get_comp<Transform>()->pos = glm::vec3(margin.x,margin.y,0.f); 
+			node->get_comp<Transform>()->pos = glm::vec3(margin.x, margin.y, 0.f);
 			on_size_change(margin.x + width + margin.z, margin.y + height + margin.w);
+		}
+
+		void refresh_word()
+		{
+			word_patch->refresh();
 		}
 
 		void set_text(std::string&& txt)
@@ -249,8 +278,8 @@ namespace gld {
 			}
 		}
 		std::wstring w_text;
-		std::string text,font = "fonts/SIMHEI.TTF";
-		float text_width,text_height;
+		std::string text, font = "fonts/SIMHEI.TTF";
+		float text_width, text_height;
 		bool auto_size = false,
 			mulitline = false,
 			word_warp = false,
@@ -259,7 +288,8 @@ namespace gld {
 		glm::vec4 color = glm::vec4(1.f);
 		std::function<void(float, float)> onSizeChange;
 		std::function<void(float, float)> onTextSizeChange;
-		glm::vec4 margin = glm::vec4( 0.f,0.f,0.f,0.f );
+		std::shared_ptr<WordPatch> word_patch;
+		glm::vec4 margin = glm::vec4(0.f, 0.f, 0.f, 0.f);
 		int size = 96;
 		float leading = 0.f;
 		float scroll_rate = 0.0026f;
@@ -267,7 +297,7 @@ namespace gld {
 		constexpr static float SPACE_RATIO = 0.5f;
 
 	protected:
-		void on_text_size_change(float w,float h)
+		void on_text_size_change(float w, float h)
 		{
 			text_width = w; text_height = h;
 			if (onTextSizeChange)
@@ -282,7 +312,7 @@ namespace gld {
 				onSizeChange(w, h);
 		}
 
-		void set_word_inside(bool & enter,wchar_t c,float& x,float &y,std::function<void()> do_enter)
+		void set_word_inside(bool& enter, wchar_t c, float& x, float& y, std::function<void()> do_enter)
 		{
 			enter = false;
 			if (c == L' ')
@@ -291,7 +321,7 @@ namespace gld {
 				x += SPACE_RATIO * static_cast<float>(size) * TAB_SIZE * Word::WORD_SCALE;
 			else if (c == L'\n')
 			{
-				if(mulitline)
+				if (mulitline)
 					do_enter();
 			}
 			else {
@@ -306,8 +336,8 @@ namespace gld {
 				{
 					x += a->wd.advance * Word::WORD_SCALE;
 				}
-
-				node->add_child(a);
+				word_patch->add_word(a, glm::vec2(1.f, 0.f));
+				//node->add_child(a);
 			}
 		}
 
