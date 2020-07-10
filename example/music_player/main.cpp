@@ -92,84 +92,9 @@ public:
 
         ClipNode<Component>::enable();
 
-        
+        init_curr_play();
 
-        auto onMove = [=](Event<Node<Component>>* e)->bool {
-            auto w = e->target.lock();
-            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
-            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
-            {
-                auto tra = w->get_comp<Transform>();
-                auto of = p->pos - down_pos; of.z = 0.f;
-                tra->pos += of;
-                down_pos = p->pos;
-                dbg(std::make_tuple(tra->pos.x,tra->pos.y));
-                return true;
-            }
-            return false;
-        };
-
-        auto onDown = [=](Event<Node<Component>>* e)->bool {
-            auto w = e->target.lock();
-            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
-            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
-                down_pos = p->pos;
-            return true;
-        };
-
-        curr_play = std::shared_ptr<Label>(new Label(760 * 12,760));
-        curr_play->font = font2;
-        curr_play->auto_scroll = true;
-        curr_play->create();
-        curr_play->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
-        curr_play->size = 760;
-        curr_play->get_comp<Transform>()->pos = glm::vec3(-7.03303f, 3.71308f, -5.f);
-        curr_play->set_text("Çëµã»÷ÄãÏ²»¶µÄ¸èÇú");
-        curr_play->add_listener(EventType::MouseDown, onDown);
-        curr_play->add_listener(EventType::MouseMove, onMove);
-        curr_play->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
-            this->camera_reset();
-            return true;
-        });
-
-        cxts.push_back(curr_play);
-
-        auto onclick = [](Event<Node<Component>>* e)->bool {
-            auto w = e->target.lock();
-            if (w)
-            {
-                auto mater = w->get_comp<DefTextMaterial>();
-                mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
-                return true;
-            }
-            return false;
-        };
-
-        list_ui = std::shared_ptr<Sphere>(new Sphere(36,31));
-        list_ui->create();
-        cxts.push_back(list_ui);
-        
-
-        list_ui->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
-        {
-            auto p = dynamic_cast<Label*>(c.get());
-            return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
-        };
-
-        list_ui->get_comp<Transform>()->pos = glm::vec3(0.f,-0.385407,0.32f);
-
-        pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
-        
-            list_ani([this,list]() {
-                list_ui->remove_all();
-                int idx = 0;
-
-                for (auto& s : *list)
-                {
-                    push_name(list_ui, s.get_name(), idx++);
-                }
-            });
-        });
+        init_list_ui();
         //glPointSize(2.4f);
         //auto v1 = std::make_shared<View1>();
         //v1->create();
@@ -294,6 +219,78 @@ public:
             App::instance()->tween.to(std::ref(rotate), &glm::vec3::z, 1000.f, rotate.z, 0.f, tween::Circ::easeOut);
     }
 
+    void init_curr_play()
+    {
+        onMove = [=](Event<Node<Component>>* e)->bool {
+            auto w = e->target.lock();
+            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
+            {
+                auto tra = w->get_comp<Transform>();
+                auto of = p->pos - down_pos; of.z = 0.f;
+                tra->pos += of;
+                down_pos = p->pos;
+                dbg(std::make_tuple(tra->pos.x, tra->pos.y));
+                return true;
+            }
+            return false;
+        };
+
+        onDown = [=](Event<Node<Component>>* e)->bool {
+            auto w = e->target.lock();
+            auto p = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
+            if (w && p->btn == GLFW_MOUSE_BUTTON_2)
+                down_pos = p->pos;
+            return true;
+        };
+
+        curr_play = std::shared_ptr<Label>(new Label(760 * 12, 760));
+        curr_play->font = font2;
+        curr_play->auto_scroll = true;
+        curr_play->create();
+        curr_play->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
+        curr_play->size = 760;
+        curr_play->get_comp<Transform>()->pos = glm::vec3(-7.03303f, 3.71308f, -5.f);
+        curr_play->set_text("Çëµã»÷ÄãÏ²»¶µÄ¸èÇú");
+        curr_play->add_listener(EventType::MouseDown, onDown);
+        curr_play->add_listener(EventType::MouseMove, onMove);
+        curr_play->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
+            this->camera_reset();
+            return true;
+        });
+
+        cxts.push_back(curr_play);
+    }
+
+    void init_list_ui()
+    {
+        list_ui = std::shared_ptr<Sphere>(new Sphere(36, 31));
+        list_ui->create();
+        cxts.push_back(list_ui);
+
+
+        list_ui->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
+        {
+            auto p = dynamic_cast<Label*>(c.get());
+            return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
+        };
+
+        list_ui->get_comp<Transform>()->pos = glm::vec3(0.f, -0.385407, 0.32f);
+
+        pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
+
+            list_ani([this, list]() {
+                list_ui->remove_all();
+                int idx = 0;
+
+                for (auto& s : *list)
+                {
+                    push_name(list_ui, s.get_name(), idx++);
+                }
+            });
+        });
+    }
+
     void draw() override
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -387,6 +384,8 @@ private:
     std::string font2 = "fonts/happy.ttf";
     MusicPlayer player;
     Pumper pumper;
+    std::function< bool(Event<Node<Component>>*) > onDown;
+    std::function< bool(Event<Node<Component>>*) > onMove;
 };
 
 #ifndef PF_ANDROID
