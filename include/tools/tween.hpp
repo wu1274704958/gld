@@ -28,70 +28,98 @@ namespace gld{
         void to(std::weak_ptr<T> ptr, V T::* vp, float duration, float b, float e, TweenFuncTy tf, std::function<V(float)> func,
             std::function<void()> complete = nullptr)
 		{
-			float t = 0.f;
-			
-			while(1)
-			{
-				if (t + (float)ms >= duration)
-				{
-					exec.delay([ptr,vp,e,func]() {
-						auto p = ptr.lock();
-						if (p)
-						{
-							auto rp = p.get();
-							(*rp).*vp = func(e);
-						}
-					}, duration);
-                    if (complete) exec.delay(complete, duration);
-					break;
-				}
-				float nt = t / duration;
-				float offset = e - b;
-				exec.delay([ptr, vp, nt, b, offset, tf, func]() {
-					auto p = ptr.lock();
-					if (p)
-					{
-						auto rp = p.get();
-						(*rp).*vp = func( tf(nt,0.f, 1.0f,1.f) * offset + b );
-					}
-				}, t);
-				t += (float)ms;
-			}
+            impl([ptr, vp, e, func]() {
+                auto p = ptr.lock();
+                if (p)
+                {
+                    auto rp = p.get();
+                    (*rp).*vp = func(e);
+                }
+            },
+                [ptr, vp, b, tf, func](float nt, float offset) {
+                auto p = ptr.lock();
+                if (p)
+                {
+                    auto rp = p.get();
+                    (*rp).*vp = func(tf(nt, 0.f, 1.0f, 1.f) * offset + b);
+                }
+            }, duration, b, e, tf, complete);
 		}
 
         template<typename T, typename V>
         void to(std::weak_ptr<T> ptr, V T::* vp,float V::* vvp, float duration, float b, float e, TweenFuncTy tf,
             std::function<void()> complete = nullptr)
         {
-            float t = 0.f;
+            impl([ptr, vp, e, vvp]() {
+                auto p = ptr.lock();
+                if (p)
+                {
+                    auto rp = p.get();
+                    (*rp).*vp.*vvp = e;
+                }
+            },[ptr, vp,vvp, b, tf](float nt,float offset) {
+                auto p = ptr.lock();
+                if (p)
+                {
+                    auto rp = p.get();
+                    (*rp).*vp.*vvp = tf(nt, 0.f, 1.0f, 1.f) * offset + b;
+                }
+            }, duration, b, e, tf, complete);
+        }
 
+        template<typename T, typename V>
+        void to(std::reference_wrapper<T> ptr,float V::* vvp, float duration, float b, float e, TweenFuncTy tf,
+            std::function<void()> complete = nullptr)
+        {
+                impl(
+                    [ptr, e, vvp]() {
+                        ptr.get().*vvp = e;
+                    },
+                    [ptr, vvp, b, tf](float nt,float offset) {
+                        ptr.get().*vvp = tf(nt, 0.f, 1.0f, 1.f) * offset + b;
+                    },
+                    duration, b, e, tf, complete);
+        }
+
+        void impl(std::function<void()> end_f,std::function<void(float,float)> progress_f,float duration, float b, float e, TweenFuncTy tf,
+            std::function<void()> complete = nullptr)
+        {
+            float t = 0.f;
             while (1)
             {
                 if (t + (float)ms >= duration)
                 {
-                    exec.delay([ptr, vp, e, vvp]() {
-                        auto p = ptr.lock();
-                        if (p)
-                        {
-                            auto rp = p.get();
-                            (*rp).*vp.*vvp = e;
-                        }
-                    }, duration);
+                    exec.delay(end_f, duration);
                     if (complete) exec.delay(complete, duration);
-                        break;
+                    break;
                 }
                 float nt = t / duration;
                 float offset = e - b;
-                exec.delay([ptr, vp,vvp, nt, b, offset, tf]() {
-                    auto p = ptr.lock();
-                    if (p)
-                    {
-                        auto rp = p.get();
-                        (*rp).*vp.*vvp = tf(nt, 0.f, 1.0f, 1.f) * offset + b;
-                    }
+                exec.delay([nt,offset,progress_f]() {
+                    progress_f(nt, offset);
                 }, t);
                 t += (float)ms;
             }
+        }
+
+        float get_dir(float b, float e)
+        {
+            return b < e ? 1.f : -1.f;
+        }
+
+        std::function<bool(float,float)> get_end_condition(float b, float e)
+        {
+            return b < e ? large_eq : less_eq;
+        }
+
+        inline static bool large_eq(float a,float b)
+        {
+            return a >= b;
+        }
+
+        inline static bool less_eq(float a, float b)
+        {
+            return a <= b;
         }
 
 		int ms = 16;
