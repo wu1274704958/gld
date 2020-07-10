@@ -127,6 +127,10 @@ public:
         curr_play->set_text("Çëµã»÷ÄãÏ²»¶µÄ¸èÇú");
         curr_play->add_listener(EventType::MouseDown, onDown);
         curr_play->add_listener(EventType::MouseMove, onMove);
+        curr_play->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
+            this->camera_reset();
+            return true;
+        });
 
         cxts.push_back(curr_play);
 
@@ -166,14 +170,14 @@ public:
                 }
             });
         });
-        glPointSize(2.4f);
-        auto v1 = std::make_shared<View1>();
-        v1->create();
+        //glPointSize(2.4f);
+        //auto v1 = std::make_shared<View1>();
+        //v1->create();
         
-        std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
-        App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Circ::easeInOut);
-        App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Circ::easeInOut);
-        cxts.push_back(v1);
+        //std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
+        //App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Expo::easeInOut);
+        //App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Expo::easeInOut);
+        //cxts.push_back(v1);
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
@@ -225,7 +229,7 @@ public:
         label->onTextSizeChange = [sp,label, this](float w, float h)
         {
             App::instance()->exec.delay([sp,label, w, h]() {
-                constexpr float max_w = 32.f * 6.f * Word::WORD_SCALE;
+                constexpr float max_w = 32.f * 9.f * Word::WORD_SCALE;
                 label->set_size_no_scale(w > max_w ? max_w : w, h);
                 label->refresh();
                 sp->rand_add(label);
@@ -278,6 +282,16 @@ public:
             App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, 0.f, -5.f, tween::Circ::easeInOut);
         });
         return true;
+    }
+
+    void camera_reset()
+    {
+        if (rotate.x != 0.f)
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::x, 1000.f, rotate.x, 0.f, tween::Circ::easeOut);
+        if (rotate.y != 0.f)
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::y, 1000.f, rotate.y, 0.f, tween::Circ::easeOut);
+        if (rotate.z != 0.f)
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::z, 1000.f, rotate.z, 0.f, tween::Circ::easeOut);
     }
 
     void draw() override
