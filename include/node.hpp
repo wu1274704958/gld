@@ -245,6 +245,7 @@ namespace gld{
             components = oth.components;
             children = oth.children;
             parent = parent;
+            userData = oth.userData;
 
             attach_comps();
             attach_children();
@@ -255,6 +256,8 @@ namespace gld{
             components = std::move(oth.components);
             children = std::move(oth.children);
             parent = std::move(parent);
+            userData = oth.userData;
+            oth.userData = nullptr;
 
             attach_comps();
             attach_children();
@@ -265,7 +268,7 @@ namespace gld{
             components = oth.components;
             children = oth.children;
             parent = parent;
-
+            userData = oth.userData;
             attach_comps();
             attach_children();
 
@@ -277,6 +280,8 @@ namespace gld{
             components = std::move(oth.components);
             children = std::move(oth.children);
             parent = std::move(parent);
+            userData = oth.userData;
+            oth.userData = nullptr;
 
             attach_comps();
             attach_children();
@@ -316,6 +321,6 @@ namespace gld{
         std::vector<std::shared_ptr<Comp>>  components;
         std::vector<std::shared_ptr<Node<Comp>>> children;
         std::weak_ptr<Node<Comp>> parent;
-        void* userData;
+        void* userData = nullptr;
     };
 }
