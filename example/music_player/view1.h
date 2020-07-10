@@ -1,9 +1,10 @@
 #pragma once
 
 #include <generator/Generator.hpp>
+#include "fft_view.h"
 
 namespace gld {
-	struct View1 : public Node<Component> {
+	struct View1 : public FFTView {
 		struct Vertex
 		{
 			glm::vec3 pos;
@@ -56,6 +57,17 @@ namespace gld {
 			for (auto& vv : v)
 				vertices.push_back({vv,wws::make_rgb(PREPARE_STRING("D936C0")).make<glm::vec3>() });
 		}
+
+		void on_update(float* data, int len)
+		{
+
+		}
+
+		int fft_data_length()
+		{
+			return BASS_DATA_FFT256;
+		}
+
 		float start_r = 0.1f, zl = 0.1f;
 		int start_n = 9;
 		int count = 128;

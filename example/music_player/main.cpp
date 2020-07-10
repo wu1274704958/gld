@@ -336,11 +336,10 @@ public:
 
         flywheel->add(0, list_ui);
 
-        
-
         flywheel->add(1, v1);
 
         cxts.push_back(v1);
+        fft_vs.push_back(v1);
     }
 
     void switch_to()
@@ -402,6 +401,11 @@ public:
     {
         for (auto& p : cxts)
             p->update();
+        if (flywheel->get_curr() > 0)
+        {
+            //float buff[128];
+            //player.getData( fft_vs[flywheel->get_curr()]->fft_data_length();
+        }
     }
 
     ~Demo1() {
@@ -443,6 +447,7 @@ private:
     std::string font2 = "fonts/happy.ttf";
     MusicPlayer player;
     Pumper pumper;
+    std::vector<std::shared_ptr<FFTView>> fft_vs;
     std::function< bool(Event<Node<Component>>*) > onDown;
     std::function< bool(Event<Node<Component>>*) > onMove;
 };
