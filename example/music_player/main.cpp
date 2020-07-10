@@ -46,6 +46,7 @@
 #include "tools/tween.hpp"
 #include "tools/app.h"
 #include "view1.h"
+#include "ui/wheel.h"
 
 #ifndef  PF_ANDROID
 static std::pair<const char**, int> LaunchArgs;
@@ -95,6 +96,10 @@ public:
         init_curr_play();
 
         init_list_ui();
+
+        init_flywheel();
+
+        init_btns();
         //glPointSize(2.4f);
         //auto v1 = std::make_shared<View1>();
         //v1->create();
@@ -103,7 +108,8 @@ public:
         //App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Expo::easeInOut);
         //App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Expo::easeInOut);
         //cxts.push_back(v1);
-       
+
+        glPointSize(2.4f);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
 
@@ -212,11 +218,11 @@ public:
     void camera_reset()
     {
         if (rotate.x != 0.f)
-            App::instance()->tween.to(std::ref(rotate), &glm::vec3::x, 1000.f, rotate.x, 0.f, tween::Circ::easeOut);
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::x, 1000.f, rotate.x, rotate.x > 180.f ? 360.f : 0.f, tween::Circ::easeOut);
         if (rotate.y != 0.f)
-            App::instance()->tween.to(std::ref(rotate), &glm::vec3::y, 1000.f, rotate.y, 0.f, tween::Circ::easeOut);
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::y, 1000.f, rotate.y, rotate.y > 180.f ? 360.f : 0.f, tween::Circ::easeOut);
         if (rotate.z != 0.f)
-            App::instance()->tween.to(std::ref(rotate), &glm::vec3::z, 1000.f, rotate.z, 0.f, tween::Circ::easeOut);
+            App::instance()->tween.to(std::ref(rotate), &glm::vec3::z, 1000.f, rotate.z, rotate.z > 180.f ? 360.f : 0.f, tween::Circ::easeOut);
     }
 
     void init_curr_play()
@@ -262,6 +268,25 @@ public:
         cxts.push_back(curr_play);
     }
 
+    void init_btns()
+    {
+        auto switc = std::shared_ptr<Label>(new Label());
+        switc->font = font2;
+        switc->create();
+        switc->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
+        switc->size = 32;
+        switc->get_comp<Transform>()->pos = glm::vec3(-1.72211f, -0.88618f, 0.4f);
+        switc->set_text("ÇÐ»»");
+        switc->add_listener(EventType::MouseDown, onDown);
+        switc->add_listener(EventType::MouseMove, onMove);
+        switc->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
+            this->switch_to();
+            return true;
+        });
+
+        cxts.push_back(switc);
+    }
+
     void init_list_ui()
     {
         list_ui = std::shared_ptr<Sphere>(new Sphere(36, 31));
@@ -289,6 +314,39 @@ public:
                 }
             });
         });
+    }
+
+    void init_flywheel()
+    {
+        flywheel = std::make_shared<Wheel>(6, 30.f);
+        flywheel->pos.z = -30.f;
+        flywheel->create();
+
+        auto v1 = std::make_shared<View1>();
+        v1->create();
+
+        flywheel->on_select = [this,v1](int i) 
+        {
+            if (i == 1 && v1->get_comp<Transform>()->rotate.x == 0.f)
+            {
+                std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
+                App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+            }
+        };
+
+        flywheel->add(0, list_ui);
+
+        
+
+        flywheel->add(1, v1);
+
+        cxts.push_back(v1);
+    }
+
+    void switch_to()
+    {
+        int i = flywheel->get_curr() + 1 < flywheel->count() ? flywheel->get_curr() + 1 : 0;
+        flywheel->tween_to(i, 1000.f);
     }
 
     void draw() override
@@ -380,6 +438,7 @@ private:
     glm::vec3 down_pos,camera_dir = glm::vec3(0.f,0.f,-1.f);
     std::shared_ptr<Sphere> list_ui;
     std::shared_ptr<Label> curr_play;
+    std::shared_ptr<Wheel> flywheel;
     std::string font = "fonts/SHOWG.TTF";
     std::string font2 = "fonts/happy.ttf";
     MusicPlayer player;

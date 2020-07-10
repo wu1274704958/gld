@@ -81,6 +81,19 @@ namespace gld{
                     duration, b, e, tf, complete);
         }
 
+        void to(std::function<void(float)> on,float duration, float b, float e, TweenFuncTy tf,
+            std::function<void()> complete = nullptr)
+        {
+            impl(
+                [on, e]() {
+                on(e);
+            },
+                [on,b, tf](float nt, float offset) {
+                 on(tf(nt, 0.f, 1.0f, 1.f) * offset + b);
+            },
+                duration, b, e, tf, complete);
+        }
+
         void impl(std::function<void()> end_f,std::function<void(float,float)> progress_f,float duration, float b, float e, TweenFuncTy tf,
             std::function<void()> complete = nullptr)
         {
