@@ -55,7 +55,8 @@ namespace gld {
 			auto v = gen::circle(0.f, r, n);
 			region.push_back(std::make_pair(vertices.size(), vertices.size() + v.size()));
 			for (auto& vv : v)
-				vertices.push_back({vv,wws::make_rgb(PREPARE_STRING("D936C0")).make<glm::vec3>() });
+				vertices.push_back({ glm::rotateY(vv, angle) ,wws::make_rgb(PREPARE_STRING("D936C0")).make<glm::vec3>() });
+			angle += 0.01f;
 		}
 
 		void on_update(float* data, int len)
@@ -97,9 +98,9 @@ namespace gld {
 			return BASS_DATA_FFT256;
 		}
 
-		float start_r = 0.01f, zl = 0.01f;
+		float start_r = 0.01f, zl = 0.01f, angle = 0.f;
 		int start_n = 4;
-		int count = 256,count_zl = 12;
+		int count = 256,count_zl = 4;
 		std::vector<Vertex> vertices;
 		std::vector<std::pair<int, int>> region;
 	};
