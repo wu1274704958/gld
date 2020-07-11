@@ -4,7 +4,7 @@
 #include "fft_view.h"
 
 namespace gld {
-	struct View1 : public FFTView {
+	struct View2 : public FFTView {
 		struct Vertex
 		{
 			glm::vec3 pos;
@@ -34,42 +34,29 @@ namespace gld {
 			auto mesh = std::shared_ptr<def::Mesh>(new def::Mesh(
 				0, vertices.size(), std::move(vao)
 			));
-			mesh->mode = GL_LINES;
+			mesh->mode = GL_LINE_LOOP;
 			add_comp<def::Mesh>(mesh);
 		}
 
 		void perpare_vertices()
 		{
-			int s1 = start_n;
-			int c = 0;
-			float r = start_r;
-			while (c < count)
-			{
-				circle(r, s1); r += zl; s1 += count_zl;
-				++c;
-			}
-		}
-
-		void circle(float r,int n)
-		{
-			auto v = gen::circle(0.f, r, n);
-			region.push_back(std::make_pair(vertices.size(), vertices.size() + v.size()));
+			auto v = gen::circle(0.f, radius, count);
 			for (auto& vv : v)
-				vertices.push_back({vv,wws::make_rgb(PREPARE_STRING("D936C0")).make<glm::vec3>() });
+				vertices.push_back({ vv,wws::make_rgb(PREPARE_STRING("D936C0")).make<glm::vec3>() });
 		}
 
 		void on_update(float* data, int len)
 		{
-			constexpr int c = 32;
+			constexpr int c = 128;
 			int unit_c = count / c;
 
 			for (int i = 0; i < c; ++i)
 			{
-				float b = sqrtf(data[i]) * 1.f;
-				float e = sqrtf(data[i + 1]) * 1.f;
+				float b = sqrtf(data[i]) * 2.f;
+				float e = sqrtf(data[i + 1]) * 2.f;
 				for (int j = 0; j < unit_c; ++j)
 				{
-					float v = b < e ? tween::Sine::easeOut((float)j / (float)unit_c, 0.f, 1.0f, 1.f) * (e - b) + b :
+					float v = b < e ? tween::Sine::easeOut((float)j / (float)unit_c, 0.f, 1.0f, 1.f)* (e - b) + b : 
 						tween::Sine::easeIn((float)j / (float)unit_c, 0.f, 1.0f, 1.f) * (e - b) + b;
 					set_unit(i * unit_c + j, v);
 				}
@@ -85,10 +72,9 @@ namespace gld {
 
 		void set_unit(int i,float v)
 		{
-			for (int j = region[i].first; j < region[i].second; ++j)
 			{
-				vertices[j].pos.y = v;
-				vertices[j].color.x = v;
+				vertices[i].pos.y = v;
+				vertices[i].color.x = v;
 			}
 		}
 
@@ -97,10 +83,8 @@ namespace gld {
 			return BASS_DATA_FFT256;
 		}
 
-		float start_r = 0.01f, zl = 0.01f;
-		int start_n = 4;
-		int count = 256,count_zl = 12;
+		float radius = 1.f;
+		int count = 4096;
 		std::vector<Vertex> vertices;
-		std::vector<std::pair<int, int>> region;
 	};
 }

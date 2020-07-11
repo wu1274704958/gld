@@ -46,6 +46,7 @@
 #include "tools/tween.hpp"
 #include "tools/app.h"
 #include "view1.h"
+#include "view2.h"
 #include "ui/wheel.h"
 
 #ifndef  PF_ANDROID
@@ -71,7 +72,9 @@ public:
              glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f)),
             pumper(player)
         {
-        fft_ptr = std::unique_ptr<float[]>(new float[4096]);
+        auto p = new float[4096];
+        std::memset(p, 0, sizeof(float) * 4096); 
+        fft_ptr = std::unique_ptr<float[]>(p);
     }
     int init() override
     {
@@ -110,7 +113,7 @@ public:
         //App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Expo::easeInOut);
         //App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Expo::easeInOut);
         //cxts.push_back(v1);
-        glLineWidth(1.7f);
+        glLineWidth(1.2f);
         glPointSize(2.4f);
         glEnable(GL_POINT_SMOOTH);
         glHint(GL_POINT_SMOOTH, GL_NICEST);
@@ -333,9 +336,18 @@ public:
         v1->zl = 0.005f;
         v1->create();
 
-        flywheel->on_select = [this,v1](int i) 
+        auto v2 = std::make_shared<View2>();
+        v2->create();
+
+        flywheel->on_select = [this,v1,v2](int i) 
         {
-            if (i == 1 && v1->get_comp<Transform>()->rotate.x == 0.f)
+            if (i == 1 && v2->get_comp<Transform>()->rotate.x == 0.f)
+            {
+                std::weak_ptr<Transform> tra = v2->get_comp_ex<Transform>();
+                App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+                //App::instance()->tween.to(tra, &Transform::scale, 1000.f, 1.f,0.9f, tween::Expo::easeInOut,std::function<glm::vec3(float)>(k2vec3));
+            }
+            if (i == 2 && v1->get_comp<Transform>()->rotate.x == 0.f)
             {
                 std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
                 App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
@@ -344,10 +356,12 @@ public:
         };
 
         flywheel->add(0, list_ui);
-
-        flywheel->add(1, v1);
+        flywheel->add(1, v2);
+        flywheel->add(2, v1);
 
         cxts.push_back(v1);
+        cxts.push_back(v2);
+        fft_vs.push_back(v2);
         fft_vs.push_back(v1);
     }
 
