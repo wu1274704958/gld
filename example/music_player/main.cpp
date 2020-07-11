@@ -100,7 +100,7 @@ public:
         init_list_ui();
 
         init_flywheel();
-        glLineWidth(1.7f);
+        
         init_btns();
         //glPointSize(2.4f);
         //auto v1 = std::make_shared<View1>();
@@ -110,8 +110,13 @@ public:
         //App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, 1600.f, 0.f, -5.6f, tween::Expo::easeInOut);
         //App::instance()->tween.to(tra, &Transform::rotate,&glm::vec3::x,1600.f, 0.f, 0.3f, tween::Expo::easeInOut);
         //cxts.push_back(v1);
-
+        glLineWidth(1.7f);
         glPointSize(2.4f);
+        glEnable(GL_POINT_SMOOTH);
+        glHint(GL_POINT_SMOOTH, GL_NICEST);
+        glEnable(GL_LINE_SMOOTH);
+        glHint(GL_LINE_SMOOTH, GL_NICEST);
+
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
 
@@ -325,7 +330,7 @@ public:
         flywheel->create();
 
         auto v1 = std::make_shared<View1>();
-        v1->zl = 0.007f;
+        v1->zl = 0.005f;
         v1->create();
 
         flywheel->on_select = [this,v1](int i) 
@@ -334,7 +339,7 @@ public:
             {
                 std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
                 App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
-                App::instance()->tween.to(tra, &Transform::scale, 1000.f, 1.f,0.9f, tween::Expo::easeInOut,std::function<glm::vec3(float)>(k2vec3));
+                //App::instance()->tween.to(tra, &Transform::scale, 1000.f, 1.f,0.9f, tween::Expo::easeInOut,std::function<glm::vec3(float)>(k2vec3));
             }
         };
 
@@ -405,12 +410,14 @@ public:
     {
         for (auto& p : cxts)
             p->update();
-        if (flywheel->get_curr() > 0)
+
+        if (int i = flywheel->get_curr();i > 0)
+        //for(int i = 1;i < flywheel->count();++i)
         {
             float* data = fft_ptr.get();
-            size_t len = player.getData( data, fft_vs[flywheel->get_curr() - 1]->fft_data_length());
+            size_t len = player.getData( data, fft_vs[i - 1]->fft_data_length());
 
-            fft_vs[flywheel->get_curr() - 1]->on_update(data, len / sizeof(float));
+            fft_vs[i - 1]->on_update(data, len / sizeof(float));
         }
     }
 
