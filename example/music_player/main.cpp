@@ -100,7 +100,7 @@ public:
         init_list_ui();
 
         init_flywheel();
-
+        glLineWidth(1.7f);
         init_btns();
         //glPointSize(2.4f);
         //auto v1 = std::make_shared<View1>();
@@ -320,11 +320,12 @@ public:
 
     void init_flywheel()
     {
-        flywheel = std::make_shared<Wheel>(6, 30.f);
-        flywheel->pos.z = -30.f;
+        flywheel = std::make_shared<Wheel>(6, 9.f);
+        flywheel->pos.z = -9.f;
         flywheel->create();
 
         auto v1 = std::make_shared<View1>();
+        v1->zl = 0.007f;
         v1->create();
 
         flywheel->on_select = [this,v1](int i) 
@@ -333,6 +334,7 @@ public:
             {
                 std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
                 App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+                App::instance()->tween.to(tra, &Transform::scale, 1000.f, 1.f,0.9f, tween::Expo::easeInOut,std::function<glm::vec3(float)>(k2vec3));
             }
         };
 
@@ -407,6 +409,7 @@ public:
         {
             float* data = fft_ptr.get();
             size_t len = player.getData( data, fft_vs[flywheel->get_curr() - 1]->fft_data_length());
+
             fft_vs[flywheel->get_curr() - 1]->on_update(data, len / sizeof(float));
         }
     }

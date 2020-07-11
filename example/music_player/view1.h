@@ -34,7 +34,7 @@ namespace gld {
 			auto mesh = std::shared_ptr<def::Mesh>(new def::Mesh(
 				0, vertices.size(), std::move(vao)
 			));
-			mesh->mode = GL_POINTS;
+			mesh->mode = GL_LINES;
 			add_comp<def::Mesh>(mesh);
 		}
 
@@ -45,7 +45,7 @@ namespace gld {
 			float r = start_r;
 			while (c < count)
 			{
-				circle(r, s1); r += zl; s1 += 9;
+				circle(r, s1); r += zl; s1 += count_zl;
 				++c;
 			}
 		}
@@ -60,14 +60,34 @@ namespace gld {
 
 		void on_update(float* data, int len)
 		{
-			for (int i = 0; i < count; ++i)
+			constexpr int c = 32;
+			int unit_c = count / c;
+
+			for (int i = 0; i < c; ++i)
 			{
-				float v = sqrtf(data[i]) * 1.f;
-				for(int j = region[i].first;j < region[i].second;++i)
+				float b = sqrtf(data[i]) * 1.f;
+				float e = sqrtf(data[i + 1]) * 1.f;
+				for (int j = 0; j < unit_c; ++j)
 				{
-					vertices[j].pos.y = v;
-					vertices[j].color.y = v;
+					float v = tween::Sine::easeOut((float)j / (float)unit_c, 0.f, 1.0f, 1.f) * (e - b) + b;
+					set_unit(i * unit_c + j, v);
 				}
+				
+			}
+			auto& vao = get_comp< def::Mesh>()->vao;
+			vao->bind();
+			vao->buffs().get<gld::ArrayBufferType::VERTEX>().bind_data(vertices, GL_STATIC_DRAW);
+			vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+				gld::VAP_DATA<3, float, false>, gld::VAP_DATA<3, float, false>>();
+			vao->unbind();
+		}
+
+		void set_unit(int i,float v)
+		{
+			for (int j = region[i].first; j < region[i].second; ++j)
+			{
+				vertices[j].pos.y = v;
+				vertices[j].color.x = v;
 			}
 		}
 
@@ -76,9 +96,9 @@ namespace gld {
 			return BASS_DATA_FFT256;
 		}
 
-		float start_r = 0.1f, zl = 0.1f;
-		int start_n = 9;
-		int count = 128;
+		float start_r = 0.01f, zl = 0.01f;
+		int start_n = 4;
+		int count = 256,count_zl = 12;
 		std::vector<Vertex> vertices;
 		std::vector<std::pair<int, int>> region;
 	};
