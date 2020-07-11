@@ -137,9 +137,12 @@ void fv::MusicPlayer::stop()
 	}
 }
 
-void fv::MusicPlayer::getData(void *p, int size)
+size_t fv::MusicPlayer::getData(void *p, int size)
 {
-	BASS_ChannelGetData(chan, p, size);
+	if(chan)
+	{
+		return BASS_ChannelGetData(chan, p, size);
+	}
 }
 
 DWORD fv::MusicPlayer::getLevel()

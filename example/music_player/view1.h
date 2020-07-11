@@ -60,7 +60,15 @@ namespace gld {
 
 		void on_update(float* data, int len)
 		{
-
+			for (int i = 0; i < count; ++i)
+			{
+				float v = sqrtf(data[i]) * 1.f;
+				for(int j = region[i].first;j < region[i].second;++i)
+				{
+					vertices[j].pos.y = v;
+					vertices[j].color.y = v;
+				}
+			}
 		}
 
 		int fft_data_length()

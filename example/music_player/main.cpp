@@ -70,7 +70,9 @@ public:
         event_dispatcher(*perspective,(*world),width,height,
              glm::vec3(0.f, 0.f, 0.f),camera_dir, glm::vec3(0.f, 0.f, -2.f)),
             pumper(player)
-        {}
+        {
+        fft_ptr = std::unique_ptr<float[]>(new float[4096]);
+    }
     int init() override
     {
         if (LaunchArgs.second < 2)
@@ -403,8 +405,9 @@ public:
             p->update();
         if (flywheel->get_curr() > 0)
         {
-            //float buff[128];
-            //player.getData( fft_vs[flywheel->get_curr()]->fft_data_length();
+            float* data = fft_ptr.get();
+            size_t len = player.getData( data, fft_vs[flywheel->get_curr() - 1]->fft_data_length());
+            fft_vs[flywheel->get_curr() - 1]->on_update(data, len / sizeof(float));
         }
     }
 
@@ -450,6 +453,7 @@ private:
     std::vector<std::shared_ptr<FFTView>> fft_vs;
     std::function< bool(Event<Node<Component>>*) > onDown;
     std::function< bool(Event<Node<Component>>*) > onMove;
+    std::unique_ptr<float[]> fft_ptr;
 };
 
 #ifndef PF_ANDROID
