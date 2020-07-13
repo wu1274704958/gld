@@ -126,9 +126,19 @@ public:
          for (auto& p : cxts)
             p->init();
 
-         pumper.init(LaunchArgs.first[1]);
+        init_pumper();
+        
 
         return 0;
+    }
+
+    void init_pumper()
+    {
+        pumper.init(LaunchArgs.first[1]);
+        pumper.onAutoPlay = [this](const MMFile& f)
+        {
+            this->curr_play_ani(f.get_name());
+        };
     }
 
     void push_names(std::shared_ptr<Sphere>& sp,std::vector<std::string>&& v)
@@ -159,7 +169,7 @@ public:
     }
 
     template<typename T>
-    void push_name(std::shared_ptr<Sphere>& sp, T& v,int idx)
+    void push_name(std::shared_ptr<Sphere>& sp, T&& v,int idx)
     {
         auto label = std::shared_ptr<Label>(new Label());
         label->auto_scroll = true;
@@ -177,7 +187,7 @@ public:
             });
         };
         label->set_user_data((int*)idx);
-        label->set_text(std::move(v));
+        label->set_text(std::forward<T>(v));
         label->add_listener(EventType::Click, [=](Event<Node<Component>>* e)->bool {
             return this->onClickPlay(e);
         });
@@ -211,18 +221,19 @@ public:
         auto new_text = p->text;
         int idx = (int)(p->get_user_data<int*>());
         pumper.onclick(idx);
-        
+        curr_play_ani(new_text);
+        return true;
+    }
+
+    template<typename T>
+    void curr_play_ani(T text)
+    {
         constexpr float dur = 500.f;
         std::weak_ptr<Transform> tra = curr_play->get_comp_ex<Transform>();
-        App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, -5.f, 0.f, tween::Circ::easeInOut, [this, tra, dur, n_text = std::move(new_text)]() mutable {
+        App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, -5.f, 0.f, tween::Circ::easeInOut, [this, tra, dur, n_text = std::move(text)]() mutable {
             curr_play->set_text(n_text);
-            for (auto& c : curr_play->get_children())
-            {
-                c->init();
-            }
             App::instance()->tween.to(tra, &Transform::pos, &glm::vec3::z, dur, 0.f, -5.f, tween::Circ::easeInOut);
         });
-        return true;
     }
 
     void camera_reset()
@@ -374,6 +385,14 @@ public:
         fft_vs.push_back(v1);
     }
 
+    void check_stop()
+    {
+        if (player.getActive() == BASS_ACTIVE_STOPPED && pumper.getMode() != Pumper::NONE)
+        {
+            pumper.pump();
+        }
+    }
+
     void switch_to()
     {
         int i = flywheel->get_curr() + 1 < flywheel->count() ? flywheel->get_curr() + 1 : 0;
@@ -442,6 +461,7 @@ public:
 
             fft_vs[i - 1]->on_update(data, len / sizeof(float));
         }
+        check_stop();
     }
 
     ~Demo1() {

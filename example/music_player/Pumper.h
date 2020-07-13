@@ -36,6 +36,8 @@ namespace fv {
 		std::shared_ptr<std::vector<MMFile>> pop();
 		void onclick(int idx);
 
+		std::function<void(const MMFile&)> onAutoPlay;
+
 	private:
 		void rand();
 		void loop();

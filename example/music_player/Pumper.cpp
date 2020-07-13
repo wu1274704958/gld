@@ -87,6 +87,7 @@ void fv::Pumper::all_templet()
 	if (next_music)
 	{
 		m_player.playStream(*next_music);
+		onAutoPlay(*next_music);
 		delete next_music;
 		next_music = nullptr;
 		return;
@@ -119,6 +120,7 @@ void fv::Pumper::all_templet()
 		}
 		else {
 			m_player.playStream(m_root.top()->at(m_index));
+			onAutoPlay(m_root.top()->at(m_index));
 			++m_index;
 		}
 	}
