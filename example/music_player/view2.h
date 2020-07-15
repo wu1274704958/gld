@@ -52,12 +52,12 @@ namespace gld {
 			constexpr int c = 128;
 			int unit_c = count / c;
 
-			data[0] = 0.f;
-			data[1] = 0.1f;
-			data[2] = 0.12f;
-			data[3] = 0.11f;
-			data[4] = 0.08f;
-			data[5] = 0.0f;
+			//data[0] = 0.f;
+			//data[1] = 0.1f;
+			//data[2] = 0.12f;
+			//data[3] = 0.11f;
+			//data[4] = 0.08f;
+			//data[5] = 0.0f;
 
 			float b = 0.f;
 			for (int i = 0; i < c; ++i)
