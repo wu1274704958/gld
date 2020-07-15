@@ -17,7 +17,6 @@ public:
 #ifdef PF_ANDROID
     using WINDOW_TYPE = std::shared_ptr<EGLCxt>;
 #else
-protected:
     using WINDOW_TYPE = GLFWwindow *;
 #endif
 
