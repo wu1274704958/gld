@@ -8,7 +8,9 @@
 #include <fileop.hpp>
 #include <EGLCxt.h>
 #include <android/asset_manager.h>
+#ifndef Loge
 #define Loge(f,...) __android_log_print(ANDROID_LOG_ERROR,"ResMgr @V@",f,##__VA_ARGS__)
+#endif
 #endif
 
 #include <res_comm.hpp>

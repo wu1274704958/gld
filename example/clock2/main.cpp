@@ -37,8 +37,9 @@
 #include <generator/Generator.hpp>
 #include "../lighting_6/model.hpp"
 #include "../lighting_6/light.hpp"
+#ifndef PF_ANDROID
 #include <spy.hpp>
-
+#endif
 using namespace gld;
 namespace fs = std::filesystem;
 
