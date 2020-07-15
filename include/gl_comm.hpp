@@ -93,6 +93,27 @@ namespace gld
             }
         }
     };
+    template<typename F, typename ...VMV>
+    size_t map_val_inside(size_t v)
+    {
+        if (F::v1 == v)
+        {
+            return F::v2;
+        }
+        if constexpr (sizeof...(VMV) > 0)
+        {
+            return map_val_inside<VMV...>(v);
+        }
+    }
+    template<typename ...VMV>
+    size_t map_val(std::tuple<VMV...> tup,size_t v)
+    {
+        if constexpr (sizeof...(VMV) > 0)
+        {
+            return map_val_inside<VMV...>(v);
+        }
+    }
+   
     
     template<typename Ty>
     struct MapGlTypeEnum{

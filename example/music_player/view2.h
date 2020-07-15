@@ -35,6 +35,8 @@ namespace gld {
 				0, vertices.size(), std::move(vao)
 			));
 			mesh->mode = GL_LINE_LOOP;
+			//mesh->mode = GL_POINTS;
+
 			add_comp<def::Mesh>(mesh);
 		}
 
@@ -50,17 +52,21 @@ namespace gld {
 			constexpr int c = 128;
 			int unit_c = count / c;
 
+			data[0] = 0.f;
+			data[1] = 0.1f;
+			data[2] = 0.12f;
+			data[3] = 0.11f;
+			data[4] = 0.08f;
+			data[5] = 0.0f;
+
+			float b = 0.f;
 			for (int i = 0; i < c; ++i)
 			{
-				float b = sqrtf(data[i]) * 2.f;
-				float e = sqrtf(data[i + 1]) * 2.f;
-				for (int j = 0; j < unit_c; ++j)
-				{
-					float v = b < e ? tween::Sine::easeOut((float)j / (float)unit_c, 0.f, 1.0f, 1.f)* (e - b) + b : 
-						tween::Sine::easeIn((float)j / (float)unit_c, 0.f, 1.0f, 1.f) * (e - b) + b;
-					set_unit(i * unit_c + j, v);
-				}
-				
+				float m = sqrtf(data[i]) * 2.f;
+				float e = sqrtf(data[((i == len - 1) ? 0 : i + 1)]) * 2.f;
+				set_part(i, unit_c, 0, unit_c / 2, b, m);
+				set_part(i, unit_c, unit_c / 2, unit_c, m, e);
+				b = e;
 			}
 			auto& vao = get_comp< def::Mesh>()->vao;
 			vao->bind();
@@ -68,6 +74,16 @@ namespace gld {
 			vao->buffs().get<gld::ArrayBufferType::VERTEX>().vertex_attrib_pointer<
 				gld::VAP_DATA<3, float, false>, gld::VAP_DATA<3, float, false>>();
 			vao->unbind();
+		}
+
+		void set_part(int i,int unit_c,int m, int n, float b, float e)
+		{
+			auto  f = b < e ? tween::Expo::easeOut : tween::Expo::easeIn;
+			for (int j = m; j < n; ++j)
+			{
+				float v = f((float)(j - m) / (float)(n - m), 0.f, 1.0f, 1.f) * (e - b) + b;
+				set_unit(i * unit_c + j, v);
+			}
 		}
 
 		void set_unit(int i,float v)
@@ -78,7 +94,7 @@ namespace gld {
 			}
 		}
 
-		int fft_data_length()
+		size_t fft_data_length()
 		{
 			return BASS_DATA_FFT256;
 		}

@@ -137,7 +137,7 @@ void fv::MusicPlayer::stop()
 	}
 }
 
-size_t fv::MusicPlayer::getData(void *p, int size)
+size_t fv::MusicPlayer::getData(void *p, size_t size)
 {
 	if(chan)
 	{

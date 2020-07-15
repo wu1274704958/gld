@@ -93,7 +93,7 @@ namespace gld {
 			}
 		}
 
-		int fft_data_length()
+		size_t fft_data_length()
 		{
 			return BASS_DATA_FFT256;
 		}

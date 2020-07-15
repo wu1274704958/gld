@@ -352,7 +352,7 @@ public:
 
         flywheel->on_select = [this,v1,v2](int i) 
         {
-            switch (i)
+            switch (i) 
             {
             case 1:
                 if (v2->get_comp<Transform>()->rotate.x == 0.f)
@@ -457,9 +457,8 @@ public:
         //for(int i = 1;i < flywheel->count();++i)
         {
             float* data = fft_ptr.get();
-            size_t len = player.getData( data, fft_vs[i - 1]->fft_data_length());
-
-            fft_vs[i - 1]->on_update(data, len / sizeof(float));
+            size_t len = player.getData( data, fft_vs[i - 1]->fft_data_length()); 
+            fft_vs[i - 1]->on_update(data, map_val(FFTView::FFT_VAL_TYPE(), fft_vs[i - 1]->fft_data_length()));
         }
         check_stop();
     }

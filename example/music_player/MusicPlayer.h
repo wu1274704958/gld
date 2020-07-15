@@ -14,7 +14,7 @@ namespace fv {
 		void play(bool loop = false);
 		void pause();
 		void stop();
-		size_t getData(void *p, int size);
+		size_t getData(void *p, size_t size);
 		DWORD getLevel();
 		QWORD getPosition(int flag);
 		void setPosition(QWORD pos, int flag);
