@@ -185,7 +185,7 @@ namespace sundry
         return glm::linearRand<float>(0.f, 1.f);
     }
 
-    inline void screencoord_to_ndc(int width, int height, int x, int y, float* nx, float* ny,bool flipY = true) 
+    inline void screencoord_to_ndc(int width, int height, float x, float y, float* nx, float* ny,bool flipY = true) 
     {
         *nx = (float)x / (float)width * 2 - 1;
         *ny = ((float)y / (float)height * 2 - 1) * (flipY ? -1.f : 1.f); // reverte y axis

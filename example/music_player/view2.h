@@ -68,9 +68,8 @@ namespace gld {
 			{
 				float m = sqrtf(data[i]) * 2.f;
 				float e = sqrtf(data[((i == len - 1) ? 0 : i + 1)]) * 2.f;
-				e -= m * 0.24f;
-				set_part(i, unit_c, 0, unit_c / 2, b, m);
-				set_part(i, unit_c, unit_c / 2, unit_c, m, e);
+				///set_part(i, unit_c, 0, unit_c / 2, b, m);
+				set_part(i, unit_c, 0, unit_c, b,e);
 				b = e;
 			}
 			auto& vao = get_comp< def::Mesh>()->vao;

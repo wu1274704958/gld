@@ -136,9 +136,9 @@ public:
 
     }
 
-    void onMouseButton(int btn,int action,int mode) override
+    void onMouseButton(int btn,int action,int mode,double x,double y) override
     {
-        RenderDemoRotate::onMouseButton(btn,action,mode);
+        RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
     }
 
     void onWindowResize(int w, int h) override

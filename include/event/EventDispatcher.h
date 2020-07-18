@@ -18,7 +18,7 @@ namespace evt {
 			w(w), h(h),camera_dir(camera_dir), camera_pos(camera_pos), view_pos(view_pos)
 			{}
 
-		void onMouseDown(int btn, int mode, int x, int y)
+		void onMouseDown(int btn, int mode, double x, double y)
 		{
 			cache_btn = btn;
 
@@ -42,7 +42,7 @@ namespace evt {
 				}
 			}
 		}
-		void onMouseUp(int btn, int mode, int x, int y)
+		void onMouseUp(int btn, int mode, double x, double y)
 		{
 			MouseEvent<TargetTy> ce(EventType::MouseUp, btn);
 
@@ -77,7 +77,7 @@ namespace evt {
 			}
 			cache_btn = -1;
 		}
-		void onMouseMove( int x, int y)
+		void onMouseMove(double x, double y)
 		{
 			if (cache_btn >= 0)
 			{
@@ -112,7 +112,7 @@ namespace evt {
 			}
 		}
 
-		void onMouse(int x,int y,MouseEvent<TargetTy>& ce,
+		void onMouse(double x,double y,MouseEvent<TargetTy>& ce,
 			std::function<bool(EventHandler<TargetTy>*)> into,
 			std::tuple<EventHandler<TargetTy>*,glm::vec3,float>* ehs,
 			size_t len,
@@ -128,7 +128,7 @@ namespace evt {
 				}
 
 				glm::vec3 raypos, raydir;
-				mouse_ray(x, y, raypos, raydir);
+				mouse_ray(static_cast<float>(x), static_cast<float>(y), raypos, raydir);
 				
 				ce.raypos = raypos; ce.raydir = raydir; ce.camera_pos = camera_pos; ce.world = world;
 				ce.w_pos = glm::vec2(static_cast<float>(x), static_cast<float>(y));
@@ -165,7 +165,7 @@ namespace evt {
 			}
 		}
 
-		void mouse_ray(int x, int y,glm::vec3& raypos,glm::vec3& raydir)
+		void mouse_ray(float x, float y,glm::vec3& raypos,glm::vec3& raydir)
 		{
 			float nx, ny;
 			sundry::screencoord_to_ndc(w, h, x, y, &nx, &ny);

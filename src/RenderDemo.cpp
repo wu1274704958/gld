@@ -150,15 +150,13 @@ void RenderDemo::MouseButtonCallBack(RenderDemo::WINDOW_TYPE window,int btn,int 
 #ifndef PF_ANDROID
     double _x, _y;
     glfwGetCursorPos(window, &_x, &_y);
-    int x = static_cast<int>(_x);
-    int y = static_cast<int>(_y);
-    call_listeners<int, int, int, int, int>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, x, y);
+    call_listeners<int, int, int, double, double>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, _x, _y);
 #endif // PF_ANDROID
 }
 
-void RenderDemo::MouseButtonCallBackEx(RenderDemo::WINDOW_TYPE window, int btn, int action, int mod,int x,int y)
+void RenderDemo::MouseButtonCallBackEx(RenderDemo::WINDOW_TYPE window, int btn, int action, int mod,double x,double y)
 {
-    call_listeners<int,int,int ,int,int>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, x, y);
+    call_listeners<int,int,int , double, double>(MouseButtonListeners, window, &RenderDemo::onMouseButton, btn, action, mod, x, y);
 }
 
 
@@ -199,7 +197,7 @@ void RenderDemo::onWindowResize(int w, int h)
 {
 }
 
-void RenderDemo::onMouseButton(int,int,int,int,int){}
+void RenderDemo::onMouseButton(int,int,int,double,double){}
 void RenderDemo::onMouseMove(double,double){}
 
 RenderDemo::~RenderDemo()
