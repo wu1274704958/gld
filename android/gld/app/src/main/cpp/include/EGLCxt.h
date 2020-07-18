@@ -27,7 +27,7 @@ struct RenderDemo;
 struct EGLCxt;
 
 typedef void (* WindowResizeFuncTy)(std::shared_ptr<EGLCxt>,int,int);
-typedef void (* MouseButtonFunTy)(std::shared_ptr<EGLCxt>,int,int,int,int,int);
+typedef void (* MouseButtonFunTy)(std::shared_ptr<EGLCxt>,int,int,int,double,double);
 typedef void (* CursorPosFunTy)(std::shared_ptr<EGLCxt>,double,double);
 
 template <typename F,typename ...Args>

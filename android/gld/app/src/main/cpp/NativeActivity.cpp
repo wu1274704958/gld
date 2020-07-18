@@ -146,8 +146,8 @@ extern "C" {
                 if(cxt_p->mouseButtonFun)
                     cxt_p->mouseButtonFun(cxt_p, GLFW_MOUSE_BUTTON_1,
                                           static_cast<int>(EventMap::map_ex(static_cast<size_t>(AMotionEvent_getAction(event)))), 0,
-                                          static_cast<int>(AMotionEvent_getRawX(event, 0)),
-                                          static_cast<int>(AMotionEvent_getRawY(event, 0)));
+                                          AMotionEvent_getRawX(event, 0),
+                                          AMotionEvent_getRawY(event, 0));
                 if(cxt_p->cursorPosFun)
                     cxt_p->cursorPosFun(cxt_p,AMotionEvent_getRawX(event,0),AMotionEvent_getRawY(event,0));
                 break;
