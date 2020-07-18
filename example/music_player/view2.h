@@ -52,24 +52,13 @@ namespace gld {
 			constexpr int c = 128;
 			int unit_c = count / c;
 
-			
-			for (int i = 0; i < len; ++i)
-				data[i] = sundry::rd_0_1() * 0.2f;
-
-			data[0] = 0.f;
-			data[1] = 0.1f;
-			data[2] = 0.12f;
-			data[3] = 0.13f;
-			data[4] = 0.08f;
-			data[5] = 0.17f;
-
 			float b = sqrtf(data[len - 1]) * 2.f;
 			for (int i = 0; i < c; ++i)
 			{
 				float m = sqrtf(data[i]) * 2.f;
-				float e = sqrtf(data[((i == len - 1) ? 0 : i + 1)]) * 2.f;
-				///set_part(i, unit_c, 0, unit_c / 2, b, m);
-				set_part(i, unit_c, 0, unit_c, b,e);
+				float e = sqrtf(data[((i == len - 1) ? len - 1 : i + 1)]) * 2.f;
+				set_part(i, unit_c, 0, unit_c / 2, b, m);
+				set_part(i, unit_c, unit_c / 2, unit_c, m, e);
 				b = e;
 			}
 			auto& vao = get_comp< def::Mesh>()->vao;
