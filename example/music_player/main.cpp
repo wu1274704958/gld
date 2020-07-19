@@ -127,6 +127,7 @@ public:
             p->init();
 
         init_pumper();
+        pumper.setMode(Pumper::LOOP);
         
 
         return 0;
@@ -387,7 +388,7 @@ public:
 
     void check_stop()
     {
-        if (player.getActive() == BASS_ACTIVE_STOPPED && pumper.getMode() != Pumper::NONE)
+        if (!player.isOff() && player.getActive() == BASS_ACTIVE_STOPPED && pumper.getMode() != Pumper::NONE)
         {
             pumper.pump();
         }
