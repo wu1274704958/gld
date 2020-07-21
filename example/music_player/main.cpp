@@ -344,14 +344,14 @@ public:
         flywheel->pos.z = -9.f;
         flywheel->create();
 
-        auto v1 = std::make_shared<View1>();
-        v1->zl = 0.01f; 
-        v1->create();
+        //auto v1 = std::make_shared<View1>();
+        //v1->zl = 0.04f; 
+        //v1->create();
 
         auto v2 = std::make_shared<View2>();
         v2->create();
 
-        flywheel->on_select = [this,v1,v2](int i) 
+        flywheel->on_select = [this,v2](int i) 
         {
             switch (i) 
             {
@@ -364,13 +364,13 @@ public:
                 glLineWidth(1.2f);
                 break;
             case 2:
-                if (v1->get_comp<Transform>()->rotate.x == 0.f)
-                {
-                    std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
-                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.47f, tween::Expo::easeInOut);
-                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
-                }
-                glLineWidth(0.4f);
+               //if (v1->get_comp<Transform>()->rotate.x == 0.f)
+               //{
+               //    std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
+               //    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.47f, tween::Expo::easeInOut);
+               //    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+               //}
+               //glLineWidth(0.4f);
                 break;
             }
 
@@ -378,12 +378,12 @@ public:
 
         flywheel->add(0, list_ui);
         flywheel->add(1, v2);
-        flywheel->add(2, v1);
+        //flywheel->add(2, v1);
 
-        cxts.push_back(v1);
+        //cxts.push_back(v1);
         cxts.push_back(v2);
         fft_vs.push_back(v2);
-        fft_vs.push_back(v1);
+        //fft_vs.push_back(v1);
     }
 
     void check_stop()

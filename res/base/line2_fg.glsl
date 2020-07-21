@@ -2,10 +2,9 @@
 
 out vec4 color; 
 
-uniform vec3 fill_color;
-
 in GS_OUT{
     vec2 goUv;
+    vec3 goColor;
 } gs_out;
 
 float gray()
@@ -49,15 +48,22 @@ highp float f1(float n){
 
 void main() 
 { 
+
+    vec3 fill_color = gs_out.goColor;
     float g = gray();
     if(g > 0.86f)
     {
         color = vec4( fill_color + (vec3(1.f) * 0.16f * f1(g)) ,1.0f);
+        return;
     }
-    else if(g > 0.1f)
+    if(g > 0.1f)
     {
         color = vec4( fill_color * f1(g) ,1.0f);
     }else{
+        if(f1(g) * random(gs_out.goUv) <= 0.0f)
+        {
+            discard;
+        }else
         color = vec4( fill_color * f1(g) * random(gs_out.goUv) ,1.0f);
     }
 }

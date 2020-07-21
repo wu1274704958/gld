@@ -92,7 +92,7 @@ public:
 
         mesh->vao = vao;
 
-        mesh->mode = GL_LINES;
+        mesh->mode = GL_LINE_LOOP;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
@@ -134,7 +134,7 @@ public:
         perspective = glm::perspective(glm::radians(60.f), ((float)width / (float)height), 0.1f, 256.0f);
         world = glm::mat4(1.0f);
 
-        world = glm::translate(*world, glm::vec3(0.f,0.f, -2.0f));
+        world = glm::translate(*world, glm::vec3(0.f,0.f, -5.0f));
         world = glm::rotate(*world, glm::radians(rotate.x), glm::vec3(1.f, 0.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.y), glm::vec3(0.f, 1.f, 0.f));
         world = glm::rotate(*world, glm::radians(rotate.z), glm::vec3(0.f, 0.f, 1.f));

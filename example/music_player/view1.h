@@ -11,17 +11,26 @@ namespace gld {
 			glm::vec3 color;
 		};
 
+		View1() : line_width("line_width")
+		{
+
+		}
+
 		void create()
 		{
 			perpare_vertices();
 			add_comp(std::make_shared<Transform>());
 
-			auto render = std::shared_ptr<Render>(new Render("base/base2_vs.glsl", "base/base2_fg.glsl"));
+			auto render = std::shared_ptr<Render>(new Render("base/line2_vs.glsl", "base/line2_fg.glsl", "base/line2_ge.glsl"));
 			render->init();
 			auto program = render->get();
 			if (program->uniform_id("perspective") == -1)
-				program->locat_uniforms("perspective", "world","model");
+				program->locat_uniforms("perspective", "world","model","line_width");
 			add_comp<Render>(render);
+
+			line_width.attach_program(program);
+			program->use();
+			line_width = 0.01f;
 
 			auto vao = std::make_shared<gld::VertexArr>();
 			vao->create();
@@ -98,10 +107,11 @@ namespace gld {
 			return BASS_DATA_FFT256;
 		}
 
-		float start_r = 0.01f, zl = 0.01f, angle = 0.f;
-		int start_n = 4;
-		int count = 256,count_zl = 4;
+		float start_r = 0.01f, zl = 0.2f, angle = 0.f;
+		int start_n = 2;
+		int count = 128,count_zl = 1;
 		std::vector<Vertex> vertices;
 		std::vector<std::pair<int, int>> region;
+		Uniform<UT::Float> line_width;
 	};
 }

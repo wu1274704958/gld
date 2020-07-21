@@ -11,17 +11,24 @@ namespace gld {
 			glm::vec3 color;
 		};
 
+		View2() : line_width("line_width") {}
+
 		void create()
 		{
 			perpare_vertices();
 			add_comp(std::make_shared<Transform>());
 
-			auto render = std::shared_ptr<Render>(new Render("base/base2_vs.glsl", "base/base2_fg.glsl"));
+			auto render = std::shared_ptr<Render>(new Render("base/line2_vs.glsl", "base/line2_fg.glsl", "base/line2_ge.glsl"));
 			render->init();
 			auto program = render->get();
 			if (program->uniform_id("perspective") == -1)
-				program->locat_uniforms("perspective", "world","model");
+				program->locat_uniforms("perspective", "world","model","line_width");
 			add_comp<Render>(render);
+
+			line_width.attach_program(program);
+
+			program->use();
+			line_width = 0.005f;
 
 			auto vao = std::make_shared<gld::VertexArr>();
 			vao->create();
@@ -51,6 +58,9 @@ namespace gld {
 		{
 			constexpr int c = 128;
 			int unit_c = count / c;
+
+			for (int i = 0; i < len; ++i)
+				data[i] = sundry::rd_0_1() * 0.1f;
 
 			float b = sqrtf(data[len - 1]) * 2.f;
 			for (int i = 0; i < c; ++i)
@@ -95,5 +105,7 @@ namespace gld {
 		float radius = 1.f;
 		int count = 4096;
 		std::vector<Vertex> vertices;
+
+		Uniform<UT::Float> line_width;
 	};
 }
