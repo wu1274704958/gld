@@ -77,6 +77,8 @@ public:
 
         std::vector<glm::vec3> v = gen::circle(0.f,2.f,128);
 
+        //std::vector<glm::vec3> v = { glm::vec3(1.f,0.f,0.f),glm::vec3(-1.f,0.f,0.f) };
+
         auto vao = std::make_shared<gld::VertexArr>();
         vao->create();
         vao->create_arr<gld::ArrayBufferType::VERTEX>();
@@ -90,7 +92,7 @@ public:
 
         mesh->vao = vao;
 
-        mesh->mode = GL_LINE_LOOP;
+        mesh->mode = GL_LINES;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
