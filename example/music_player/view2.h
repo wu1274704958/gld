@@ -59,8 +59,6 @@ namespace gld {
 			constexpr int c = 128;
 			int unit_c = count / c;
 
-			for (int i = 0; i < len; ++i)
-				data[i] = sundry::rd_0_1() * 0.1f;
 
 			float b = sqrtf(data[len - 1]) * 2.f;
 			for (int i = 0; i < c; ++i)
