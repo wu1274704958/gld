@@ -75,7 +75,7 @@ public:
         fill_color = glm::vec3(0.f,1.0f,0.f);
         fill_color.sync();
 
-        std::vector<glm::vec3> v = gen::circle(0.f,2.f,128);
+        std::vector<glm::vec3> v = gen::circle(0.f,1.f,128);
 
         //std::vector<glm::vec3> v = { glm::vec3(1.f,0.f,0.f),glm::vec3(-1.f,0.f,0.f) };
 
@@ -92,17 +92,18 @@ public:
 
         mesh->vao = vao;
 
-        mesh->mode = GL_LINE_LOOP;
+        mesh->mode = GL_LINES;
 
         auto node = std::make_shared<Node<Component>>();
         node->add_comp<Transform>(std::make_shared<Transform>());
-        //node->get_comp<Transform>()->scale = glm::vec3(2.7f, 2.7f, 2.7f);
+        node->get_comp<Transform>()->scale = glm::vec3(2.7f, 2.7f, 2.7f);
         node->add_comp<def::Mesh>(mesh);
         node->add_comp<Render>(std::make_shared<Render>("base/line_vs.glsl","base/line_fg.glsl", "base/line_ge.glsl"));
 
         cxts.push_back(node);
         
         glEnable(GL_FRAMEBUFFER_SRGB);
+        glEnable(GL_DEPTH_TEST);
 
          for (auto& p : cxts)
             p->init();
@@ -174,7 +175,7 @@ int main()
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 800, "Clock"))
+    if (d.initWindow(1200, 800, "Clock"))
     {
         printf("init window failed\n");
         return -1;

@@ -60,4 +60,5 @@ void main()
     }else{
         color = vec4( fill_color * f1(g) * random(gs_out.goUv) ,1.0f);
     }
+    //color = vec4( fill_color,1.0f);
 }

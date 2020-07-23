@@ -5,6 +5,8 @@ layout (triangle_strip, max_vertices = 4) out;
 
 uniform float line_width;
 
+float redius = 0.1f;
+
 in VS_OUT {
     vec3 f_color;
 } vs_out[];
@@ -23,6 +25,8 @@ void main() {
      //{
      //   dir = normalize(cross(vec3(1.f,0.f,0.f),l_dir));
      //}
+
+
     
 
      vec3 up = line_width * 0.5f * dir;
