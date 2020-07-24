@@ -18,7 +18,7 @@ namespace gld {
 			perpare_vertices();
 			add_comp(std::make_shared<Transform>());
 
-			auto render = std::shared_ptr<Render>(new Render("base/line2_vs.glsl", "base/line2_fg.glsl", "base/line2_ge.glsl"));
+			auto render = std::shared_ptr<Render>(new Render("base/line3_vs.glsl", "base/line3_fg.glsl", "base/line3_ge.glsl"));
 			render->init();
 			auto program = render->get();
 			if (program->uniform_id("perspective") == -1)
