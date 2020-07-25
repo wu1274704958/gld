@@ -28,7 +28,7 @@ namespace gld {
 			line_width.attach_program(program);
 
 			program->use();
-			line_width = 0.005f;
+			line_width = 0.01f;
 
 			auto vao = std::make_shared<gld::VertexArr>();
 			vao->create();
@@ -42,7 +42,7 @@ namespace gld {
 				0, vertices.size(), std::move(vao)
 			));
 			mesh->mode = GL_LINE_LOOP;
-			//mesh->mode = GL_POINTS;
+			//mesh->mode = GL_LINES;
 
 			add_comp<def::Mesh>(mesh);
 		}
@@ -67,8 +67,8 @@ namespace gld {
 			{
 				float m = sqrtf(data[i]) * 2.f;
 				float e = sqrtf(data[((i == len - 1) ? len - 1 : i + 1)]) * 2.f;
-				set_part(i, unit_c, 0, unit_c / 2, b, m);
-				set_part(i, unit_c, unit_c / 2, unit_c, m, e);
+				set_part(i, unit_c, 0, unit_c, m, e);
+				//set_part(i, unit_c, unit_c / 2, unit_c, m, e);
 				b = e;
 			}
 			auto& vao = get_comp< def::Mesh>()->vao;

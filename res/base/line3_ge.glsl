@@ -4,7 +4,7 @@ layout (lines) in;
 //layout (line_strip, max_vertices = 28) out;
 layout (triangle_strip, max_vertices = 52) out;
 
-float LineWidth = 0.1;
+uniform float line_width;
 int seg = 12;
 
 in VS_OUT {
@@ -43,7 +43,7 @@ void main() {
 
      vec3 dir = normalize(cross(vp,l_dir));
 
-     float radius = LineWidth * 0.5f;
+     float radius = line_width * 0.5f;
      float chang = length(l_dir);
      float hc_rate = radius / chang;
      
