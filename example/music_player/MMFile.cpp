@@ -208,3 +208,8 @@ bool MMFile::nameIsLike(const wchar_t * str) const
 {
 	return  name->find(str) != std::wstring::npos;
 }
+
+bool lstrcmpW(const wchar_t*, const wchar_t*)
+{
+	
+}

@@ -1,7 +1,10 @@
 #include "SupportFile.h"
 #include <cstring>
+#ifdef PF_WIN32
 #include <Windows.h>
-
+#else
+#include "MMFile.h"
+#endif
 const wchar_t  * const SupportFile::supportList[SupportFile::supportNum] = {
 	L".mp3",
 	L".flac",

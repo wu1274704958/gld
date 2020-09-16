@@ -76,4 +76,6 @@ private:
 };
 
 
+bool lstrcmpW(const wchar_t*, const wchar_t*);
+
 #endif //FIRST_MMFILE_H

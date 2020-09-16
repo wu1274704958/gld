@@ -3,9 +3,11 @@
 //
 
 #include "GetFileName.h"
+#ifdef PF_WIN32
 #include <Windows.h>
+#endif
 #include "SupportFile.h"
-
+#ifdef PF_WIN32
 void GetFileName::getFileNameA(std::vector<MMFile> &v, const char *pChar)
 {
 	if (!pChar) return ;
@@ -46,3 +48,16 @@ void GetFileName::getFileNameW(std::vector<MMFile>& v, const wchar_t * d)
 	}
 
 }
+#else
+
+void GetFileName::getFileNameA(std::vector<MMFile> &v, const char *pChar)
+{
+	
+}
+
+void GetFileName::getFileNameW(std::vector<MMFile>& v, const wchar_t * d)
+{
+
+}
+
+#endif

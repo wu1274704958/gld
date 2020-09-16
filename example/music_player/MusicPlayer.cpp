@@ -1,6 +1,10 @@
 #include "MusicPlayer.h"
 #include <bassflac.h>
+#include "MMFile.h"
 
+#ifndef PF_WIN32 
+#define WCHAR void
+#endif
 
 fv::MusicPlayer::MusicPlayer(bool enable3d)
 {
