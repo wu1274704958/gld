@@ -142,7 +142,7 @@ public:
         
         WordPatch* wp = dynamic_cast<WordPatch*>( cxts[0].get() );
         wp->create();
-        //auto a = create_word(font2,L'Îâ', onclick, onMove, onDown);
+        //auto a = create_word(font2,L'ï¿½ï¿½', onclick, onMove, onDown);
         //a->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
         //wp->add_word(std::dynamic_pointer_cast<Word>( a), glm::vec2(0.5f, 0.5f));
         
@@ -153,7 +153,7 @@ public:
             //cxts.push_back(a);
         }
        
-        for (auto k = L'çù'; k <= L'çù' + 300; ++k)
+        for (auto k = L'å´'; k <= L'å´' + 300; ++k)
         {
             auto a = create_word(font2, k, onclick, onMove, onDown);
             wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
@@ -167,7 +167,7 @@ public:
         //clip->create();
         //clip->refresh();
         //
-        //clip->node->add_child(create_word(font2, L'çù', onclick, onMove, onDown,126,1.0f,0.0f));
+        //clip->node->add_child(create_word(font2, L'ï¿½ï¿½', onclick, onMove, onDown,126,1.0f,0.0f));
         //clip->node->get_child(0)->get_comp<Transform>()->pos = glm::vec3(0.f,0.f,0.f);
         //clip->node->get_child(0)->get_comp<DefTextMaterial>()->color = glm::vec4(0.2f, 0.5f, 0.f,1.f);
         //cxts.push_back(clip);
@@ -180,7 +180,7 @@ public:
         auto label = std::shared_ptr<Label>(new Label());
         label->align = Align::Center;
         label->font = font2;
-        label->set_text("¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n");
+        label->set_text(L"æ–­æ¡¥æ®‹é›ª-- è®¸åµ©\nå¥½å¬! Hello? go!go!go!\næ–­æ¡¥æ®‹é›ª-- è®¸åµ©\nå¥½å¬! Hello? go!go!go!\n");
         
         label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
             auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
@@ -201,7 +201,7 @@ public:
             else if (me->btn == GLFW_MOUSE_BUTTON_3) {
                 p->font = font2;
                 p->mulitline = true;
-                p->set_text("¶ÏÇÅ²ÐÑ© -- ÐíáÔ\nºÃÌý! Hello? go!go!go!\n");
+                p->set_text("ï¿½ï¿½ï¿½Å²ï¿½Ñ© -- ï¿½ï¿½ï¿½ï¿½\nï¿½ï¿½ï¿½ï¿½! Hello? go!go!go!\n");
                 p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
             }
             return true;
@@ -214,14 +214,14 @@ public:
         //she->create();
         //she->get_comp<Transform>()->scale = glm::vec3(2.f);
         //cxts.push_back(she);
-        /*uint32_t cc = L'çù';
+        /*uint32_t cc = L'ï¿½ï¿½';
         for (int i = 0;i < she->slot_count(); ++i)
         {
             auto w = create_word(font2, cc++ , onclick, nullptr, nullptr, 24,1.0f,0.f);
             she->add(i,w);
         }*/
 
-        /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ÅÀ',1.f,0.f);
+        /*auto [a, wd, size] = DefTexMgr::instance()->get_node(font2, 0, 0, 126, L'ï¿½ï¿½',1.f,0.f);
         auto trans = a->get_comp<Transform>();
         auto mater = a->get_comp<DefTextMaterial>();
         mater->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
@@ -233,13 +233,13 @@ public:
         //    return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
         //};
         //
-        //push_names(she,{ "¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«"
-        //    ,"¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«" 
-        //    ,"¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«" 
-        //    ,"¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«" 
-        //    ,"¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«" 
-        //    ,"¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«",
-        //    "¶ÏÇÅ²ÐÑ©","´óÊ±´ú","°¢ÈøµÂ","Å¶IP¼¼Êõ","ÅãÎÒi¿´µ½","±±¾©","°×Éß´«" });
+        //push_names(she,{ "ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½"
+        //    ,"ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½" 
+        //    ,"ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½" 
+        //    ,"ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½" 
+        //    ,"ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½" 
+        //    ,"ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½",
+        //    "ï¿½ï¿½ï¿½Å²ï¿½Ñ©","ï¿½ï¿½Ê±ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½","Å¶IPï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ï¿½","ï¿½ï¿½ï¿½ß´ï¿½" });
        
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
