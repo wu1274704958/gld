@@ -265,7 +265,7 @@ namespace gld {
 			margin.w = v * Word::WORD_SCALE;
 		}
 
-		void onUpdate()
+		void onUpdate() override
 		{
 			if (auto_scroll && !mulitline && text_width > width)
 			{

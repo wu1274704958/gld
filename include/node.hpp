@@ -244,7 +244,7 @@ namespace gld{
         {
             components = oth.components;
             children = oth.children;
-            parent = parent;
+            parent = oth.parent;
             userData = oth.userData;
 
             attach_comps();
@@ -255,7 +255,7 @@ namespace gld{
         {
             components = std::move(oth.components);
             children = std::move(oth.children);
-            parent = std::move(parent);
+            parent = std::move(oth.parent);
             userData = oth.userData;
             oth.userData = nullptr;
 
@@ -267,7 +267,7 @@ namespace gld{
         {
             components = oth.components;
             children = oth.children;
-            parent = parent;
+            parent = oth.parent;
             userData = oth.userData;
             attach_comps();
             attach_children();
@@ -279,7 +279,7 @@ namespace gld{
         {
             components = std::move(oth.components);
             children = std::move(oth.children);
-            parent = std::move(parent);
+            parent = std::move(oth.parent);
             userData = oth.userData;
             oth.userData = nullptr;
 
