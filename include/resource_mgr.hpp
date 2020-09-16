@@ -4,8 +4,8 @@
 #include <comm.hpp>
 #include <glsl_preprocess.hpp>
 #include <memory>
-#ifdef PF_ANDROID
 #include <fileop.hpp>
+#ifdef PF_ANDROID
 #include <EGLCxt.h>
 #include <android/asset_manager.h>
 #ifndef Loge
@@ -31,6 +31,13 @@ namespace gld{
 #ifndef PF_ANDROID
         PathTy to_path(std::string& uri) const
         {
+            if(wws::is_absolute(uri))
+            {
+                PathTy res = uri;
+                if(!std::filesystem::exists(res))
+                    throw std::runtime_error("This file not exists!!!");
+                return res;
+            }
             int b = 0,i = 0;
             PathTy res = root;
             for(;i < uri.size();++i)
