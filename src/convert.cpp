@@ -5,7 +5,9 @@
 #include <codecvt>
 
 #ifndef PF_ANDROID
+#ifdef PF_WIN32
 #include <Windows.h>
+#endif //PF_Win32
 #endif // PF_ANDROID
 
 
@@ -40,6 +42,7 @@ namespace cvt {
 	}
 
 #ifndef PF_ANDROID
+#ifdef PF_WIN32
 	std::string unicode2ansi(const std::wstring& ws)
 	{
 		int ansiiLen = ::WideCharToMultiByte(CP_ACP, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -70,8 +73,19 @@ namespace cvt {
 	{
 		return unicode2utf8(ansi2unicode(str));
 	}
-
 #else
+	std::string unicode2ansi(const std::wstring& ws)
+	{
+		return unicode2utf8(ws);
+	}
+
+	std::wstring ansi2unicode(const std::string& s)
+	{
+		return utf82unicode(s);
+	}
+#endif
+#else
+#ifndef PF_WIN32
 
 	std::string unicode2ansi(const std::wstring& ws)
 	{
@@ -82,6 +96,6 @@ namespace cvt {
 	{
 		return utf82unicode(s);
 	}
-
+#endif
 #endif
 }

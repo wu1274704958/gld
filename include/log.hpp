@@ -126,7 +126,7 @@ namespace dbg{
 #ifndef PF_ANDROID
 
     extern Log<std::ostream> log;
-
+#ifdef PF_WIN32
     template <class _Elem, class _Traits>
     std::basic_ostream<_Elem, _Traits>& __CLRCALL_OR_CDECL endl(
     std::basic_ostream<_Elem, _Traits>& _Ostr) { // insert newline and flush stream
@@ -134,7 +134,17 @@ namespace dbg{
         _Ostr.flush();
         return _Ostr;
     }
-
+#else
+    template <class _CharT, class _Traits>
+    inline _LIBCPP_INLINE_VISIBILITY
+    std::basic_ostream<_CharT, _Traits>&
+    endl(std::basic_ostream<_CharT, _Traits>& __os)
+    {
+        __os.put(__os.widen('\n'));
+        __os.flush();
+        return __os;
+    }   
+#endif
 #else
 
     extern Log<ALogStream<TagWarp,int>> log;

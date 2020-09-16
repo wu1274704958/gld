@@ -8,6 +8,7 @@ if(WIN32)
 
     message("is Windows")
     add_definitions(/permissive-)
+    add_definitions(-DPF_WIN32)
     if(${CMAKE_BUILD_TYPE} STREQUAL "Release" )
         add_link_options(/SAFESEH:NO /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
     else()
@@ -16,6 +17,9 @@ if(WIN32)
     message("${CMAKE_EXE_LINKER_FLAGS}")
 else()
 
+if(APPLE) 
+    add_definitions(-DPF_APPLE)
+endif()
 
 endif()
 
@@ -64,7 +68,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     add_executable(d1 d1/main.cpp  glad.c ${ALL_SOURCE_FILES})
 
-    target_link_libraries(d1 ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY})
+    target_link_libraries(d1 ${GLFW3_LIBRARY} ${ASSIMP_LIBRARY} ${FREE_TYPE_LIBRARY})
 
     add_executable(lighting_1 lighting/lighting_1.cpp  glad.c ${ALL_SOURCE_FILES})
 

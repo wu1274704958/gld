@@ -41,18 +41,41 @@ if(WIN32)
 
     endif(ASSIMP_PATH)
 
-else(WIN32)
+elseif(CMAKE_HOST_APPLE)
 
+    
+    set(ASSIMP_PATH $ENV{ASSIMP_PATH})
+        if( ASSIMP_PATH )
+
+            message("Find ASSIMP_PATH env!")
+            message(${ASSIMP_PATH})
+
+            find_path( ASSIMP_INCLUDE_DIR assimp "${ASSIMP_PATH}/include" NO_DEFAULT_PATH)
+            find_library( ASSIMP_LIBRARY libassimp.dylib "${ASSIMP_PATH}/lib")
+            if( ASSIMP_INCLUDE_DIR AND ASSIMP_LIBRARY)
+
+                set( ASSIMP_FOUND TRUE )
+
+            else()
+
+                set( ASSIMP_FOUND FALSE )
+
+            endif()
+
+        endif(ASSIMP_PATH)
+
+else(WIN32)
+    message("Not windows")
     find_path( ASSIMP_INCLUDE_DIR assimp "/usr/include" )
     find_library( ASSIMP_LIBRARY assimp  "/usr/lib/x86_64-linux-gnu/")
-
-    if( ASSIMP_INCLUDE_DIR AND ASSIMP_LIBRARY)
+    
+    if( ASSIMP_INCLUDE_DIR AND ASSIMP_INCLUDE_DIR)
 
         set( ASSIMP_FOUND TRUE )
 
     else()
 
-        set( ASSIMP_FOUND FALSE )
+        set( ASSIMP_FOUND  FALSE)
 
     endif()
 
