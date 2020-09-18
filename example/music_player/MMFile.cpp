@@ -14,11 +14,11 @@ MMFile::MMFile()
     this->absolutePath = nullptr;
 }
 
-MMFile::MMFile(FILE_TYPE type,const wchar_t *name, const wchar_t *path)
+MMFile::MMFile(FILE_TYPE type,const MMFILE_CHAR_TYPE *name, const MMFILE_CHAR_TYPE *path)
 {
     this->type = type;
-    this->name = new std::wstring(name);
-    this->path = new std::wstring(path);
+    this->name = new MMFILE_STR_TYPE(name);
+    this->path = new MMFILE_STR_TYPE(path);
     analysisSuffix();
     analysisAbsolutePath();
 }
@@ -27,15 +27,15 @@ MMFile::MMFile(const MMFile &mmf)
 {
     this->type = mmf.type;
 	if (mmf.name)
-		this->name = new std::wstring(*(mmf.name));
+		this->name = new MMFILE_STR_TYPE(*(mmf.name));
 	if (mmf.path)
-		this->path = new std::wstring(*(mmf.path));
+		this->path = new MMFILE_STR_TYPE(*(mmf.path));
     if(mmf.suffix != nullptr)
-        this->suffix = new std::wstring(*(mmf.suffix));
+        this->suffix = new MMFILE_STR_TYPE(*(mmf.suffix));
     else
         analysisSuffix();
     if(mmf.absolutePath != nullptr)
-        this->absolutePath = new std::wstring(*(mmf.absolutePath));
+        this->absolutePath = new MMFILE_STR_TYPE(*(mmf.absolutePath));
     else
         analysisAbsolutePath();
 }
@@ -60,15 +60,15 @@ MMFile & MMFile::operator=(const MMFile & mmf)
 	this->type = mmf.type;
 	this->type = mmf.type;
 	if (mmf.name)
-		this->name = new std::wstring(*(mmf.name));
+		this->name = new MMFILE_STR_TYPE(*(mmf.name));
 	if (mmf.path)
-		this->path = new std::wstring(*(mmf.path));
+		this->path = new MMFILE_STR_TYPE(*(mmf.path));
 	if (mmf.suffix != nullptr)
-		this->suffix = new std::wstring(*(mmf.suffix));
+		this->suffix = new MMFILE_STR_TYPE(*(mmf.suffix));
 	else
 		analysisSuffix();
 	if (mmf.absolutePath != nullptr)
-		this->absolutePath = new std::wstring(*(mmf.absolutePath));
+		this->absolutePath = new MMFILE_STR_TYPE(*(mmf.absolutePath));
 	else
 		analysisAbsolutePath();
 
@@ -113,28 +113,28 @@ void MMFile::setType(FILE_TYPE t)
     type = t;
 }
 
-const wchar_t* MMFile::getName() const
+const MMFILE_CHAR_TYPE* MMFile::getName() const
 {
     return name->data();
 }
 
-void MMFile::setName(const wchar_t *n)
+void MMFile::setName(const MMFILE_CHAR_TYPE *n)
 {
     *(name) = n;
 }
 
-const wchar_t * MMFile::getPath() const
+const MMFILE_CHAR_TYPE * MMFile::getPath() const
 {
     return path->data();
 }
 
-void MMFile::setPath(const wchar_t *p)
+void MMFile::setPath(const MMFILE_CHAR_TYPE *p)
 {
     *(path) = p;
 }
 
 
-const wchar_t *MMFile::getSuffix() const
+const MMFILE_CHAR_TYPE *MMFile::getSuffix() const
 {
     return suffix->data();
 }
@@ -178,16 +178,16 @@ void MMFile::analysisSuffix()
 		if (i > 0)
 		{
 			//printf("%d  %s\n", i,temp.c_str());
-			suffix = new std::wstring(name->substr(i));
+			suffix = new MMFILE_STR_TYPE(name->substr(i));
 		}
 		else {
-			suffix = new std::wstring();
+			suffix = new MMFILE_STR_TYPE();
 		}
 	}
 }
 
 
-const wchar_t * MMFile::getAbsolutePath() const
+const MMFILE_CHAR_TYPE * MMFile::getAbsolutePath() const
 {
     return absolutePath->c_str();
 }
@@ -196,15 +196,46 @@ void MMFile::analysisAbsolutePath()
 {
 	if (this->name && this->path)
 	{
-		absolutePath = new std::wstring();
+		absolutePath = new MMFILE_STR_TYPE();
 		absolutePath->operator+=(path->c_str());
+		#ifdef PF_WIN32
 		absolutePath->operator+=(L"\\");
+		#else
+		absolutePath->operator+=('/');
+		#endif
 		absolutePath->operator+=(name->c_str());
 	}
 }
 
 
-bool MMFile::nameIsLike(const wchar_t * str) const
+bool MMFile::nameIsLike(const MMFILE_CHAR_TYPE * str) const
 {
-	return  name->find(str) != std::wstring::npos;
+	return  name->find(str) != MMFILE_STR_TYPE::npos;
 }
+#ifndef PF_WIN32
+
+int lstrcmpW(const MMFILE_CHAR_TYPE* s1, const MMFILE_CHAR_TYPE* s2)
+{
+	if(s1 == nullptr && s2 == nullptr ) return 0;
+	if(s1 == nullptr && s2 != nullptr ) return (int)*s2;
+	if(s1 != nullptr && s2 == nullptr ) return (int)*s1;
+	
+	auto p1 = s1,p2 = s2;
+	for (;;)
+	{
+		if(*p1 == '\0')
+		{
+			if(*p2 == '\0') return 0;
+			else return (int)*p2;
+		}
+		if(*p2 == '\0')
+		{
+			if(*p1 == '\0') return 0;
+			else return (int)*p1;
+		}
+		if(*p1 != *p2) return (int)(*p1 - *p2);
+		++p1;++p2;
+	}
+	return 0;
+}
+#endif// PF_WIN32

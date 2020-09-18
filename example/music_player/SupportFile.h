@@ -1,9 +1,11 @@
 #pragma once
 
+#include "MMFile.h"
+
 class SupportFile {
 	static const int supportNum = 3;
-	static const  wchar_t * const supportList[supportNum];
+	static const  MMFILE_CHAR_TYPE * const supportList[supportNum];
 	
 public:
-	static bool isSupport(const wchar_t *);
+	static bool isSupport(const MMFILE_CHAR_TYPE *);
 };
