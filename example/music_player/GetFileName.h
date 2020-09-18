@@ -13,8 +13,15 @@
 class GetFileName { 
 
 public:
-    static void getFileNameA(std::vector<MMFile> &v, const MMFILE_CHAR_TYPE *d);
-	static void getFileNameW(std::vector<MMFile> &v, const MMFILE_CHAR_TYPE *d);
+#ifdef PF_WIN32
+    static void getFileNameA(std::vector<MMFile>& v, const char* d);
+    static void getFileNameW(std::vector<MMFile>& v, const wchar_t* d);
+#else
+    static void getFileNameA(std::vector<MMFile>& v, const MMFILE_CHAR_TYPE* d);
+    static void getFileNameW(std::vector<MMFile>& v, const MMFILE_CHAR_TYPE* d);
+#endif // PF_WIN32
+
+    
 };
 
 
