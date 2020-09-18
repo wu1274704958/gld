@@ -72,7 +72,7 @@ int fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
 			IsSupport3D = true;
 			if (!chan && BASS_ErrorGetCode() == BASS_ERROR_NO3D)
 			{
-				if (lstrcmpW(file.getSuffix(), L".flac") == 0)
+				if (lstrcmpW(file.getSuffix(), MMFILE_FLAC_LIT_STR) == 0)
 				{
 					chan = BASS_FLAC_StreamCreateFile(FALSE, (const WCHAR *)file.getAbsolutePath(), 0, 0, 0);
 				}
@@ -85,7 +85,7 @@ int fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
 		}
 		else
 		{
-			if (lstrcmpW(file.getSuffix(), L".flac") == 0)
+			if (lstrcmpW(file.getSuffix(), MMFILE_FLAC_LIT_STR) == 0)
 			{
 				chan = BASS_FLAC_StreamCreateFile(FALSE, (const WCHAR *)file.getAbsolutePath(), 0, 0, 0);
 			}

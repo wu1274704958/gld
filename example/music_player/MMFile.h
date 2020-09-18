@@ -8,6 +8,16 @@
 #include <iostream>
 #include <string>
 
+#ifdef PF_WIN32
+#define MMFILE_STR_TYPE std::wstring
+#define MMFILE_CHAR_TYPE wchar_t
+#define MMFILE_FLAC_LIT_STR L".flac"
+#else
+#define MMFILE_STR_TYPE std::string
+#define MMFILE_CHAR_TYPE char
+#define MMFILE_FLAC_LIT_STR ".flac"
+#endif
+
 class MMFile {
 public:
 	enum FILE_TYPE
@@ -19,14 +29,14 @@ public:
 private:
 
 	FILE_TYPE type;
-    std::wstring *name;
-    std::wstring *path;
-    std::wstring *suffix;
-    std::wstring *absolutePath;
+    MMFILE_STR_TYPE *name;
+    MMFILE_STR_TYPE *path;
+    MMFILE_STR_TYPE *suffix;
+    MMFILE_STR_TYPE *absolutePath;
 public:
 
     MMFile();
-    MMFile(FILE_TYPE type,const wchar_t *name,const wchar_t *path);
+    MMFile(FILE_TYPE type,const MMFILE_CHAR_TYPE *name,const MMFILE_CHAR_TYPE *path);
     MMFile(const MMFile &mmf);
     MMFile(MMFile &&mmf);
 	MMFile& operator=(const MMFile &mmf);
@@ -35,35 +45,35 @@ public:
 	FILE_TYPE getType() const;
     void setType(FILE_TYPE t);
 
-	const wchar_t *getName() const;
-    void setName(const wchar_t* n);
+	const MMFILE_CHAR_TYPE *getName() const;
+    void setName(const MMFILE_CHAR_TYPE* n);
 
-    const wchar_t *getPath() const;
-    void setPath(const wchar_t *p);
+    const MMFILE_CHAR_TYPE *getPath() const;
+    void setPath(const MMFILE_CHAR_TYPE *p);
 
-	const wchar_t *getSuffix() const;
-	const wchar_t *getAbsolutePath() const;
+	const MMFILE_CHAR_TYPE *getSuffix() const;
+	const MMFILE_CHAR_TYPE *getAbsolutePath() const;
 
-	bool nameIsLike(const wchar_t *str) const;
+	bool nameIsLike(const MMFILE_CHAR_TYPE *str) const;
 
     virtual  ~MMFile();
 
-    const std::wstring& get_name() const
+    const MMFILE_STR_TYPE& get_name() const
     {
         return *name;
     }
 
-    const std::wstring& get_path() const
+    const MMFILE_STR_TYPE& get_path() const
     {
         return *path;
     }
 
-    const std::wstring& get_suffix() const
+    const MMFILE_STR_TYPE& get_suffix() const
     {
         return *suffix;
     }
 
-    const std::wstring& get_absolutePath() const
+    const MMFILE_STR_TYPE& get_absolutePath() const
     {
         return *absolutePath;
     }
@@ -75,7 +85,7 @@ private:
     void analysisAbsolutePath();
 };
 
-
-bool lstrcmpW(const wchar_t*, const wchar_t*);
-
+#ifndef PF_WIN32
+int lstrcmpW(const MMFILE_CHAR_TYPE*, const MMFILE_CHAR_TYPE*);
+#endif //PF_WIN32
 #endif //FIRST_MMFILE_H

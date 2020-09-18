@@ -5,6 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "(lldb) 启动 musicplayer",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/music_player",
+            "args": ["/Users/lmm/Music/网易云音乐"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
             "name": "clock2",
             "type": "cppvsdbg",
             "request": "launch",

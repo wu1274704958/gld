@@ -279,7 +279,7 @@ public:
         curr_play->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
         curr_play->size = 760;
         curr_play->get_comp<Transform>()->pos = glm::vec3(-7.03303f, 3.71308f, -5.f);
-        curr_play->set_text("������ϲ���ĸ���");
+        curr_play->set_text("please click one music!");
         curr_play->add_listener(EventType::MouseDown, onDown);
         curr_play->add_listener(EventType::MouseMove, onMove);
         curr_play->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
@@ -298,7 +298,7 @@ public:
         switc->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
         switc->size = 32;
         switc->get_comp<Transform>()->pos = glm::vec3(-1.72211f, -0.88618f, 0.4f);
-        switc->set_text("�л�");
+        switc->set_text("change");
         switc->add_listener(EventType::MouseDown, onDown);
         switc->add_listener(EventType::MouseMove, onMove);
         switc->add_listener(EventType::Click, [this](Event<Node<Component>>* e)->bool {
@@ -519,7 +519,7 @@ int main(int argc,const char**args)
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(1800, 960, "Clock"))
+    if (d.initWindow(1800, 960, "music player"))
     {
         printf("init window failed\n");
         return -1;
