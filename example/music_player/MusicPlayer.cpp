@@ -159,6 +159,11 @@ QWORD fv::MusicPlayer::getPosition(int flag)
 	return BASS_ChannelGetPosition(chan, flag);
 }
 
+double fv::MusicPlayer::getSeconds()
+{
+	return BASS_ChannelBytes2Seconds(chan, getPosition(BASS_POS_BYTE));
+}
+
 void fv::MusicPlayer::setPosition(QWORD pos, int flag)
 {
 	BASS_ChannelSetPosition(chan, pos, flag);

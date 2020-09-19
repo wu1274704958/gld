@@ -463,6 +463,8 @@ public:
             fft_vs[i - 1]->on_update(data, map_val(FFTView::FFT_VAL_TYPE(), fft_vs[i - 1]->fft_data_length()));
         }
         check_stop();
+        double pos = player.getSeconds();
+        dbg(pos);
     }
 
     ~Demo1() {

@@ -120,7 +120,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR photo_viewer FILES main.cpp)
 
 
-    CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp)
+    CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp lrc/lrc_loader.cpp)
     target_include_directories(music_player PRIVATE ${BASS24_INCLUDE_DIR})
     target_link_libraries(music_player ${BASS24_LIBRARYS} )
 

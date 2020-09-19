@@ -18,6 +18,7 @@ namespace fv {
 		DWORD getLevel();
 		QWORD getPosition(int flag);
 		void setPosition(QWORD pos, int flag);
+		double getSeconds();
 		int getActive();
 		void cleanup();
 		QWORD getLength();
