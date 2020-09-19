@@ -158,9 +158,9 @@ public:
         std::function<glm::vec3(float)> f = k2vec3;
         std::weak_ptr<Transform> tra = list_ui->get_comp_ex<Transform>();
         App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, 0.f, glm::pi<float>(), tween::Circ::easeOut);
-        App::instance()->tween.to(tra, &Transform::scale, dur, 1.f, 0.f, tween::Circ::easeOut, f, [ tra, f,dur,func]() {
+        App::instance()->tween.to(tra, &Transform::scale, dur, music_list_scale, 0.f, tween::Circ::easeOut, f, [this, tra, f,dur,func]() {
             func();
-            App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, 1.f, tween::Circ::easeIn, f);
+            App::instance()->tween.to(tra, &Transform::scale, dur, 0.f, this->music_list_scale, tween::Circ::easeIn, f);
             App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, dur, glm::pi<float>(), 0.f, tween::Circ::easeIn);
         });
     }
@@ -177,11 +177,11 @@ public:
         label->font = font2;
         label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
         label->align = Align::Center;
-        label->size = 32;
+        label->size = 32.f * static_cast<int>( ceilf(music_list_scale) );
         label->onTextSizeChange = [sp,label, this](float w, float h)
         {
-            App::instance()->exec.delay([sp,label, w, h]() {
-                constexpr float max_w = 32.f * 9.f * Word::WORD_SCALE;
+            App::instance()->exec.delay([this,sp,label, w, h]() {
+                float max_w = 32.f * static_cast<int>( ceilf(music_list_scale) ) * 9.f * Word::WORD_SCALE;
                 label->set_size_no_scale(w > max_w ? max_w : w, h);
                 label->refresh();
                 sp->rand_add(label);
@@ -323,6 +323,7 @@ public:
         };
 
         list_ui->get_comp<Transform>()->pos = glm::vec3(0.f, -0.385407, 0.32f);
+        list_ui->get_comp<Transform>()->scale = glm::vec3(music_list_scale,music_list_scale,music_list_scale);
 
         pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
 
@@ -507,6 +508,7 @@ private:
     std::function< bool(Event<Node<Component>>*) > onDown;
     std::function< bool(Event<Node<Component>>*) > onMove;
     std::unique_ptr<float[]> fft_ptr;
+    float music_list_scale = 1.0f;
 };
 
 #ifndef PF_ANDROID
