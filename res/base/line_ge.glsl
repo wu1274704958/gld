@@ -4,7 +4,7 @@ layout (lines) in;
 //layout (line_strip, max_vertices = 28) out;
 layout (triangle_strip, max_vertices = 52) out;
 
-float LineWidth = 0.1;
+float LineWidth = 0.1f;
 int seg = 12;
 
 out GS_OUT{
@@ -49,6 +49,12 @@ void main() {
      float curr_ang = 0.f;
 
      vec3 rot_dir = normalize(cross(dir,l_dir));
+     
+    vec3 _1 = gl_in[0].gl_Position.xyz + normalize(gl_in[1].gl_Position.xyz - gl_in[0].gl_Position.xyz) * radius * 0.5f;
+    vec3 _2 = gl_in[1].gl_Position.xyz + normalize(gl_in[0].gl_Position.xyz - gl_in[1].gl_Position.xyz) * radius * 0.5f;
+
+    vec4 p1 = vec4(_1,gl_in[0].gl_Position.w);
+    vec4 p2 = vec4(_2,gl_in[1].gl_Position.w);
 
      for(int i = 0;i < seg;++i)
      {
@@ -59,23 +65,23 @@ void main() {
         //float lin = radius * cos(-curr_ang);
         //vec2 uv = vec2( (1.f - dui / radius) * hc_rate , lin / radius);
 
-        emit(gl_in[0].gl_Position + vec4(first, 0.f),vec2(0.0f,0.5f - cos(-curr_ang) * 0.5f ));
-        emit(gl_in[0].gl_Position ,vec2(hc_rate,0.5f));
+        emit(p1 + vec4(first, 0.f),vec2(0.0f,0.5f - cos(-curr_ang) * 0.5f ));
+        emit(p1 ,vec2(hc_rate,0.5f));
 
         curr_ang -= ang;
      }
 
 
-     gl_Position = gl_in[0].gl_Position + vec4(up,0.f);
+     gl_Position = p1 + vec4(up,0.f);
      gs_out.goUv = vec2(hc_rate,0.0f);
      EmitVertex();    
-     gl_Position = gl_in[0].gl_Position + vec4(down,0.f);
+     gl_Position = p1 + vec4(down,0.f);
      gs_out.goUv = vec2(hc_rate,1.0f);
      EmitVertex(); 
-     gl_Position = gl_in[1].gl_Position + vec4(up,0.f);
+     gl_Position = p2 + vec4(up,0.f);
      gs_out.goUv = vec2(1.0f - hc_rate,0.0f);
      EmitVertex();    
-     gl_Position = gl_in[1].gl_Position + vec4(down,0.f);
+     gl_Position = p2 + vec4(down,0.f);
      gs_out.goUv = vec2(1.0f - hc_rate,1.0f);
      EmitVertex();
 
@@ -87,8 +93,8 @@ void main() {
         vec3 first = up;
         first = m * first;
 
-        emit(gl_in[1].gl_Position ,vec2(1.0f - hc_rate,0.5f));
-        emit(gl_in[1].gl_Position + vec4(first, 0.f),vec2(0.0f, 0.5f - cos(-curr_ang) * 0.5f ));
+        emit(p2 ,vec2(1.0f - hc_rate,0.5f));
+        emit(p2 + vec4(first, 0.f),vec2(0.0f, 0.5f - cos(-curr_ang) * 0.5f ));
         
 
         curr_ang -= ang;
