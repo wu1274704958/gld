@@ -60,14 +60,14 @@ namespace gld {
 			int unit_c = count / c;
 
 
-			float b = sqrtf(data[len - 1]) * 2.f;
+			float b = 0;//sqrtf(data[len - 1]) * 2.f;
 			for (int i = 0; i < c; ++i)
 			{
-				float m = sqrtf(data[i]) * 2.f;
-				float e = sqrtf(data[((i == len - 1) ? len - 1 : i + 1)]) * 2.f;
-				set_part(i, unit_c, 0, unit_c, m, e);
+				float m = sqrtf(data[i]) * 1.f;
+				//float e = sqrtf(data[((i == len - 1) ? len - 1 : i + 1)]) * 2.f;
+				set_part(i, unit_c, 0, unit_c, b, m);
 				//set_part(i, unit_c, unit_c / 2, unit_c, m, e);
-				b = e;
+				b = m;
 			}
 			auto& vao = get_comp< def::Mesh>()->vao;
 			vao->bind();
@@ -79,7 +79,7 @@ namespace gld {
 
 		void set_part(int i,int unit_c,int m, int n, float b, float e)
 		{
-			auto  f = b < e ? tween::Expo::easeOut : tween::Expo::easeIn;
+			auto  f = b < e ? tween::linear: tween::linear;
 			for (int j = m; j < n; ++j)
 			{
 				float v = f((float)(j - m) / (float)(n - m), 0.f, 1.0f, 1.f) * (e - b) + b;
