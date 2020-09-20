@@ -100,6 +100,16 @@ namespace gld {
 			return BASS_DATA_FFT256;
 		}
 
+		void onDraw() override {
+			glEnable(GL_BLEND);
+			glEnable(GL_ALPHA);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		}
+		void onAfterDraw() override {
+			glDisable(GL_BLEND);
+			glDisable(GL_ALPHA);
+		}
+
 		float radius = 1.f;
 		int count = 4096;
 		std::vector<Vertex> vertices;

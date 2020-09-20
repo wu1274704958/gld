@@ -56,9 +56,13 @@ void main()
     }
     else if(g > 0.1f)
     {
-        color = vec4( fill_color * f1(g) ,1.0f);
+        color = vec4( fill_color * max(0.27f,f1(g)) ,sqrt(f1(g)) );
+        //discard;
+        //color = vec4( fill_color - (vec3(1.f) * 0.16f * (f1(g) - f1(0.86f))) ,0.1f);
     }else{
-        color = vec4( fill_color * f1(g) * random(gs_out.goUv) ,1.0f);
+        color = vec4(  fill_color,0.27f);
+        //discard;
+        //color = vec4( fill_color * f1(g) * random(gs_out.goUv) ,0.001f);
     }
     //color = vec4( fill_color,1.0f);
 }

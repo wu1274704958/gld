@@ -56,8 +56,8 @@ void main() {
 
      vec3 rot_dir = normalize(cross(dir,l_dir));
 
-    vec3 _1 = gl_in[0].gl_Position.xyz + normalize(gl_in[1].gl_Position.xyz - gl_in[0].gl_Position.xyz) * radius * 0.7f;
-    vec3 _2 = gl_in[1].gl_Position.xyz + normalize(gl_in[0].gl_Position.xyz - gl_in[1].gl_Position.xyz) * radius * 0.7f;
+    vec3 _1 = gl_in[0].gl_Position.xyz + normalize(gl_in[1].gl_Position.xyz - gl_in[0].gl_Position.xyz) * radius * 0.29f;
+    vec3 _2 = gl_in[1].gl_Position.xyz + normalize(gl_in[0].gl_Position.xyz - gl_in[1].gl_Position.xyz) * radius * 0.29f;
 
     vec4 p1 = vec4(_1,gl_in[0].gl_Position.w);
     vec4 p2 = vec4(_2,gl_in[1].gl_Position.w);

@@ -128,7 +128,7 @@ public:
 
         init_pumper();
         pumper.setMode(Pumper::LOOP);
-        
+        glClearColor(0.f, 0.f, 0.f, 0.f);
 
         return 0;
     }
@@ -351,7 +351,7 @@ public:
 
         auto v2 = std::make_shared<View2>();
         v2->create();
-
+        v2->line_width = 0.01f;
         flywheel->on_select = [this,v2](int i) 
         {
             switch (i) 
@@ -464,7 +464,7 @@ public:
         }
         check_stop();
         double pos = player.getSeconds();
-        dbg(pos);
+        //dbg(pos);
     }
 
     ~Demo1() {
