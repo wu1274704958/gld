@@ -105,6 +105,10 @@ public:
         glEnable(GL_FRAMEBUFFER_SRGB);
         glEnable(GL_DEPTH_TEST);
 
+        glEnable(GL_BLEND);
+		glEnable(GL_ALPHA);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
          for (auto& p : cxts)
             p->init();
 
