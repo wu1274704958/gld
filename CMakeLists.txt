@@ -18,6 +18,7 @@ if(WIN32)
 else()
 
 if(APPLE) 
+    SET(CMAKE_CXX_COMPILE_FEATURES "${CMAKE_CXX_COMPILE_FEATURES} -std=c++17")
     add_definitions(-DPF_APPLE)
 endif()
 
@@ -120,7 +121,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR photo_viewer FILES main.cpp)
 
 
-    CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp lrc/lrc_loader.cpp)
+    CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
+        lrc/lrc_loader.cpp lrc/lrc_analyse.cpp)
     target_include_directories(music_player PRIVATE ${BASS24_INCLUDE_DIR})
     target_link_libraries(music_player ${BASS24_LIBRARYS} )
 

@@ -186,6 +186,15 @@ void MMFile::analysisSuffix()
 	}
 }
 
+MMFILE_STR_TYPE MMFile::getNameNoSuffix() const
+{
+	return name->substr(0,name->size() - suffix->size());
+}
+
+MMFILE_STR_TYPE MMFile::getAbsolutePathNoSuffix() const
+{
+	return absolutePath->substr(0,absolutePath->size() - suffix->size());
+}
 
 const MMFILE_CHAR_TYPE * MMFile::getAbsolutePath() const
 {

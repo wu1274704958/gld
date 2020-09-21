@@ -53,7 +53,8 @@ public:
 
 	const MMFILE_CHAR_TYPE *getSuffix() const;
 	const MMFILE_CHAR_TYPE *getAbsolutePath() const;
-
+    MMFILE_STR_TYPE getNameNoSuffix() const;
+    MMFILE_STR_TYPE getAbsolutePathNoSuffix() const;
 	bool nameIsLike(const MMFILE_CHAR_TYPE *str) const;
 
     virtual  ~MMFile();

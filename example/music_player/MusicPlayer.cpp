@@ -219,5 +219,9 @@ int fv::MusicPlayer::get_init_err_code()
 	return init_error_code;
 }
 
+bool fv::MusicPlayer::is_playing()
+{
+	return getActive() == BASS_ACTIVE_PLAYING;	
+}
 
 

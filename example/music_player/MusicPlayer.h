@@ -23,6 +23,7 @@ namespace fv {
 		void cleanup();
 		QWORD getLength();
 		bool isOff();
+		bool is_playing();
 
 
 		HSAMPLE getChan();

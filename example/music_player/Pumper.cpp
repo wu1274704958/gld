@@ -188,6 +188,7 @@ void fv::Pumper::onclick(int idx)
 		}
 		else {
 			m_player.playStream(pmf);
+			onAutoPlay(pmf);
 			setIndex(idx + 1);
 		}
 	}

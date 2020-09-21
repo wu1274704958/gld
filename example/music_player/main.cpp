@@ -48,6 +48,7 @@
 #include "view1.h"
 #include "view2.h"
 #include "ui/wheel.h"
+#include "lrc/lrc_mgr.hpp"
 
 #ifndef  PF_ANDROID
 static std::pair<const char**, int> LaunchArgs;
@@ -138,6 +139,7 @@ public:
         pumper.init(LaunchArgs.first[1]);
         pumper.onAutoPlay = [this](const MMFile& f)
         {
+            this->lrc_mgr.onplay(f);
             this->curr_play_ani(f.get_name());
         };
     }
@@ -222,7 +224,6 @@ public:
         auto new_text = p->text;     
         int64_t idx = (int64_t)(p->get_user_data<int*>());
         pumper.onclick(idx);
-        curr_play_ani(new_text);
         return true;
     }
 
@@ -463,7 +464,12 @@ public:
             fft_vs[i - 1]->on_update(data, map_val(FFTView::FFT_VAL_TYPE(), fft_vs[i - 1]->fft_data_length()));
         }
         check_stop();
-        double pos = player.getSeconds();
+        
+        if(player.is_playing())
+        {
+            double pos = player.getSeconds();
+            lrc_mgr.playing(pos);
+        }
         //dbg(pos);
     }
 
@@ -511,6 +517,7 @@ private:
     std::function< bool(Event<Node<Component>>*) > onMove;
     std::unique_ptr<float[]> fft_ptr;
     float music_list_scale = 1.0f;
+    lrc::DefLrcMgr lrc_mgr;
 };
 
 #ifndef PF_ANDROID
