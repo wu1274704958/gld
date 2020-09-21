@@ -183,7 +183,7 @@ public:
         auto label = std::shared_ptr<Label>(new Label());
         label->align = Align::Center;
         label->font = font2;
-        label->set_text(L"断桥残雪-- 许嵩\n好听! Hello? go!go!go!\n断桥残雪-- 许嵩\n好听! Hello? go!go!go!\n");
+        label->set_text("断桥残雪-- 许嵩\n好听! Hello? go!go!go!\n断桥残雪-- 许嵩\n好听! Hello? go!go!go!\n");
         
         label->add_listener(EventType::Click, [font,font2](Event<Node<Component>>* e)->bool {
             auto me = reinterpret_cast<MouseEvent<Node<Component>>*>(e);
@@ -197,7 +197,7 @@ public:
             }
             else if (me->btn == GLFW_MOUSE_BUTTON_2) {
                 p->font = font;
-                p->set_text("I Love You\n Forever!!!");
+                p->set_text("I Love ou\n Forever!!!");
                 p->get_comp<Transform>()->pos = glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
                 
             }
