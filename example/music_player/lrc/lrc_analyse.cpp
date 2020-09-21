@@ -12,7 +12,7 @@ namespace lrc{
         for(int i = last;i < len;++i)
         {
             if(ls[i].second >= s)
-                return i;
+                return i - 1;
         }
         return -1;
     }
