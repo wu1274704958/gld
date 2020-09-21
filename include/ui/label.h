@@ -44,14 +44,14 @@ namespace gld {
 		void set_text(const std::string& txt)
 		{
 			text = txt;
-			w_text = cvt::ansi2unicode(txt);
+			w_text = cvt::utf82unicode(txt);
 			if (!txt.empty())
 				refresh_ui();
 		}
 
 		void set_text(const std::wstring& txt)
 		{
-			text = cvt::unicode2ansi(txt);
+			text = cvt::unicode2utf8(txt);
 			w_text = txt;
 			if (!txt.empty())
 				refresh_ui();
