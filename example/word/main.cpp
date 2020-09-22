@@ -152,10 +152,10 @@ public:
             wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
             //cxts.push_back(a);
         }
-#ifndef PF_WIN32
 
 
-        for (auto k = L'吴'; k <= L'吴' + 300; ++k)
+
+        for (auto k = 0x5434; k <= 0x5434 + 300; ++k)
         {
             auto a = create_word(font2, k, onclick, onMove, onDown);
             wp->add_word(std::dynamic_pointer_cast<Word>(a), glm::vec2(1.0f, 0.0f));
@@ -163,7 +163,7 @@ public:
         }
 
 
-#endif // PF_WIN32
+
 
         //auto clip = std::shared_ptr<Clip>(new Clip(126,126,1.0f,0.0f));
         //
