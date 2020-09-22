@@ -10,7 +10,9 @@ namespace gld {
 		void create()
 		{
 			glm::mat4 m(1.f);
-			//m = glm::rotate(m, glm::radians(-90.f), glm::vec3(0.f,1.f,0.f));
+			m = glm::rotate(m, glm::radians(rotate), rotate_dir);
+			
+			slot_rotate_dir = glm::vec3(m * glm::vec4(slot_rotate_dir.x,slot_rotate_dir.y,slot_rotate_dir.z,1.f));
 
 			auto res = gen::circle(0.f, radius, equator_count);
 
@@ -40,7 +42,7 @@ namespace gld {
 				float e = (float)i * -angle;
 				App::instance()->tween.to(
 					[this](float v) {
-						slot_rotate_y = v;
+						slot_rotate = v;
 						set_slot_rotate();
 					}, dur, b, e, f, [this,i]() {	
 						if(on_select)on_select(i);
@@ -94,9 +96,7 @@ namespace gld {
 
 			matrix = glm::translate(matrix, pos);
 
-			matrix = glm::rotate(matrix, slot_rotate_x, glm::vec3(1.f, 0.f, 0.f));
-			matrix = glm::rotate(matrix, slot_rotate_y, glm::vec3(0.f, 1.f, 0.f));
-			matrix = glm::rotate(matrix, slot_rotate_z, glm::vec3(0.f, 0.f, 1.f));
+			matrix = glm::rotate(matrix, slot_rotate, slot_rotate_dir);
 
 			for (auto& v : pos_map)
 			{
@@ -113,9 +113,9 @@ namespace gld {
 
 		std::function<void(int)> on_select;
 
-		float slot_rotate_x = 0.f;
-		float slot_rotate_y = 0.f;
-		float slot_rotate_z = 0.f;
+		float rotate = 0.f;
+		glm::vec3 rotate_dir = glm::vec3(0.f,0.f,1.f);
+		float slot_rotate = 0.f;
 		float slot_rotate_rate = 0.007f;
 		glm::vec3 pos = glm::vec3(0.f, 0.f, 0.f);
 		std::function<glm::vec3(const std::shared_ptr<Node<Component>>&)> onAddOffset;
@@ -127,9 +127,7 @@ namespace gld {
 
 			matrix = glm::translate(matrix, pos);
 
-			matrix = glm::rotate(matrix, slot_rotate_x, glm::vec3(1.f, 0.f, 0.f));
-			matrix = glm::rotate(matrix, slot_rotate_y, glm::vec3(0.f, 1.f, 0.f));
-			matrix = glm::rotate(matrix, slot_rotate_z, glm::vec3(0.f, 0.f, 1.f));
+			matrix = glm::rotate(matrix, slot_rotate, slot_rotate_dir);
 
 			if (onAddOffset)
 			{
@@ -146,5 +144,6 @@ namespace gld {
 		int equator_count = 6;
 		std::unordered_map < size_t, std::shared_ptr<Node<Component>>> pos_map;
 		std::vector<glm::vec3> standBy;
+		glm::vec3 slot_rotate_dir = glm::vec3(0.f,1.0f,0.f);
 	};
 }

@@ -10,7 +10,8 @@ namespace gld {
 	struct Sphere : public NodeWithEvent {
 
 		Sphere() {}
-		Sphere(int equator_count, int level) : equator_count(equator_count), level(level)
+		Sphere(int equator_count, int level,float off_angle = 0.01f) : equator_count(equator_count), level(level),
+			off_angle(off_angle)
 		{
 			
 		}
