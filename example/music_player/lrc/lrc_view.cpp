@@ -12,7 +12,7 @@ namespace lrc{
         labs[0]->font = font;
         labs[0]->create();
         labs[0]->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
-        labs[0]->size = 320;
+        labs[0]->size = 120;
         labs[0]->onTextSizeChange = [this](float w,float h)
         {
             labs[0]->get_comp<Transform>()->pos = glm::vec3(-w/2.f,-h/2.f,0.f);

@@ -394,7 +394,7 @@ public:
     {
         auto lrc_view = std::shared_ptr<lrc::LrcView>(new lrc::LrcView());
         lrc_view->create();
-
+        lrc_view->get_comp<Transform>()->pos = glm::vec3(0.f,-0.9f,0.f);
         lrc_mgr.attach_view(lrc_view);
         cxts.push_back(lrc_view);
 
