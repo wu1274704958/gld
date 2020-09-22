@@ -106,6 +106,8 @@ public:
         init_flywheel();
         
         init_btns();
+
+        init_lrc();
         //glPointSize(2.4f);
         //auto v1 = std::make_shared<View1>();
         //v1->create();
@@ -386,6 +388,16 @@ public:
         cxts.push_back(v2);
         fft_vs.push_back(v2);
         //fft_vs.push_back(v1);
+    }
+
+    void init_lrc()
+    {
+        auto lrc_view = std::shared_ptr<lrc::LrcView>(new lrc::LrcView());
+        lrc_view->create();
+
+        lrc_mgr.attach_view(lrc_view);
+        cxts.push_back(lrc_view);
+
     }
 
     void check_stop()

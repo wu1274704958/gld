@@ -5,6 +5,7 @@
 #include <comps/sundry.h>
 #include <data_mgr.hpp>
 #include <node/node_with_event.h>
+#include "ui/word.h"
 
 namespace gld {
 

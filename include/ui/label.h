@@ -1,3 +1,4 @@
+#pragma once
 #include <event/EventHandler.h>
 #include <node.hpp>
 #include <component.h>
@@ -7,6 +8,7 @@
 #include "tools/convert.h"
 #include "word.h"
 #include "ui/word_patch.h"
+#include <frame_rate.h>
 
 namespace gld {
 
