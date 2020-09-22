@@ -179,11 +179,11 @@ public:
         label->font = font2;
         label->color = glm::vec4(rd_0_1(), rd_0_1(), rd_0_1(), rd_0_1());
         label->align = Align::Center;
-        label->size = 32.f * static_cast<int>( ceilf(music_list_scale) );
+        label->size = 32.f * static_cast<int>( floor(music_list_scale) );
         label->onTextSizeChange = [sp,label, this](float w, float h)
         {
             App::instance()->exec.delay([this,sp,label, w, h]() {
-                float max_w = 32.f * static_cast<int>( ceilf(music_list_scale) ) * 9.f * Word::WORD_SCALE;
+                float max_w = 32.f * static_cast<int>( floor(music_list_scale) ) * 9.f * Word::WORD_SCALE;
                 label->set_size_no_scale(w > max_w ? max_w : w, h);
                 label->refresh();
                 sp->rand_add(label);
@@ -516,7 +516,7 @@ private:
     std::function< bool(Event<Node<Component>>*) > onDown;
     std::function< bool(Event<Node<Component>>*) > onMove;
     std::unique_ptr<float[]> fft_ptr;
-    float music_list_scale = 1.0f;
+    float music_list_scale = 1.02f;
     lrc::DefLrcMgr lrc_mgr;
 };
 
