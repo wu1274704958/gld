@@ -1,5 +1,6 @@
 #pragma once
 #include "comm.h"
+#include <memory>
 
 namespace lrc{
     struct LrcAnalyse{

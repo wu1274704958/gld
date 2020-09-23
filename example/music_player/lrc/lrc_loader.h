@@ -3,6 +3,7 @@
 #include "comm.h"
 #include <optional>
 #include <map>
+#include <memory>
 
 namespace lrc {
 

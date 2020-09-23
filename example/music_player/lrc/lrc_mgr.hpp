@@ -4,6 +4,11 @@
 #include <comm.hpp>
 #include "lrc_analyse.h"
 #include "lrc_view.h"
+#ifdef PF_WIN32
+#include <tools/convert.h>
+#endif // PF_WIN32
+
+
 
 namespace lrc{
 
@@ -41,7 +46,14 @@ struct LrcMgr
         has_playing_lrc_func_vt<View,size_t>::value),"Bad lrc view type!!!");
     void onplay(const MMFile& f)
     {
+        
+#ifdef PF_WIN32
+        auto ws = std::wstring(f.getAbsolutePathNoSuffix());
+        auto m = cvt::unicode2ansi(ws);
+#else
         auto m = dbg(f.getAbsolutePathNoSuffix());
+#endif // PF_WIN32
+
         m += ".lrc";
         curr = load.load(m);
         if(curr && view) view->on_play(curr);
