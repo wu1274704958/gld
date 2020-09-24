@@ -4,6 +4,7 @@
 #include <vector>
 #include <mutex>
 #include <chrono>
+#include <cassert>
 
 namespace gld {
 
