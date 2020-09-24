@@ -64,25 +64,27 @@ namespace gld {
 			return angle;
 		}
 
+		void tween_next(float dur,Tween::TweenFuncTy f = tween::Circ::easeOut)
+		{
+			if(curr + 1 <= max_idx)
+				tween_to_(curr + 1,dur,f);
+		}
+
+		void tween_last(float dur,Tween::TweenFuncTy f = tween::Circ::easeOut)
+		{
+			if(curr - 1 >= min_idx)
+				tween_to_(curr - 1,dur,f);
+		}
+
 		void tween_to(int i,float dur,Tween::TweenFuncTy f = tween::Circ::easeOut)
 		{
-			if (i != curr && good(i))
+			if(good(i) && curr != i)
 			{
-				float b = (float)iidx_for_idx(curr - side()) * -angle;
-				float e = (float)iidx_for_idx(i - side())* -angle;
-				int intent = i > curr ? 1 : -1;
-				adjust_pos_map(intent);
-				set_slot_rotate();
-				App::instance()->tween.to(
-					[this](float v) {
-						slot_rotate = v;
-						set_slot_rotate();
-					}, dur, b, e, f, [this,i,intent]() {	
-						if(on_select)on_select(i);
-						curr = i;
-						adjust_pos_map();
-						origin();
-						set_slot_rotate();
+				int n = i > curr ? curr + 1 : curr - 1;
+				tween_to_(n,dur,f,[this,i,dur,f]()
+				{
+					//printf("%d %d\n",i,curr);
+					tween_to(i,dur,f);
 				});
 			}
 		}
@@ -95,6 +97,19 @@ namespace gld {
 		int count()
 		{
 			return max_idx - min_idx + 1;
+		}
+
+		void refresh()
+		{
+			adjust_pos_map();
+			set_slot_rotate();
+		}
+
+		void  set_count(int v)
+		{
+			min_idx = 0;
+			max_idx = v - 1;
+			curr = 0;
 		}
 
 		void set_slot_rotate()
@@ -188,6 +203,36 @@ namespace gld {
 		int min_idx = 0,max_idx = 0;
 		int unless = 0;
 	protected:
+		bool is_scrolling = false;
+		void tween_to_(int i,float dur,Tween::TweenFuncTy f = tween::Circ::easeOut,
+			std::function<void()> complete = nullptr)
+		{
+			if (!is_scrolling && i != curr && good(i))
+			{
+				is_scrolling = true;
+				float b = (float)iidx_for_idx(curr - side()) * -angle;
+				float e = (float)iidx_for_idx(i - side())* -angle;
+				int intent = i > curr ? 1 : -1;
+				adjust_pos_map(intent);
+				set_slot_rotate();
+				App::instance()->tween.to(
+					[this](float v) {
+						slot_rotate = v;
+						set_slot_rotate();
+					}, dur, b, e, f, [this,i,intent,complete]() {	
+						if(on_select)on_select(i);
+						curr = i;
+						adjust_pos_map();
+						origin();
+						set_slot_rotate();
+						if(complete) 
+						{
+							App::instance()->exec.delay_frame(complete,1);
+						}
+						is_scrolling = false;
+				});
+			}
+		}
 
 		float angle,radius = 1.f;
 		int curr = 0,curr_fake = 0,entity_num = 0,fake_begin = 0,fake_end = 0;

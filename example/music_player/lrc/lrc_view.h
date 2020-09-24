@@ -14,7 +14,7 @@ namespace lrc{
         void playing(size_t idx);
         LrcView() : 
             gld::Node<gld::Component>(),
-            wheel(5,0.6f,21)
+            wheel(3,0.236f,6)
             {}
         void onUpdate() override;
     protected:
