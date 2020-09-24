@@ -11,6 +11,7 @@ namespace lrc{
         create_labs();
         wheel.rotate = -90.f;
         wheel.unless = 10;
+        wheel.set_curr(10);
         wheel.on_update_pos = [this](size_t ei,size_t i,glm::vec3 pos,bool is_none)
         {
             labs[ei]->get_comp<Transform>()->pos = pos;
@@ -49,7 +50,7 @@ namespace lrc{
         }
     }
     int a = 0;
-    bool f = true; 
+    bool f = false; 
     void LrcView::onUpdate()
     {
         if(a >= 1000)

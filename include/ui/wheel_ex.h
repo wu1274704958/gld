@@ -48,6 +48,11 @@ namespace gld {
 			adjust_pos_map();
 			set_slot_rotate();
 		}
+
+		void set_curr(int v)
+		{
+			curr = v;
+		}
 		
 		int get_curr()
 		{
@@ -63,10 +68,11 @@ namespace gld {
 		{
 			if (i != curr && good(i))
 			{
-				float b = (float)iidx_for_idx(curr) * -angle;
-				float e = (float)iidx_for_idx(i) * -angle;
+				float b = (float)iidx_for_idx(curr - side()) * -angle;
+				float e = (float)iidx_for_idx(i - side())* -angle;
 				int intent = i > curr ? 1 : -1;
 				adjust_pos_map(intent);
+				set_slot_rotate();
 				App::instance()->tween.to(
 					[this](float v) {
 						slot_rotate = v;
@@ -102,12 +108,17 @@ namespace gld {
 
 			size_t i = fake_begin;
 			size_t idx = 0;
-			for (int k = 0;k < entity_num;++k)
+			int k = 0;
+			if(!behind) 
+			{
+				k = entity_num - 1;
+				i -= 1;
+			}
+			for (;;)
 			{
 				int v = k + 1;
 				if(k == entity_num - 1 && !behind) v = 0; 
-				bool is_none = (i < min_idx || i > max_idx);
-
+				bool is_none = !good(i);
 				if (onAddOffset)
 				{
 					auto t = (standBy[v] + onAddOffset(v));
@@ -117,12 +128,23 @@ namespace gld {
 					on_update_pos(idx,i,matrix * glm::vec4(standBy[v].x, standBy[v].y, standBy[v].z, 1.f),is_none);
 				}
 				++i;++idx;
+				if(behind && k == entity_num - 1)
+					break;
+				if(!behind && k == entity_num - 2)
+					break;
+				if(!behind)
+				{
+					if(k == entity_num - 1)
+						k = 0;
+					else
+					 	++k;
+				}
+				if(behind) ++k;
 			}
 		}
 
 		void adjust_pos_map(int intent = 1)
 		{
-			pos_map.clear();
 			fake_begin = curr - side();
 			fake_end = fake_begin + equator_count - 1;
 
@@ -139,12 +161,12 @@ namespace gld {
 			slot_rotate = 0.f;
 		}
 
-		size_t iidx_for_idx(size_t i)
+		int iidx_for_idx(int i)
 		{
 			return side() - (curr - i);
 		}
 
-		size_t idx_for_iidx(size_t i)
+		int idx_for_iidx(int i)
 		{
 			return curr - (side() - i);
 		}
@@ -161,17 +183,16 @@ namespace gld {
 		float slot_rotate = 0.f;
 		float slot_rotate_rate = 0.007f;
 		glm::vec3 pos = glm::vec3(0.f, 0.f, 0.f);
-		std::function<glm::vec3(size_t)> onAddOffset;
-		std::function<void(size_t,size_t,glm::vec3,bool)> on_update_pos;
-		size_t min_idx = 0,max_idx = 0;
+		std::function<glm::vec3(int)> onAddOffset;
+		std::function<void(int,int,glm::vec3,bool)> on_update_pos;
+		int min_idx = 0,max_idx = 0;
 		int unless = 0;
 	protected:
 
 		float angle,radius = 1.f;
-		size_t curr = 0,curr_fake = 0,entity_num = 0,fake_begin = 0,fake_end = 0;
-		size_t equator_count = 6;
+		int curr = 0,curr_fake = 0,entity_num = 0,fake_begin = 0,fake_end = 0;
+		int equator_count = 6;
 		bool behind = true;
-		std::vector<size_t> pos_map;
 		std::vector<glm::vec3> standBy;
 		std::vector<glm::vec3> standBy_origin;
 		glm::vec3 slot_rotate_dir = glm::vec3(0.f,1.0f,0.f);
