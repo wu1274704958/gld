@@ -112,6 +112,11 @@ namespace gld {
 			curr = 0;
 		}
 
+		glm::vec3 get_pos(int i)
+		{
+			return standBy[i];
+		}
+
 		void set_slot_rotate()
 		{
 			if(!on_update_pos) return;

@@ -7,38 +7,55 @@ namespace gld {
 	struct ClipNode : public Node<Comp>
 	{
 		constexpr static unsigned char DefaultStencil = 0x1;
-
+		inline static uint64_t StencilWriteDeep = 0;
 		static void enable()
 		{
 			glEnable(GL_STENCIL_TEST);
-			glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-			glStencilMask(0x0);
+			clear_stencil();
+		}
+		static void into_clip()
+		{
+			++StencilWriteDeep;
+		}
+		static void out_clip()
+		{
+			--StencilWriteDeep;
+		}
+		static void clear_stencil()
+		{
+			if(StencilWriteDeep == 0)
+			{
+				glStencilMask(0xff);
+				glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+				glStencilFunc(GL_ALWAYS, 0x0, 0xff);
+				glClear( GL_STENCIL_BUFFER_BIT);
+				glStencilMask(0x0);
+			}
 		}
 
 		void onDraw() override 
 		{
-			glColorMask(0x0, 0x0, 0x0, 0x0);
+			if(!debug_clip)glColorMask(0x0, 0x0, 0x0, 0x0);
 			glStencilMask(0xff);
 			glDepthMask(0x0);
-			glStencilOp(GL_ZERO, GL_KEEP, GL_REPLACE);
-			glStencilFunc(GL_ALWAYS, stencil_val, 0xff);		
+			glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+			glStencilFunc(GL_GREATER, stencil_val, 0xff);	
+			into_clip();	
 		}
 		void onDrawChildren() override 
 		{
-			glStencilFunc(GL_EQUAL, stencil_val, 0xff);
+			glStencilFunc(GL_EQUAL, 0x2, 0xff);
 			glStencilMask(0x0);
 			glDepthMask(0xff);
 			glColorMask(0xff, 0xff, 0xff, 0xff);
 		}
 		void onAfterDraw() override 
 		{
-			glStencilMask(0xff);
-			glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
-			glStencilFunc(GL_ALWAYS, stencil_val, 0xff);
-			glClear( GL_STENCIL_BUFFER_BIT);
-			glStencilMask(0x0);
+			out_clip();
+			clear_stencil();
 		}
 
 		unsigned char stencil_val = DefaultStencil;
+		bool debug_clip = false;
 	};
 }

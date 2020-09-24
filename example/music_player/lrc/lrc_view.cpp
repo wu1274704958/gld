@@ -5,9 +5,17 @@ using namespace gld;
 
 namespace lrc{
 
+    LrcView::LrcView() : 
+            gld::Clip(4000.f,284.f,0.5f,0.0f),
+            wheel(3,0.236f,6)
+            {}
+
     void LrcView::create()
     {
-        add_comp(std::make_shared<Transform>());
+        stencil_val = 0x2;
+        //debug_clip = true;
+        Clip::create();
+
         create_labs();
         wheel.rotate = -90.f;
         wheel.unless = 10;
@@ -22,6 +30,7 @@ namespace lrc{
                     labs[ei]->set_text(curr->data[i].line);
             }
         };
+        refresh();
         wheel.create();
     }
     void LrcView::create_labs()
@@ -37,7 +46,7 @@ namespace lrc{
             {
                 labs[i]->get_comp<Transform>()->pos += glm::vec3(-w/2.f,-h/2.f,0.f);
             };
-            add_child(labs[i]);
+            node->add_child(labs[i]);
         }
     }
     void LrcView::on_play(std::shared_ptr<LrcView::LrcType> lrc)

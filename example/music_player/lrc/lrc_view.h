@@ -6,16 +6,13 @@
 #include "ui/wheel_ex.h"
 namespace lrc{
     
-    struct LrcView : public gld::Node<gld::Component>
+    struct LrcView : public gld::Clip
     {
         using LrcType = Lrc;
-        void create();
+        void create() override;
         void on_play(std::shared_ptr<LrcType> lrc);
         void playing(size_t idx);
-        LrcView() : 
-            gld::Node<gld::Component>(),
-            wheel(3,0.236f,6)
-            {}
+        LrcView();
         void onUpdate() override;
     protected:
         void create_labs();
