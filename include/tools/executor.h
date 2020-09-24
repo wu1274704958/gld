@@ -38,6 +38,7 @@ namespace gld {
 
 		void delay_frame(std::function<void()> f, int frame)
 		{
+			assert(frame > 0);
 			push(Task(f, TaskType::DelayFrame, frame));
 		}
 
@@ -67,6 +68,7 @@ namespace gld {
 				}
 				else if (it->ty == TaskType::DelayFrame)
 				{
+					it->val -= 1;
 					if (it->val == 0)
 					{
 						(it->func)();
