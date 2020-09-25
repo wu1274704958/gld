@@ -6,14 +6,14 @@ using namespace gld;
 namespace lrc{
 
     LrcView::LrcView() : 
-            gld::Clip(4000.f,216.f,0.5f,0.5f),
+            gld::Clip(4000.f,225.f,0.5f,0.5f),
             wheel(3,0.236f,6)
             {}
 
     void LrcView::create()
     {
         stencil_val = 0x2;
-        // debug_clip = true;
+         //debug_clip = true;
         Clip::create();
 
         create_labs();
@@ -32,7 +32,7 @@ namespace lrc{
                     labs[ei]->set_text(curr->data[i].line);
                 }else {
                     if(i == 1 && not_find_lrc)
-                        labs[ei]->set_text("没有找到歌词哎!");
+                        labs[ei]->set_text("No lyrics found!");
                     else
                         labs[ei]->set_text("");
                 }

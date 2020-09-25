@@ -81,6 +81,11 @@ namespace gld {
 			if(good(i) && curr != i)
 			{
 				int n = i > curr ? curr + 1 : curr - 1;
+				if (abs(curr - i) == 1)
+				{
+					i > curr ? tween_next(dur,f) : tween_last(dur, f);
+					return;
+				}
 				tween_to_(n,dur,f,[this,i,dur,f]()
 				{
 					//printf("%d %d\n",i,curr);
