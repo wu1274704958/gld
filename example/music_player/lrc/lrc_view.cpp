@@ -6,7 +6,7 @@ using namespace gld;
 namespace lrc{
 
     LrcView::LrcView() : 
-            gld::Clip(4000.f,249.f,0.5f,0.5f),
+            gld::Clip(4000.f,216.f,0.5f,0.5f),
             wheel(3,0.236f,6)
             {}
 
