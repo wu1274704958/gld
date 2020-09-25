@@ -142,10 +142,16 @@ namespace gld {
 				if (onAddOffset)
 				{
 					auto t = (standBy[v] + onAddOffset(v));
-					on_update_pos(idx,i,matrix * glm::vec4(t.x,t.y,t.z,1.f),is_none);
+					auto pos = matrix * glm::vec4(t.x,t.y,t.z,1.f);
+					float rotate = glm::acos( glm::dot( glm::normalize(glm::vec3(pos)),glm::normalize( standBy_origin[side() + 1])));
+					if(v > side() + 1) rotate = -rotate;
+					on_update_pos(idx,i,pos,rotate,is_none);
 				}
 				else {
-					on_update_pos(idx,i,matrix * glm::vec4(standBy[v].x, standBy[v].y, standBy[v].z, 1.f),is_none);
+					auto pos = matrix * glm::vec4(standBy[v].x, standBy[v].y, standBy[v].z, 1.f);
+					float rotate = glm::acos( glm::dot( glm::normalize(glm::vec3(pos)),glm::normalize( standBy_origin[side() + 1])));
+					if(v > side() + 1) rotate = -rotate;
+					on_update_pos(idx,i,pos,rotate,is_none);
 				}
 				++i;++idx;
 				if(behind && k == entity_num - 1)
@@ -204,7 +210,7 @@ namespace gld {
 		float slot_rotate_rate = 0.007f;
 		glm::vec3 pos = glm::vec3(0.f, 0.f, 0.f);
 		std::function<glm::vec3(int)> onAddOffset;
-		std::function<void(int,int,glm::vec3,bool)> on_update_pos;
+		std::function<void(int,int,glm::vec3,float,bool)> on_update_pos;
 		int min_idx = 0,max_idx = 0;
 		int unless = 0;
 	protected:

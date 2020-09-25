@@ -6,21 +6,21 @@ using namespace gld;
 namespace lrc{
 
     LrcView::LrcView() : 
-            gld::Clip(4000.f,284.f,0.5f,0.0f),
+            gld::Clip(4000.f,249.f,0.5f,0.5f),
             wheel(3,0.236f,6)
             {}
 
     void LrcView::create()
     {
         stencil_val = 0x2;
-        //debug_clip = true;
+        // debug_clip = true;
         Clip::create();
 
         create_labs();
         wheel.rotate = -90.f;
         wheel.unless = 10;
         wheel.set_curr(0);
-        wheel.on_update_pos = [this](size_t ei,size_t i,glm::vec3 pos,bool is_none)
+        wheel.on_update_pos = [this](size_t ei,size_t i,glm::vec3 pos,float rotate,bool is_none)
         {
             labs[ei]->get_comp<Transform>()->pos = pos;
             if(is_none)
@@ -29,9 +29,12 @@ namespace lrc{
                 if(curr)
                     labs[ei]->set_text(curr->data[i].line);
             }
+            labs[ei]->get_comp<gld::Transform>()->rotate.x = -rotate;
         };
         refresh();
         wheel.create();
+        node->get_comp<Transform>()->pos.z = -wheel.get_pos(wheel.side()).z;
+        node->get_comp<Transform>()->pos.y += 0.045f;
     }
     void LrcView::create_labs()
     {
