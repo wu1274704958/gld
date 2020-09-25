@@ -24,10 +24,19 @@ namespace lrc{
         {
             labs[ei]->get_comp<Transform>()->pos = pos;
             if(is_none)
+            {
                 labs[ei]->set_text("");
-            else{
+            }else{
                 if(curr)
+                {
                     labs[ei]->set_text(curr->data[i].line);
+                }else {
+                    if(i == 1 && not_find_lrc)
+                        labs[ei]->set_text("没有找到歌词哎!");
+                    else
+                        labs[ei]->set_text("");
+                }
+                    
             }
             labs[ei]->get_comp<gld::Transform>()->rotate.x = -rotate;
         };
@@ -54,6 +63,14 @@ namespace lrc{
     }
     void LrcView::on_play(std::shared_ptr<LrcView::LrcType> lrc)
     {
+        not_find_lrc = !lrc;
+        if(!lrc)
+        {
+            curr = nullptr;
+            wheel.set_count(2);
+            wheel.tween_to(1,17.f,tween::linear);
+            return;
+        }
         curr = std::move(lrc);
         wheel.set_count(curr->data.size());
         wheel.tween_to(0,17.f,tween::linear);

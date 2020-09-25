@@ -20,6 +20,7 @@ namespace lrc{
         std::vector< std::shared_ptr<gld::Label> > labs;
         const char* font = "fonts/happy.ttf"; 
         gld::WheelEx wheel;
+        bool not_find_lrc = false;
     };
     
 }

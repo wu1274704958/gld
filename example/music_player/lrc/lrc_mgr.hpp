@@ -56,7 +56,7 @@ struct LrcMgr
 
         m += ".lrc";
         curr = load.load(m);
-        if(curr && view) view->on_play(curr);
+        if(view) view->on_play(curr);
         last_idx = -1;
     }
     void playing(double s)
