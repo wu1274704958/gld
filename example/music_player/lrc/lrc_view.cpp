@@ -34,7 +34,7 @@ namespace lrc{
         refresh();
         wheel.create();
         node->get_comp<Transform>()->pos.z = -wheel.get_pos(wheel.side()).z;
-        node->get_comp<Transform>()->pos.y += 0.045f;
+        node->get_comp<Transform>()->pos.y += 0.040f;
     }
     void LrcView::create_labs()
     {
