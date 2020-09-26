@@ -32,19 +32,22 @@ namespace lrc{
                 else {
                     if (curr)
                     {
-                        labs[ei]->set_text(curr->data[i].line);
+                        if (!(labs[ei]->set_text(curr->data[i].line)))
+                            labs[ei]->onTextSizeChange(labs[ei]->text_width, labs[ei]->text_height);
                     }
                     else {
                         if (i == 1 && not_find_lrc)
-                            labs[ei]->set_text("No lyrics found!");
+                        {
+                            if(!labs[ei]->set_text("No lyrics found!"))
+                                labs[ei]->onTextSizeChange(labs[ei]->text_width, labs[ei]->text_height);
+                        }
                         else
                             labs[ei]->set_text("");
                     }
                 }
-            }
-            else {
+            }else
                 labs[ei]->onTextSizeChange(labs[ei]->text_width, labs[ei]->text_height);
-            }
+            
             labs[ei]->get_comp<gld::Transform>()->rotate.x = -rotate;
         };
         refresh();

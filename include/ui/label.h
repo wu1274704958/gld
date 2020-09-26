@@ -43,22 +43,24 @@ namespace gld {
 
 		}
 
-		void set_text(const std::string& txt)
+		bool set_text(const std::string& txt)
 		{
-			if (txt == text) return;
+			if (txt == text) return false;
 			text = txt;
 			w_text = cvt::utf82unicode(txt);
 			//if (!txt.empty())
 			refresh_ui();
+			return true;
 		}
 
-		void set_text(const std::wstring& txt)
+		bool set_text(const std::wstring& txt)
 		{
-			if (txt == w_text) return;
+			if (txt == w_text) return false;
 			text = cvt::unicode2utf8(txt);
 			w_text = txt;
 			//if (!txt.empty())
 			refresh_ui();
+			return true;
 		}
 
 		void create() override
@@ -234,9 +236,9 @@ namespace gld {
 			word_patch->refresh();
 		}
 
-		void set_text(std::string&& txt)
+		bool set_text(std::string&& txt)
 		{
-			set_text(txt);
+			return set_text(txt);
 		}
 
 		void set_leading(float l)
