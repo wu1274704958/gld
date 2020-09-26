@@ -45,6 +45,7 @@ namespace gld {
 
 		void set_text(const std::string& txt)
 		{
+			if (txt == text) return;
 			text = txt;
 			w_text = cvt::utf82unicode(txt);
 			//if (!txt.empty())
@@ -53,6 +54,7 @@ namespace gld {
 
 		void set_text(const std::wstring& txt)
 		{
+			if (txt == w_text) return;
 			text = cvt::unicode2utf8(txt);
 			w_text = txt;
 			//if (!txt.empty())
@@ -281,7 +283,7 @@ namespace gld {
 		}
 		std::wstring w_text;
 		std::string text, font = "fonts/SIMHEI.TTF";
-		float text_width, text_height;
+		float text_width = 0.f, text_height = 0.f;
 		bool auto_size = false,
 			mulitline = false,
 			word_warp = false,

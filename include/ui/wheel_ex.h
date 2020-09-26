@@ -46,7 +46,7 @@ namespace gld {
 			}
 
 			adjust_pos_map();
-			set_slot_rotate();
+			set_slot_rotate(false);
 		}
 
 		void set_curr(int v)
@@ -107,7 +107,7 @@ namespace gld {
 		void refresh()
 		{
 			adjust_pos_map();
-			set_slot_rotate();
+			set_slot_rotate(false);
 		}
 
 		void  set_count(int v)
@@ -122,7 +122,7 @@ namespace gld {
 			return standBy[i];
 		}
 
-		void set_slot_rotate()
+		void set_slot_rotate(bool only_update_pos)
 		{
 			if(!on_update_pos) return;
 			glm::mat4 matrix(1.f);
@@ -146,17 +146,16 @@ namespace gld {
 				bool is_none = !good(i);
 				if (onAddOffset)
 				{
-					auto t = (standBy[v] + onAddOffset(v));
-					auto pos = matrix * glm::vec4(t.x,t.y,t.z,1.f);
+					auto pos = matrix * glm::vec4(standBy[v].x, standBy[v].y, standBy[v].z, 1.f);
 					float rotate = glm::acos( glm::dot( glm::normalize(glm::vec3(pos)),glm::normalize( standBy_origin[side() + 1])));
 					if(v > side() + 1) rotate = -rotate;
-					on_update_pos(idx,i,pos,rotate,is_none);
+					on_update_pos(idx,i,pos + glm::vec4(onAddOffset(idx),0.f),rotate,is_none, only_update_pos);
 				}
 				else {
 					auto pos = matrix * glm::vec4(standBy[v].x, standBy[v].y, standBy[v].z, 1.f);
 					float rotate = glm::acos( glm::dot( glm::normalize(glm::vec3(pos)),glm::normalize( standBy_origin[side() + 1])));
 					if(v > side() + 1) rotate = -rotate;
-					on_update_pos(idx,i,pos,rotate,is_none);
+					on_update_pos(idx,i,pos,rotate,is_none,only_update_pos);
 				}
 				++i;++idx;
 				if(behind && k == entity_num - 1)
@@ -215,7 +214,7 @@ namespace gld {
 		float slot_rotate_rate = 0.007f;
 		glm::vec3 pos = glm::vec3(0.f, 0.f, 0.f);
 		std::function<glm::vec3(int)> onAddOffset;
-		std::function<void(int,int,glm::vec3,float,bool)> on_update_pos;
+		std::function<void(int,int,glm::vec3,float,bool,bool)> on_update_pos;
 		int min_idx = 0,max_idx = 0;
 		int unless = 0;
 	protected:
@@ -230,17 +229,17 @@ namespace gld {
 				float e = (float)iidx_for_idx(i - side())* -angle;
 				int intent = i > curr ? 1 : -1;
 				adjust_pos_map(intent);
-				set_slot_rotate();
+				set_slot_rotate(false);
 				App::instance()->tween.to(
 					[this](float v) {
 						slot_rotate = v;
-						set_slot_rotate();
+						set_slot_rotate(true);
 					}, dur, b, e, f, [this,i,intent,complete]() {	
 						if(on_select)on_select(i);
 						curr = i;
 						adjust_pos_map();
 						origin();
-						set_slot_rotate();
+						set_slot_rotate(false);
 						if(complete) 
 						{
 							App::instance()->exec.delay_frame(complete,1);

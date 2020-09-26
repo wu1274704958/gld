@@ -20,23 +20,30 @@ namespace lrc{
         wheel.rotate = -90.f;
         wheel.unless = 10;
         wheel.set_curr(0);
-        wheel.on_update_pos = [this](size_t ei,size_t i,glm::vec3 pos,float rotate,bool is_none)
+        wheel.on_update_pos = [this](size_t ei,size_t i,glm::vec3 pos,float rotate,bool is_none,bool only_pos)
         {
             labs[ei]->get_comp<Transform>()->pos = pos;
-            if(is_none)
+            if (!only_pos)
             {
-                labs[ei]->set_text("");
-            }else{
-                if(curr)
+                if (is_none)
                 {
-                    labs[ei]->set_text(curr->data[i].line);
-                }else {
-                    if(i == 1 && not_find_lrc)
-                        labs[ei]->set_text("No lyrics found!");
-                    else
-                        labs[ei]->set_text("");
+                    labs[ei]->set_text("");
                 }
-                    
+                else {
+                    if (curr)
+                    {
+                        labs[ei]->set_text(curr->data[i].line);
+                    }
+                    else {
+                        if (i == 1 && not_find_lrc)
+                            labs[ei]->set_text("No lyrics found!");
+                        else
+                            labs[ei]->set_text("");
+                    }
+                }
+            }
+            else {
+                labs[ei]->onTextSizeChange(labs[ei]->text_width, labs[ei]->text_height);
             }
             labs[ei]->get_comp<gld::Transform>()->rotate.x = -rotate;
         };
