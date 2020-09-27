@@ -83,7 +83,10 @@ namespace lrc{
         }
         curr = std::move(lrc);
         wheel.set_count(curr->data.size());
-        wheel.tween_to(0,17.f,tween::linear);
+        if (wheel.get_curr() == 0)
+            wheel.refresh();
+        else
+            wheel.tween_to(0,17.f,tween::linear);
     }
     void LrcView::playing(size_t idx)
     {
