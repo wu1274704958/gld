@@ -21,14 +21,24 @@ namespace lrc{
                 auto cnt = res.value();
                 int tb = 0,cb = -1;
                 double ti = 0.0;
+                bool parse_time_err = false;
                 for(int i = 0;i < cnt.size();++i)
                 {
                     if(cnt[i] == '[') tb = i + 1;
                     if(cnt[i] == ']') 
                     {
                         auto time = cnt.substr(tb,i - tb);
-                        ti = parse_time(time);
-                        cb = i + 1;
+                        try{
+                            ti = parse_time(time);
+                            cb = i + 1;
+                        }catch(...){
+                            parse_time_err = true;
+                        }
+                    }
+                    if(parse_time_err && cnt[i] == '\n')
+                    {
+                        parse_time_err = false;
+                        continue;
                     }
                     if(cnt[i] == '\n' && cb > -1)
                     {
