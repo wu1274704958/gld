@@ -4,15 +4,16 @@ out vec4 color;
 in vec2 oUv; 
 in vec4 oColor;
 uniform sampler2D diffuseTex;
+uniform int blurEdgeN;
 
 
 void main() 
 { 
     float shadow = 0.f;
     vec2 texelSize = 1.0 / textureSize(diffuseTex, 0);
-    for(int x = -1; x <= 1; ++x)
+    for(int x = -blurEdgeN; x <= blurEdgeN; ++x)
     {
-        for(int y = -1; y <= 1; ++y)
+        for(int y = -blurEdgeN; y <= blurEdgeN; ++y)
         {
             float pcfDepth = texture(diffuseTex, oUv.xy + vec2(x, y) * texelSize).r; 
             shadow += pcfDepth;        

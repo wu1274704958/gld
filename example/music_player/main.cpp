@@ -281,6 +281,7 @@ public:
         curr_play->create();
         curr_play->color = wws::make_rgba(PREPARE_STRING("009E8EFF")).make<glm::vec4>();
         curr_play->size = 760;
+        curr_play->set_blur_edge(2);
         curr_play->get_comp<Transform>()->pos = glm::vec3(-7.03303f, 3.71308f, -5.f);
         curr_play->set_text("please click one music!");
         curr_play->add_listener(EventType::MouseDown, onDown);

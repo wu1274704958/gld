@@ -105,7 +105,7 @@ namespace gld {
 		render->init();
 		auto program = render->get();
 		if (program->uniform_id("perspective") == -1)
-			program->locat_uniforms("perspective", "world","diffuseTex");
+			program->locat_uniforms("perspective", "world","diffuseTex","blurEdgeN");
 		add_comp<Render>(render);
 
 		std::shared_ptr<std::vector<float>> vertices_ = DefDataMgr::instance()->load<DataType::SquareVertices>(0.f, 0.f);

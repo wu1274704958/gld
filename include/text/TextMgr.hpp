@@ -218,5 +218,5 @@ namespace txt {
 		inline static std::shared_ptr<TextMgr> self;
 	};
 
-	using DefTexMgr = TextMgr<DefTextNodeGen, TexGenerate, DefTextRender,1,Page> ;
+	using DefTexMgr = TextMgr<DefTextNodeGen, TexGenerate, DefTextRender,2,Page> ;
 }

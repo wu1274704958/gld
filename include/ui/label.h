@@ -271,6 +271,12 @@ namespace gld {
 			margin.w = v * Word::WORD_SCALE;
 		}
 
+		void set_blur_edge(int v)
+		{
+			if(word_patch)
+				word_patch->get_comp<txt::PatchTextMaterial>()->blurEdgeN = v;
+		}
+
 		void onUpdate() override
 		{
 			if (auto_scroll && !mulitline && text_width > width)

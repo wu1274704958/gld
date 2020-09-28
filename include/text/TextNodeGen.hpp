@@ -66,16 +66,20 @@ namespace txt {
     {
         PatchTextMaterial(std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex) :
             udiffuseTex("diffuseTex"),
+            blurEdgeN("blurEdgeN"),
             diffuseTex(std::move(diffuseTex))
         {
             udiffuseTex = 0;
+            blurEdgeN = 1;
         }
  
 
         PatchTextMaterial() :
-            udiffuseTex("diffuseTex")
+            udiffuseTex("diffuseTex"),
+            blurEdgeN("blurEdgeN")
         {
             udiffuseTex = 0;
+            blurEdgeN = 1;
         }
         bool init() override
         {
@@ -84,6 +88,7 @@ namespace txt {
             auto n_ptr = get_node();
             auto render = n_ptr->get_comp<gld::Render>();
             udiffuseTex.attach_program(render->get());
+            blurEdgeN.attach_program(render->get());
 
             return f;
         }
@@ -93,13 +98,14 @@ namespace txt {
                 diffuseTex->active<gld::ActiveTexId::_0>();
 
             udiffuseTex.sync();
+            blurEdgeN.sync();
         }
 
         void after_draw() override
         {
             diffuseTex->unbind();
         }
-
+        gld::GlmUniform<gld::UT::Int> blurEdgeN;
         gld::GlmUniform<gld::UT::Sampler2D>   udiffuseTex;
         std::shared_ptr<gld::Texture<gld::TexType::D2>> diffuseTex;
     };
