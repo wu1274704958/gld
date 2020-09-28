@@ -8,10 +8,10 @@
 
 namespace txt {
 
-	template<typename NodeGen,typename TextGen,typename TextR,template< class A,class B,size_t C> class PAge>
+	template<typename NodeGen,typename TextGen,typename TextR,size_t Gap,template< class A,class B,size_t C> class PAge>
 	struct TextMgr{
 
-		using PageTy = PAge<TextGen, TextR, 1>;
+		using PageTy = PAge<TextGen, TextR, Gap>;
 
 		bool has(std::string& font, int flag, int idx, int size, uint32_t c)
 		{
@@ -218,5 +218,5 @@ namespace txt {
 		inline static std::shared_ptr<TextMgr> self;
 	};
 
-	using DefTexMgr = TextMgr<DefTextNodeGen, TexGenerate, DefTextRender,Page> ;
+	using DefTexMgr = TextMgr<DefTextNodeGen, TexGenerate, DefTextRender,1,Page> ;
 }
