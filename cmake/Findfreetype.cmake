@@ -10,7 +10,7 @@ if(WIN32)
         message(${FREE_TYPE_PATH})
 
         find_path( FREE_TYPE_INCLUDE_DIR NAMES freetype ft2build.h PATHS "${FREE_TYPE_PATH}/include" )
-        find_library( FREE_TYPE_LIBRARY freetype.lib "${FREE_TYPE_PATH}/objs/x64/Release" "${FREE_TYPE_PATH}/win64")
+        find_library( FREE_TYPE_LIBRARY freetype.lib "${FREE_TYPE_PATH}/objs/x64/Release" "${FREE_TYPE_PATH}/win64" "${FREE_TYPE_PATH}/build/Release")
 
         if( FREE_TYPE_INCLUDE_DIR AND FREE_TYPE_LIBRARY)
 
