@@ -315,19 +315,22 @@ public:
 
     void init_list_ui()
     {
-        list_ui = std::shared_ptr<Sphere>(new Sphere(36, 31));
+        list_ui = std::shared_ptr<Sphere>(new Sphere(12, 9, 0.1f,0.7f));
         list_ui->create();
         cxts.push_back(list_ui);
 
+        list_ui->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)-> glm::vec3 {
+            std::shared_ptr<Label> l = std::dynamic_pointer_cast<Label>(c);
+            return glm::vec3(l->get_width() / -2.f,l->get_height() / 2.f,0.f);
+        };
 
-        list_ui->onAddOffset = [](const std::shared_ptr<Node<Component>>& c)->glm::vec3
-        {
-            auto p = dynamic_cast<Label*>(c.get());
-            return glm::vec3(p->get_width() / -2.f, p->get_height() / 2.f, 0.f);
+        list_ui->onSlotChanged = [](size_t i, std::shared_ptr<Node<Component>>& c) {
+            float depth = (c->get_comp<Transform>()->pos.z + 0.5f);
+            c->get_comp<Transform>()->scale.x = depth;
+            c->get_comp<Transform>()->scale.y = depth;
         };
 
         list_ui->get_comp<Transform>()->pos = glm::vec3(0.f, -0.385407, 0.32f);
-        list_ui->get_comp<Transform>()->scale = glm::vec3(music_list_scale,music_list_scale,music_list_scale);
 
         pumper.setFillMusicFunc([this](const std::shared_ptr<std::vector<MMFile>>& list) {
 

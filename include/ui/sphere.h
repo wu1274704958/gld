@@ -10,8 +10,8 @@ namespace gld {
 	struct Sphere : public NodeWithEvent {
 
 		Sphere() {}
-		Sphere(int equator_count, int level,float off_angle = 0.01f) : equator_count(equator_count), level(level),
-			off_angle(off_angle)
+		Sphere(int equator_count, int level,float off_angle = 0.0f,float r = 0.5f) : equator_count(equator_count), level(level),
+			off_angle(off_angle),m_radius(r)
 		{
 			
 		}
@@ -19,42 +19,7 @@ namespace gld {
 		void create()
 		{
 			add_comp(std::shared_ptr<Transform>(new Transform()));
-			float m = glm::pi<float>() / 2.f;
-			std::vector <std::tuple<float, float,int>> v;
-			float angle = 0.f;
-			for(int i = 0;i < level / 2;++i)
-			{ 
-				float a =  0.5f - ((float)i / (float)level);
-				float b = glm::sqrt( glm::pow(0.5f, 2.0f) - glm::pow(a, 2.f) );
-				int seg = (int)(b * (float)equator_count);
-
-				v.push_back(std::make_tuple(a,b, seg));
-
-				auto res = gen::circle(a, b, seg);
-				
-
-				for (auto& r : res)
-					standBy.push_back(glm::rotateY(r,angle));
-				angle += off_angle;
-			}
-			
-			if (level % 2 != 0)
-			{
-				auto res = gen::circle(0.f, 0.5f, equator_count);
-
-				for (auto& r : res)
-					standBy.push_back(glm::rotateY(r, angle));
-			}
-			angle += off_angle;
-			for (int i = 0; i < v.size(); ++i)
-			{
-				auto [a, b, seg] = v[i];
-				auto res = gen::circle(-a, b, seg);
-
-				for (auto& r : res)
-					standBy.push_back(glm::rotateY(r, angle));
-				angle -= off_angle;
-			}
+			standBy = gen::sphere(m_radius, equator_count, level,off_angle);
 			auto [vertices,indices] = gen::cube();
 			add_comp(std::shared_ptr<def::Collision>(
 				new def::Collision(
@@ -180,11 +145,12 @@ namespace gld {
 			{
 				if (onAddOffset)
 				{
-					v.second->get_comp<Transform>()->pos = glm::mat3(matrix) * (standBy[v.first] + onAddOffset(v.second));
+					v.second->get_comp<Transform>()->pos = (glm::mat3(matrix) * standBy[v.first]) + onAddOffset(v.second);
 				}
 				else {
 					v.second->get_comp<Transform>()->pos = glm::mat3(matrix) * standBy[v.first];
 				}
+				if (onSlotChanged) onSlotChanged(v.first, v.second);
 			}
 		}
 
@@ -192,6 +158,7 @@ namespace gld {
 		float slot_rotate_y = 0.f;
 		float slot_rotate_rate = 0.007f;
 		std::function<glm::vec3(const std::shared_ptr<Node<Component>>&)> onAddOffset;
+		std::function<void(size_t, std::shared_ptr<Node<Component>>&)> onSlotChanged;
 	protected:
 
 		void _add(size_t idx, std::shared_ptr<Node<Component>> n)
@@ -208,15 +175,16 @@ namespace gld {
 
 			if (onAddOffset)
 			{
-				n->get_comp<Transform>()->pos = glm::mat3(matrix) * (standBy[idx] + onAddOffset(n));
+				n->get_comp<Transform>()->pos = (glm::mat3(matrix) * standBy[idx]) + onAddOffset(n);
 			}
 			else {
 				n->get_comp<Transform>()->pos = glm::mat3(matrix) * standBy[idx];
 			}
-			
+			//printf("%f %f %f\n", standBy[idx].x, standBy[idx].y,standBy[idx].z);
+			if (onSlotChanged) onSlotChanged(idx, n);
 			add_child(n);
 		}
-
+		float m_radius = 0.5f;
 		int equator_count = 24;
 		int level = 13;
 		std::unordered_map < size_t , std::shared_ptr<Node<Component>>> pos_map;

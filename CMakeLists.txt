@@ -9,7 +9,7 @@ if(WIN32)
     message("is Windows")
     add_definitions(/permissive-)
     add_definitions(-DPF_WIN32)
-    if(${CMAKE_BUILD_TYPE} STREQUAL "Release" )
+    if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" )
         add_link_options(/SAFESEH:NO /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
     else()
         add_link_options(/SAFESEH:NO /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup /NODEFAULTLIB:library)
@@ -119,7 +119,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR clock2 FILES main.cpp)
     CreateExample(DIR word FILES main.cpp)
     CreateExample(DIR photo_viewer FILES main.cpp)
-
+    CreateExample(DIR test_sphere FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

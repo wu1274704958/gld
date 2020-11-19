@@ -4,6 +4,7 @@
 #include <comps/Material.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/rotate_vector.hpp>
 
 namespace gld::gen{
 
@@ -110,5 +111,47 @@ namespace gld::gen{
         };
 
         return { vertices,indices };
+    }
+
+    inline std::vector<glm::vec3> sphere(float r,int seg,int level,float offset = 0.0f)
+    {
+        float perimeter = 2.f * glm::pi<float>() * r;
+        float dist = perimeter / (float)seg;
+        float y_axis = 0.f;
+        float y_axis_unit = (r * 2.f) / (float)(level - 1);
+        float angle = 0.f;
+        std::vector<glm::vec3> result;
+
+        for(int i = 0;i < level;++i)
+        {
+            float rr = 0.f;
+            if(y_axis > r)
+            {
+                float a = y_axis - r;
+                rr = glm::sqrt( glm::pow(r, 2.0f) - glm::pow(a, 2.f) );
+            }else
+            if(y_axis == r)
+            {
+                rr = r;
+            }else{
+                float a = r - y_axis;
+                rr = glm::sqrt( glm::pow(r, 2.0f) - glm::pow(a, 2.f) );
+            }
+            float per = 2.f * glm::pi<float>() * rr;
+            int seg = (int)glm::floor(per / dist);
+            if (seg > 0)
+            {
+                auto res = circle(y_axis - r, rr, seg);
+                if(offset == 0.0f)
+                    result.insert(result.end(), res.begin(), res.end());
+                else {
+                    for (auto& v : res)
+                        result.push_back(glm::rotateY(v, angle));
+                }
+            }
+            y_axis += y_axis_unit;
+            angle += offset;
+        }
+        return result;
     }
 }

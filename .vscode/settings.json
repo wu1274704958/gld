@@ -92,6 +92,7 @@
         "complex": "cpp",
         "cwctype": "cpp",
         "numeric": "cpp",
-        "string_view": "cpp"
+        "string_view": "cpp",
+        "compare": "cpp"
     }
 }
