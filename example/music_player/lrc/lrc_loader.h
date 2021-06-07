@@ -14,7 +14,6 @@ namespace lrc {
 		using LrcType = Lrc;
 		std::shared_ptr<LrcType> load(const std::string& path);
 		std::map<std::string, std::shared_ptr<LrcType>> map;
-		double parse_time(const std::string &s);
 	};
 
 
