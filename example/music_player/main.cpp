@@ -368,6 +368,7 @@ public:
                 {
                     std::weak_ptr<Transform> tra = v2->get_comp_ex<Transform>();
                     App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::y, 1000.f, 0.f, glm::pi<float>(), tween::Expo::easeInOut);
                 }
                 glLineWidth(1.2f);
                 break;
