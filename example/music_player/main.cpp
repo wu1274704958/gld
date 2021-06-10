@@ -549,7 +549,7 @@ int main(int argc,const char**args)
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(1800, 960, "music player"))
+    if (d.initWindow(800, 420, "music player"))
     {
         printf("init window failed\n");
         return -1;
