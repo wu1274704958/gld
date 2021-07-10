@@ -167,7 +167,7 @@ public:
         return 0;
     }
 
-    void onMouseButton(int btn,int action,int mode) override
+    void onMouseButton(int btn,int action,int mode,double x,double y) override
     {
         //dbg::log << btn << " " << action << " " << mode << dbg::endl;
         if(action == GLFW_RELEASE)
@@ -190,7 +190,7 @@ public:
             }
             
         }
-        RenderDemoRotate::onMouseButton(btn,action,mode);
+        RenderDemoRotate::onMouseButton(btn,action,mode,x,y);
     }
 
     void adjust(float off)
