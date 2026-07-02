@@ -37,6 +37,7 @@
 #include <generator/Generator.hpp>
 #include "../lighting_6/model.hpp"
 #include "../lighting_6/light.hpp"
+#include <ft2pp.hpp>
 #ifdef PF_WIN32
 #include <spy.hpp>
 #endif
@@ -714,7 +715,7 @@ int main()
     }
      
     auto self = ::GetActiveWindow();
-    spy::into_wallpage(self);
+    //spy::into_wallpage(self);
 #else
     if (d.initWindow(1920, 1060, "Clock"))
     {

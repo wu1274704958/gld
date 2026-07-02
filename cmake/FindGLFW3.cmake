@@ -11,6 +11,9 @@ if(WIN32)
 
         find_path( GLFW3_INCLUDE_DIR GLFW "${GLFW3_PATH}/include" )
         find_library( GLFW3_LIBRARY glfw3.lib "${GLFW3_PATH}/lib" "${GLFW3_PATH}/lib-vc2019" "${GLFW3_PATH}/lib-vc2015" "${GLFW3_PATH}/build/src/Release")
+        if (NOT GLFW3_LIBRARY)
+            find_library( GLFW3_LIBRARY glfw3dll.lib "${GLFW3_PATH}/lib")
+        endif()
 
         if( GLFW3_INCLUDE_DIR AND GLFW3_LIBRARY)
 

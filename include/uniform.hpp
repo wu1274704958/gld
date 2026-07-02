@@ -28,24 +28,7 @@ namespace gld
     template<size_t UtId,typename Fir,typename ...Ts>
     struct MapUTData<UtId,Fir,Ts...>
     {
-        constexpr static decltype(auto) func()
-        {
-            if constexpr (UtId == Fir::UtId)
-            {
-                using T = typename Fir::type;
-                return std::declval<T>();
-            }
-            else
-            {
-                using T = typename MapUTData<UtId, Ts...>::type;
-                if constexpr (std::is_same_v<T, void>)
-                {
-                    static_assert("Error Type!!!");
-                }
-                return std::declval<T>();
-            }
-        }
-        using type = decltype(func());
+        using type = std::conditional_t<UtId == Fir::UtId, typename Fir::type, typename MapUTData<UtId, Ts...>::type>;
     };
 
     template<size_t UtId>

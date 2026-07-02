@@ -47,6 +47,9 @@
 #include "tools/app.h"
 #include "view1.h"
 #include "view2.h"
+#include "view3.h"
+#include "view4.h"
+#include "bloom.h"
 #include "ui/wheel.h"
 #include "lrc/lrc_mgr.hpp"
 
@@ -125,6 +128,7 @@ public:
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FRAMEBUFFER_SRGB);
+        glEnable(GL_PROGRAM_POINT_SIZE);
 
          for (auto& p : cxts)
             p->init();
@@ -132,6 +136,8 @@ public:
         init_pumper();
         pumper.setMode(Pumper::LOOP);
         glClearColor(0.f, 0.f, 0.f, 0.f);
+
+        bloom.create(width, height);
 
         return 0;
     }
@@ -356,43 +362,42 @@ public:
         //v1->zl = 0.04f; 
         //v1->create();
 
-        auto v2 = std::make_shared<View2>();
-        v2->create();
-        v2->line_width = 0.01f;
-        flywheel->on_select = [this,v2](int i) 
+        auto v4 = std::make_shared<View4>();
+        v4->create();
+
+        auto v3 = std::make_shared<View3>();
+        v3->create();
+
+        flywheel->on_select = [this, v4, v3](int i)
         {
-            switch (i) 
+            switch (i)
             {
             case 1:
-                if (v2->get_comp<Transform>()->rotate.x == 0.f)
-                {
-                    std::weak_ptr<Transform> tra = v2->get_comp_ex<Transform>();
-                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
-                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::y, 1000.f, 0.f, glm::pi<float>(), tween::Expo::easeInOut);
-                }
-                glLineWidth(1.2f);
+                // View4 controls its own terrain tilt via View4::tilt_deg;
+                // keep the node rotation at 0 to avoid double-tilting.
+                glLineWidth(1.0f);
                 break;
             case 2:
-               //if (v1->get_comp<Transform>()->rotate.x == 0.f)
-               //{
-               //    std::weak_ptr<Transform> tra = v1->get_comp_ex<Transform>();
-               //    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.47f, tween::Expo::easeInOut);
-               //    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
-               //}
-               //glLineWidth(0.4f);
+                if (v3->get_comp<Transform>()->rotate.x == 0.f)
+                {
+                    std::weak_ptr<Transform> tra = v3->get_comp_ex<Transform>();
+                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::x, 1000.f, 0.f, 0.47f, tween::Expo::easeInOut);
+                    App::instance()->tween.to(tra, &Transform::rotate, &glm::vec3::z, 1000.f, 0.f, 0.3f, tween::Expo::easeInOut);
+                }
+                glLineWidth(0.6f);
                 break;
             }
 
         };
 
         flywheel->add(0, list_ui);
-        flywheel->add(1, v2);
-        //flywheel->add(2, v1);
+        flywheel->add(1, v4);
+        flywheel->add(2, v3);
 
-        //cxts.push_back(v1);
-        cxts.push_back(v2);
-        fft_vs.push_back(v2);
-        //fft_vs.push_back(v1);
+        cxts.push_back(v4);
+        cxts.push_back(v3);
+        fft_vs.push_back(v4);
+        fft_vs.push_back(v3);
     }
 
     void init_lrc()
@@ -423,12 +428,14 @@ public:
 
     void draw() override
     {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
+        bloom.begin();
+
         update_mat(cxts);
 
         for (auto& p : cxts)
             p->draw();
+
+        bloom.end_and_present();
 
         update();
         update_matrix();
@@ -483,7 +490,7 @@ public:
             fft_vs[i - 1]->on_update(data, map_val(FFTView::FFT_VAL_TYPE(), fft_vs[i - 1]->fft_data_length()));
         }
         check_stop();
-        
+
         if(player.is_playing())
         {
             double pos = player.getSeconds();
@@ -515,6 +522,7 @@ public:
     void onWindowResize(int w, int h) override
     {
         glViewport(0, 0, w, h);
+        bloom.resize(w, h);
     }
 private:
     std::shared_ptr<Program> program;
@@ -522,6 +530,7 @@ private:
     GlmUniform<UT::Matrix4> world;
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
+    BloomPipeline bloom;
     EventDispatcher<Node<Component>> event_dispatcher;
     glm::vec3 down_pos,camera_dir = glm::vec3(0.f,0.f,-1.f);
     std::shared_ptr<Sphere> list_ui;
@@ -549,13 +558,14 @@ int main(int argc,const char**args)
     ResMgrWithGlslPreProcess::create_instance(root);
     DefResMgr::create_instance(std::move(root));
     Demo1 d;
-    if (d.initWindow(800, 420, "music player"))
+    if (d.initWindow(800, 600, "music player"))
     {
         printf("init window failed\n");
         return -1;
     }
     int err = 0;
-    if ((err = d.init()) != 0) return err;
+    if ((err = d.init()) != 0) 
+        return err;
     d.run();
 
     return 0;

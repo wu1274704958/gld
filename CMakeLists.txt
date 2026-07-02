@@ -31,22 +31,23 @@ find_package(GLFW3)
 find_package(MINI_TEST)
 find_package(ASSIMP)
 find_package(FT2PP)
-find_package(freetype)
+find_package(FREE_TYPE)
 find_package(SPY)
 find_package(BASS24)
 
 add_definitions(-DNOMINMAX)
+add_definitions(-DGLM_ENABLE_EXPERIMENTAL)
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR} 
+    ${CMAKE_SOURCE_DIR}
 )
 
 if(MINI_TEST_FOUND)
     include_directories(${MINI_TEST_INCLUDE_DIR})
 endif()
 
-if(FT2PP_FOUND AND FREE_TYPE_INCLUDE_DIR)
+if(FT2PP_FOUND AND FREE_TYPE_FOUND)
     include_directories(${FT2PP_INCLUDE_DIR} ${FREE_TYPE_INCLUDE_DIR})
 endif()
 

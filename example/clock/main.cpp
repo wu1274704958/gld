@@ -33,6 +33,7 @@
 #include <surface.hpp>
 #include <strstream>
 #include <make_color.hpp>
+#include <ft2pp.hpp>
 #ifdef PF_WIN32
 #include <spy.hpp>
 #endif

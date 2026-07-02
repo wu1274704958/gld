@@ -101,24 +101,11 @@ namespace res_ck{
     template<size_t Rt,typename Fir,typename ...Ts>
     struct MapResPlug<Rt,Fir,Ts...>
     {
-        constexpr static decltype(auto) func()
-        {
-            if constexpr (Rt == Fir::res_type)
-            {
-                using T = typename Fir::type;
-                return std::declval<T>();
-            }
-            else
-            {
-                using T = typename MapResPlug<Rt, Ts...>::type;
-                if constexpr (std::is_same_v<T, void>)
-                {
-                    static_assert("Error Type!!!");
-                }
-                return std::declval<T>();
-            }
-        }
-        using type = typename std::remove_reference_t<decltype(func())>;
+        using type = std::conditional_t<
+            Rt == Fir::res_type,
+            typename Fir::type,
+            typename MapResPlug<Rt, Ts...>::type
+        >;
     };
 
     template<size_t Rt>
