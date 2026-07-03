@@ -49,6 +49,8 @@
 #include "view2.h"
 #include "view3.h"
 #include "view4.h"
+#include "view5.h"
+#include "cover_art.h"
 #include "bloom.h"
 #include "ui/wheel.h"
 #include "lrc/lrc_mgr.hpp"
@@ -140,6 +142,8 @@ public:
         bloom.create(width, height);
 
         return 0;
+
+        return 0;
     }
 
     void init_pumper()
@@ -149,6 +153,12 @@ public:
         {
             this->lrc_mgr.onplay(f);
             this->curr_play_ani(f.get_name());
+            // Extract the new song's embedded album art and recolour View5.
+            if (this->view5)
+            {
+                this->cover.load(this->player.getChan());
+                this->view5->set_cover(&this->cover);
+            }
         };
     }
 
@@ -362,19 +372,19 @@ public:
         //v1->zl = 0.04f; 
         //v1->create();
 
-        auto v4 = std::make_shared<View4>();
-        v4->create();
+        auto v5 = std::make_shared<View5>();
+        v5->create();
+        view5 = v5;
 
         auto v3 = std::make_shared<View3>();
         v3->create();
 
-        flywheel->on_select = [this, v4, v3](int i)
+        flywheel->on_select = [this, v5, v3](int i)
         {
             switch (i)
             {
             case 1:
-                // View4 controls its own terrain tilt via View4::tilt_deg;
-                // keep the node rotation at 0 to avoid double-tilting.
+                // View5 controls its own terrain tilt via View5::tilt_deg.
                 glLineWidth(1.0f);
                 break;
             case 2:
@@ -391,12 +401,12 @@ public:
         };
 
         flywheel->add(0, list_ui);
-        flywheel->add(1, v4);
+        flywheel->add(1, v5);
         flywheel->add(2, v3);
 
-        cxts.push_back(v4);
+        cxts.push_back(v5);
         cxts.push_back(v3);
-        fft_vs.push_back(v4);
+        fft_vs.push_back(v5);
         fft_vs.push_back(v3);
     }
 
@@ -536,6 +546,8 @@ private:
     std::shared_ptr<Sphere> list_ui;
     std::shared_ptr<Label> curr_play;
     std::shared_ptr<Wheel> flywheel;
+    std::shared_ptr<View5> view5;
+    CoverArt cover;
     std::string font = "fonts/SHOWG.TTF";
     std::string font2 = "fonts/happy.ttf";
     MusicPlayer player;
