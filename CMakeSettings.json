@@ -7,10 +7,9 @@
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "",
+      "cmakeCommandArgs": "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
       "buildCommandArgs": "-v",
-      "ctestCommandArgs": "",
-      "variables": []
+      "ctestCommandArgs": ""
     },
     {
       "name": "x64-Release",
@@ -21,8 +20,7 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "-v",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "variables": []
+      "inheritEnvironments": [ "msvc_x64_x64" ]
     },
     {
       "name": "x64-Clang-Debug",
@@ -33,8 +31,7 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "-v",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "clang_cl_x64" ],
-      "variables": []
+      "inheritEnvironments": [ "clang_cl_x64" ]
     },
     {
       "name": "x64-Release-2",
@@ -45,8 +42,7 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "variables": []
+      "inheritEnvironments": [ "msvc_x64_x64" ]
     }
   ]
 }

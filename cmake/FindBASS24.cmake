@@ -9,14 +9,15 @@ if(WIN32)
         message("Find BASS24_PATH env!")
         message(${BASS24_PATH})
 
-        find_path( BASS24_INCLUDE_DIR NAMES bass.h PATHS "${BASS24_PATH}" )
-        find_library( BASS24_LIBRARY bass.lib "${BASS24_PATH}/x64" )
-        find_library( BASS24_LIBRARY_FLAC bassflac.lib "${BASS24_PATH}/x64" )
+        find_path( BASS24_INCLUDE_DIR NAMES bass.h PATHS "${BASS24_PATH}" "${BASS24_PATH}/c" )
+        find_path( BASS24_FLAC_INCLUDE_DIR NAMES bassflac.h PATHS "${BASS24_PATH}" "${BASS24_PATH}/c" )
+        find_library( BASS24_LIBRARY bass.lib "${BASS24_PATH}/x64" "${BASS24_PATH}/c/x64" "${BASS24_PATH}" "${BASS24_PATH}/c" )
+        find_library( BASS24_LIBRARY_FLAC bassflac.lib "${BASS24_PATH}/x64" "${BASS24_PATH}/c/x64" "${BASS24_PATH}" "${BASS24_PATH}/c" )
 
         set(BASS24_LIBRARYS ${BASS24_LIBRARY} ${BASS24_LIBRARY_FLAC})
         message(${BASS24_LIBRARYS})
 
-        if( BASS24_INCLUDE_DIR AND BASS24_LIBRARYS)
+        if( BASS24_INCLUDE_DIR AND BASS24_FLAC_INCLUDE_DIR AND BASS24_LIBRARY AND BASS24_LIBRARY_FLAC)
 
             set( BASS24_FOUND TRUE )
 
@@ -43,14 +44,15 @@ elseif(APPLE)
             message("Find BASS24_PATH env!")
             message(${BASS24_PATH})
     
-            find_path( BASS24_INCLUDE_DIR NAMES bass.h PATHS "${BASS24_PATH}" )
-            find_library( BASS24_LIBRARY libbass.dylib "${BASS24_PATH}" )
-            find_library( BASS24_LIBRARY_FLAC libbassflac.dylib "${BASS24_PATH}" )
+            find_path( BASS24_INCLUDE_DIR NAMES bass.h PATHS "${BASS24_PATH}" "${BASS24_PATH}/c" )
+            find_path( BASS24_FLAC_INCLUDE_DIR NAMES bassflac.h PATHS "${BASS24_PATH}" "${BASS24_PATH}/c" )
+            find_library( BASS24_LIBRARY libbass.dylib "${BASS24_PATH}" "${BASS24_PATH}/c" )
+            find_library( BASS24_LIBRARY_FLAC libbassflac.dylib "${BASS24_PATH}" "${BASS24_PATH}/c" )
     
             set(BASS24_LIBRARYS ${BASS24_LIBRARY} ${BASS24_LIBRARY_FLAC})
             message(${BASS24_LIBRARYS})
     
-            if( BASS24_INCLUDE_DIR AND BASS24_LIBRARYS)
+            if( BASS24_INCLUDE_DIR AND BASS24_FLAC_INCLUDE_DIR AND BASS24_LIBRARY AND BASS24_LIBRARY_FLAC)
     
                 set( BASS24_FOUND TRUE )
     
