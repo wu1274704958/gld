@@ -41,11 +41,7 @@ int fv::MusicPlayer::playStream(const  MMFile& file, bool loop)
 		return init_error_code;
 	if (chan)
 	{
-		if (BASS_ChannelIsActive(chan) != BASS_ACTIVE_STOPPED)
-		{
-			BASS_ChannelStop(chan);
-		}
-		BASS_SampleFree(chan);
+		cleanup();
 	}
 	/*if(lstrcmpW(file.getSuffix(),L".flac") == 0)
 	{ 
@@ -147,6 +143,7 @@ size_t fv::MusicPlayer::getData(void *p, size_t size)
 	{
 		return BASS_ChannelGetData(chan, p, size);
 	}
+	return 0;
 }
 
 DWORD fv::MusicPlayer::getLevel()
@@ -223,5 +220,4 @@ bool fv::MusicPlayer::is_playing()
 {
 	return getActive() == BASS_ACTIVE_PLAYING;	
 }
-
 

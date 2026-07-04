@@ -26,6 +26,11 @@ MMFile::MMFile(FILE_TYPE type,const MMFILE_CHAR_TYPE *name, const MMFILE_CHAR_TY
 MMFile::MMFile(const MMFile &mmf)
 {
     this->type = mmf.type;
+	this->name = nullptr;
+	this->path = nullptr;
+	this->suffix = nullptr;
+	this->absolutePath = nullptr;
+
 	if (mmf.name)
 		this->name = new MMFILE_STR_TYPE(*(mmf.name));
 	if (mmf.path)
@@ -56,8 +61,10 @@ MMFile::MMFile(MMFile &&mmf)
 
 MMFile & MMFile::operator=(const MMFile & mmf)
 {
+	if (this == &mmf)
+		return *this;
+
 	cleanup();
-	this->type = mmf.type;
 	this->type = mmf.type;
 	if (mmf.name)
 		this->name = new MMFILE_STR_TYPE(*(mmf.name));
@@ -77,6 +84,9 @@ MMFile & MMFile::operator=(const MMFile & mmf)
 
 MMFile & MMFile::operator=(MMFile && mmf)
 {
+	if (this == &mmf)
+		return *this;
+
 #ifdef _DEBUG
 	std::cout << "operator=(MMFile && mmf) " << this->name << std::endl;
 #endif // DEBUG
