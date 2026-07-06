@@ -54,7 +54,7 @@ struct View5 : public FFTView {
     //  Easy-to-tweak parameters
     // =======================================================================
     // --- point generation (independent of frequency) ---
-    int   point_count    = 24000;  // target total number of points
+    int   point_count    = 34000;  // target total number of points
     float point_spacing  = 0.012f;  // world distance between adjacent points
     float scalex         = 0.75f;  // inscribed-circle jitter ellipsoid scale (x)
     float scaley         = 0.75f;  // (y)
@@ -65,7 +65,8 @@ struct View5 : public FFTView {
     // --- frequency rings (concentric circles by actual radius) ---
     float ring_start_radius = 0.0f; // radius where ring 0 begins
     int   ring_count        = 9;   // number of frequency rings
-    float ring_width        = 0.15f;// world radial width of each ring
+    float ring_width        = 0.1f;// world radial width of each ring
+    float ring_gap          = 0.07f; // base gap unit (scaled by Fibonacci per ring)
     float catenary_k        = 2.2f; // inverted-catenary curvature (ripple shape)
 
     // --- terrain / audio ---
@@ -73,7 +74,13 @@ struct View5 : public FFTView {
     float max_amp       = 0.9f;
     float comp_k        = 16.f;   // log1p compression strength
     float height_gain   = 0.4f;   // amplitude → ripple height
-    float orbit_h       = 0.04f;  // gentle vertical bob
+
+    // --- drift (per-point looping wobble, direct world units) ---
+    float orbit_x_min = 0.012f, orbit_x_max = 0.054f; // x drift amplitude range
+    float orbit_y_min = 0.012f, orbit_y_max = 0.054f; // z-plane drift amplitude range
+    float orbit_z_min = 0.040f, orbit_z_max = 0.060f; // vertical drift amplitude range
+    float drift_speed_min = 0.20f, drift_speed_max = 0.75f; // per-point speed range
+    float drift_speed_mul = 1.0f; // global drift speed multiplier
 
     float bright_gain   = 2.2f;
     float base_size     = 5.0f;
@@ -186,13 +193,14 @@ struct View5 : public FFTView {
         for (int i = 0; i < N; ++i) {
             Pt& p = pts[i];
 
-            // ---- looping drift (proportional to point spacing) --------------
-            float a1 = time_ * p.drift_speed + p.phase;
-            float a2 = time_ * p.drift_speed * 1.3f + p.phase2;
-            float a3 = time_ * p.drift_speed * 0.7f + p.phase3;
-            float du = std::cos(a1) * p.orbit_r * drift_scale_;
-            float dv = std::sin(a2) * p.orbit_r * drift_scale_;
-            float dh = std::sin(a3) * orbit_h   * drift_scale_;
+            // ---- looping drift (per-axis amplitude, global speed mul) -------
+            float sp = p.drift_speed * drift_speed_mul;
+            float a1 = time_ * sp + p.phase;
+            float a2 = time_ * sp * 1.3f + p.phase2;
+            float a3 = time_ * sp * 0.7f + p.phase3;
+            float du = std::cos(a1) * p.orbit_x;
+            float dv = std::sin(a2) * p.orbit_y;
+            float dh = std::sin(a3) * p.orbit_z;
 
             float H = p.baseH + dh;               // random base height + drift
             float amp_norm = 0.f;
@@ -253,7 +261,7 @@ private:
         float dist;           // |edge distance| in its ring, [0,1]
         int   freq_ring;      // which frequency ring (→ bin)
         bool  in_ring;        // false → responds to no frequency (stays flat)
-        float orbit_r;
+        float orbit_x, orbit_y, orbit_z;
         float phase, phase2, phase3;
         float drift_speed;
         float amp    = 0.f;
@@ -301,8 +309,10 @@ private:
         std::uniform_real_distribution<float> u11(-1.f, 1.f);
         std::uniform_real_distribution<float> u01(0.f, 1.f);
         std::uniform_real_distribution<float> uphase(0.f, glm::two_pi<float>());
-        std::uniform_real_distribution<float> uorbit(0.010f, 0.045f);
-        std::uniform_real_distribution<float> uspeed(0.20f, 0.75f);
+        std::uniform_real_distribution<float> ox(orbit_x_min, orbit_x_max);
+        std::uniform_real_distribution<float> oy(orbit_y_min, orbit_y_max);
+        std::uniform_real_distribution<float> oz(orbit_z_min, orbit_z_max);
+        std::uniform_real_distribution<float> uspeed(drift_speed_min, drift_speed_max);
 
         float ext_x = 1e-6f, ext_y = 1e-6f;
 
@@ -325,7 +335,9 @@ private:
             ext_y = std::max(ext_y, std::fabs(p.anchor.y));
 
             p.base_col = glm::vec3(u01(rng), u01(rng), u01(rng)); // default noise
-            p.orbit_r = uorbit(rng);
+            p.orbit_x = ox(rng);
+            p.orbit_y = oy(rng);
+            p.orbit_z = oz(rng);
             p.phase   = uphase(rng);
             p.phase2  = uphase(rng);
             p.phase3  = uphase(rng);
@@ -335,12 +347,23 @@ private:
 
         ext_x_ = ext_x;
         ext_y_ = ext_y;
-        drift_scale_ = point_spacing;   // drift proportional to spacing
     }
 
     // -----------------------------------------------------------------------
     // B) FREQUENCY RINGS — concentric circles by actual radius; per point store
     //    which ring it falls in and its normalised distance to the ring edge.
+    // -----------------------------------------------------------------------
+    // Gap (space) between frequency ring `index` and the next one.
+    // Fibonacci-scaled: gap(i) = fib(i) * ring_gap  with fib = 1,1,2,3,5,8,...
+    //   i=0→0.1, i=1→0.1, i=2→0.2, i=3→0.3, i=4→0.5, ...  (ring_gap = 0.1)
+    float ring_space(int index) const
+    {
+        return ring_gap;
+        int a = 1, b = 1;                 // fib(0), fib(1)
+        for (int i = 0; i < index; ++i) { int t = a + b; a = b; b = t; }
+        return (float)a * ring_gap;       // a == fib(index)
+    }
+
     // -----------------------------------------------------------------------
     void assign_freq_rings()
     {
@@ -350,9 +373,9 @@ private:
             p.freq_ring = 0;
             p.dist      = 1.f;
 
-            // loop the concentric rings, find the one containing this point
+            // walk the concentric rings outward, inserting a gap between each
+            float inner = ring_start_radius;
             for (int idx = 0; idx < ring_count; ++idx) {
-                float inner = ring_start_radius + (float)idx * rw;
                 float outer = inner + rw;
                 if (p.rr >= inner && p.rr < outer) {
                     p.in_ring   = true;
@@ -362,6 +385,8 @@ private:
                     p.dist      = std::fabs(s);              // [0,1], 0 = ring middle
                     break;
                 }
+                // points landing in the gap keep in_ring=false (stay flat)
+                inner = outer + ring_space(idx);
             }
         }
     }
@@ -405,7 +430,6 @@ private:
     float bloom_t     = 0.f;
     int   bloom_frame = 0;
     float time_       = 0.f;
-    float drift_scale_ = 1.f;
     float ext_x_ = 1.f, ext_y_ = 1.f;
 
     std::vector<Pt>          pts;
