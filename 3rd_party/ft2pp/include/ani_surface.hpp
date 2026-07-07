@@ -1,355 +1,336 @@
 #pragma once
-
-/*
- * ani_surface.hpp – animated pixel-particle surface system (wws namespace)
- *
- * Exposes:
- *   wws::vec2f           – 2-D float vector (used as particle coordinates)
- *   wws::point           – single particle: pos, tar, v, distance
- *   wws::ASDrive<C>      – abstract drive: feeds text & controls transitions
- *   wws::AniSurface<C>   – manages two surfaces + particle animation between them
- *
- * Typical usage (clock demo):
- *   auto sur = std::make_shared<AniSurface<GLContent>>(pw, ph, drive.get(), color, 300);
- *   sur->to_out_speed = 0.09f;
- *   sur->to_use_speed = 0.10f;
- *   sur->move_to_func  = [](wws::point& p){ ... };
- *   sur->set_min_frame_ms(16);
- *   sur->pre_go();
- *   // per frame:
- *   if (!sur->is_end()) sur->ani_step();
- */
-
-#include <surface.hpp>
-#include <functional>
+#include "ft2pp.hpp"
+#include <memory>
 #include <vector>
-#include <cmath>
-#include <chrono>
-#include <random>
-#include <cstdint>
+#include <matrix2.hpp>
+#include "comm_in.hpp"
+#include <functional>
+#include <surface.hpp>
+#include <thread>
 
-namespace wws {
 
-// ---------------------------------------------------------------------------
-// vec2f – minimal 2-D float vector
-// ---------------------------------------------------------------------------
-struct vec2f {
-    float x_ = 0.f, y_ = 0.f;
+namespace wws{
 
-    vec2f() = default;
-    vec2f(float x, float y) : x_(x), y_(y) {}
+    
 
-    float x() const noexcept { return x_; }
-    float y() const noexcept { return y_; }
+    struct point {
+	    cgm::vec2 pos;
+	    cgm::vec2 v;
+	    cgm::vec2 tar;
+		float distance = 0.0f;
+	    point() : pos({ -1.f,-1.f }) {
+            
+	    }
+    };
 
-    float len() const noexcept { return std::sqrt(x_ * x_ + y_ * y_); }
-
-    vec2f operator+(const vec2f& o) const noexcept { return { x_ + o.x_, y_ + o.y_ }; }
-    vec2f operator-(const vec2f& o) const noexcept { return { x_ - o.x_, y_ - o.y_ }; }
-    vec2f operator*(float f)        const noexcept { return { x_ * f,    y_ * f    }; }
-    vec2f& operator+=(const vec2f& o) noexcept { x_ += o.x_; y_ += o.y_; return *this; }
-    bool operator==(const vec2f& o) const noexcept { return x_ == o.x_ && y_ == o.y_; }
-};
-
-// ---------------------------------------------------------------------------
-// point – one particle
-// ---------------------------------------------------------------------------
-struct point {
-    vec2f pos;       // current position in pixel-space
-    vec2f tar;       // target (home) position
-    vec2f v;         // velocity direction (unit vector toward tar)
-    float distance = 0.f; // original distance from scatter pos to target
-    bool  active   = false;
-    bool  lit      = false; // belongs to the current text frame (survives active→false)
-};
-
-// ---------------------------------------------------------------------------
-// ASDrive<Content> – abstract animation driver
-// ---------------------------------------------------------------------------
-template<typename Content>
-struct ASDrive {
-    using PixelTy = typename Content::PIXEL_TYPE;
-
-    // Write the current text/frame into `sur` using color `f_c`.
-    virtual void set_text(surface<Content>& sur, PixelTy f_c) = 0;
-
-    // Advance internal state (called once per successful transfer).
-    virtual void step() = 0;
-
-    // Return the callback that receives the pixel data after each present.
-    virtual std::function<void(const Content*)> get_present() = 0;
-
-    // Return true when a surface transfer should occur.
-    //   ms           – elapsed ms since the last transfer
-    //   to_use_stable – incoming animation finished
-    //   to_out_stable – outgoing animation finished
-    virtual bool need_transfar(uint32_t ms, bool to_use_stable, bool to_out_stable) = 0;
-
-    // Return true when the whole display should stop (e.g. one-shot animation).
-    virtual bool is_end() = 0;
-
-    virtual ~ASDrive() = default;
-};
-
-// ---------------------------------------------------------------------------
-// AniSurface<Content>
-// ---------------------------------------------------------------------------
-template<typename Content>
-class AniSurface {
-public:
-    using PixelTy = typename Content::PIXEL_TYPE;
-
-    // Public animation parameters (set before pre_go())
-    float to_out_speed = 0.05f;   // scatter speed multiplier
-    float to_use_speed = 0.05f;   // reassemble speed multiplier
-
-    // Optional per-particle movement override. If set, called instead of the
-    // default exponential-approach for the TO_USE phase.
-    std::function<void(point&)> move_to_func;
-
-    // -----------------------------------------------------------------------
-    // Constructor
-    //   w, h        – surface dimensions in pixels
-    //   drive       – animation driver (not owned)
-    //   color       – foreground pixel value (e.g. glm::vec3 for GLContent)
-    //   scatter_dist – maximum scatter distance in pixels (e.g. 300)
-    // -----------------------------------------------------------------------
-    AniSurface(int w, int h, ASDrive<Content>* drive,
-               PixelTy color, uint32_t scatter_dist)
-        : w_(w), h_(h), drive_(drive), color_(color),
-          scatter_dist_(static_cast<float>(scatter_dist)),
-          use_sur(w, h), out_sur(w, h)
+	template<typename Cnt>
+    struct ASDrive
     {
-        points_.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x) {
-                auto& p = points_[y * w + x];
-                p.tar = vec2f(static_cast<float>(x), static_cast<float>(y));
-                p.pos = p.tar;
-                p.active = false;
-            }
+        virtual bool is_end() = 0;
+        virtual void set_text(surface<Cnt>& sur,typename Cnt::PIXEL_TYPE pt) = 0;
+        virtual void step() = 0;
+		virtual bool need_transfar(uint32_t ms,bool to_use_stable,bool to_out_stable) = 0;
+		virtual typename Cnt::PRESENT_ARGS_TYPE get_present() = 0;
+        virtual ~ASDrive(){}
+    };
+
+	template<typename Cnt>
+    struct AniSurface
+    {
+        AniSurface(int w,int h,ASDrive<Cnt>* drive,typename Cnt::PIXEL_TYPE pt,int reserve = 100) : 
+            sur( w, h),
+            last(w, h),
+            back(w, h),
+            drive(drive),
+			fill_byte(pt)
+        {
+            use.reserve(reserve);
+	        out.reserve(reserve);
+        }
+        std::unique_ptr<point>& get_out_to_use()
+	    {
+	    	if (out.empty())
+	    	{
+	    		use.push_back(std::unique_ptr<point>(new point()));
+	    		return use.back();
+	    	}
+	    	use.push_back(std::move(out.back()));
+	    	out.pop_back();
+	    	return use.back();
+	    }
+
+	    std::unique_ptr<point>& get_use_to_out (int x,int y)
+	    {
+	    	auto it = use.end();
+	    	for (it = use.begin(); it != use.end(); ++it)
+	    	{
+	    		auto& p = *it;
+	    		if ((p->pos.x() == x && p->pos.y() == y) || (p->tar.x() == x && p->tar.y() == y))
+	    		{
+	    			break;
+	    		}
+	    	}
+	    	if(it != use.end())
+	    	{
+	    		out.push_back(std::move(*it));
+	    		use.erase(it);
+	    		return out.back();
+	    	}
+	    	else {
+	    		throw std::runtime_error("Not found!");
+	    	}
+	    }
+
+	    cgm::vec2 rd_out_pos (int x,int y){
+		    if (x < out_MaxW || (sur.w() - x) < out_MaxW )
+		    {
+		    	int res_x = x < out_MaxW ? -1 : sur.w();
+		    	int off = rand() % out_M;
+		    	if (y + off < sur.h())
+		    		return cgm::vec2{ static_cast<float>(res_x) ,static_cast<float>(y + off) };
+		    		else 
+		    		return cgm::vec2{ static_cast<float>(res_x) ,static_cast<float>(y - off) };
+		    }
+		    else {
+		    	int res_y = y > (sur.h() / 2) ? sur.h() : -1;//(rand() % 2) == 0 ? -1 : sur.h();
+		    	int off = rand() % out_M;
+
+		    	if (x + off < sur.w())
+		    		return cgm::vec2{ static_cast<float>(x + off), static_cast<float>(res_y)  };
+		    	else
+		    		return cgm::vec2{ static_cast<float>(x - off), static_cast<float>(res_y)  };
+	        }
+	    }
+
+	    bool step_unit(std::unique_ptr<point>& p) 
+        {
+		    if (p->pos.x() != p->tar.x() || p->pos.y() != p->tar.y())
+		    {
+		    	if (std::abs(p->pos.x() - p->tar.x()) < 1.0 && std::abs(p->pos.y() - p->tar.y()) < 1.0)
+		    	{
+		    		p->pos = p->tar;
+					p->distance = 0.0f;
+		    	}
+		    	else
+		    	{
+		    		move_to(*p);
+		    	}
+				return false;
+		    }
+		    else {
+		    	p->v.x() = 0.0f;
+		    	p->v.y() = 0.0f;
+				return true;
+		    }
+	    }
+
+		virtual void move_to(point& p)
+		{
+			if(move_to_func)
+				move_to_func(p);
+			else
+				p.pos = p.pos + p.v;
+		}
+
+	std::tuple<bool,bool> step() {
+		bool use_all_stable = true,out_all_stable = true;
+		for (auto& p : use) {
+			bool v = step_unit(p);
+			if(use_all_stable) use_all_stable = v;
+		}
+		for (auto& p : out) {
+			bool v = step_unit(p);
+			if(out_all_stable) out_all_stable = v;
+		}
+		return std::make_tuple(use_all_stable,out_all_stable);
+	};
+
+	void fill() {
+		for (auto& p : use) {
+			if(custom_pixel)
+				sur.set_pixel(static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y())),custom_pixel(
+					static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y()))
+				));
+			else
+				sur.set_pixel(static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y())),fill_byte);
+		}
+		for (auto& p : out) {
+			if(custom_pixel)
+				sur.set_pixel(static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y())),custom_pixel(
+					static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y()))
+				));
+			else
+				sur.set_pixel(static_cast<int>(std::roundf(p->pos.x())), static_cast<int>(std::roundf(p->pos.y())),fill_byte);
+		}
+	};
+
+    bool good_out_MaxW(int v)
+    {
+        return v >= 0;
+    }  
+    int get_out_MaxW()
+    {
+        return out_MaxW;
+    }    
+    void set_out_MaxW(int v)
+    {
+        if(good_out_MaxW(v))
+            out_MaxW = v;   
     }
 
-    void set_min_frame_ms(uint32_t ms) { min_frame_ms_ = ms; }
-
-    bool is_end() { return drive_->is_end(); }
-
-    // Call once after construction to populate the first frame.
-    void pre_go() {
-        present_cb_ = drive_->get_present();
-        use_sur.get_content().clear();
-        drive_->set_text(use_sur, color_);
-        if (present_cb_) use_sur.get_content().present(present_cb_);
-
-        last_transfer_tp_ = clock_t::now();
-        state_ = State::USING;
+    bool good_out_M(int v)
+    {
+        return v >= 0;
+    }  
+    int get_out_M()
+    {
+        return out_M;
+    }    
+    void set_out_M(int v)
+    {
+        if(good_out_M(v))
+            out_M = v;   
     }
 
-    // Call every frame (from the render loop).
-    void ani_step() {
-        auto now = clock_t::now();
-        uint32_t frame_ms = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_frame_tp_).count());
-        last_frame_tp_ = now;
-
-        if (frame_ms < min_frame_ms_) return;
-
-        uint32_t elapsed = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_transfer_tp_).count());
-
-        switch (state_) {
-
-        case State::USING: {
-            bool to_use_stable = true;
-            bool to_out_stable = true;
-            if (drive_->need_transfar(elapsed, to_use_stable, to_out_stable)) {
-                present_cb_ = drive_->get_present();
-                drive_->step();
-                out_sur.get_content().clear();
-                drive_->set_text(out_sur, color_);
-                setup_to_out_particles();
-                state_ = State::TO_OUT;
-                last_transfer_tp_ = now;
-            }
-            break;
-        }
-
-        case State::TO_OUT: {
-            bool stable = step_to_out();
-            render_out_frame();          // draw particles, call present every frame
-            if (stable) {
-                setup_to_use_particles();
-                state_ = State::TO_USE;
-            }
-            break;
-        }
-
-        case State::TO_USE: {
-            bool stable = step_to_use();
-            render_use_frame();          // draw particles, call present every frame
-            if (stable) {
-                state_ = State::USING;
-                last_transfer_tp_ = now;
-            }
-            break;
-        }
-        }
+    bool good_min_frame_ms(int v)
+    {
+        return v > 0;
+    }  
+    int get_min_frame_ms()
+    {
+        return min_frame_ms;
+    }    
+    void set_min_frame_ms(int v)
+    {
+        if(good_min_frame_ms(v))
+            min_frame_ms = v;   
     }
 
-private:
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-    static vec2f random_scatter_pos(float cx, float cy, float dist,
-                                     std::mt19937& rng) {
-        std::uniform_real_distribution<float> angle_d(0.f, 6.2831853f);
-        std::uniform_real_distribution<float> mag_d(dist * 0.5f, dist);
-        float a = angle_d(rng);
-        float m = mag_d(rng);
-        return { cx + std::cos(a) * m, cy + std::sin(a) * m };
+	void ani_step()
+	{
+		if constexpr(std::is_same_v<Cnt,wws::cmd_content>)
+		{
+	    	wws::go_to_xy(0, 0);
+		}
+	    sur.clear();
+	    if (alread_set)
+	    {
+	    	alread_set = false;
+			int ob = static_cast<int>(to_out_speed_min);
+			int oe = static_cast<int>(to_out_speed_max) - ob;
+
+			int ub = static_cast<int>(to_use_speed_min);
+			int ue = static_cast<int>(to_use_speed_max) - ub;
+
+	    	for (int y = 0; y < last.h(); ++y)
+	    	{
+	    		for (int x = 0; x < last.w(); ++x)
+	    		{
+	    			if (back.get_pixel(x, y) != Cnt::EMPTY_PIXEL && last.get_pixel(x, y) == Cnt::EMPTY_PIXEL)
+	    			{
+	    				auto& p = get_out_to_use();
+	    				if (!sur.good_pos(static_cast<int>(p->pos.x()), static_cast<int>(p->pos.y())))
+	    					p->pos = rd_out_pos(x, y);
+	    				p->tar = cgm::vec2{ static_cast<float>(x),static_cast<float>(y) };
+	    				p->v = (p->tar - p->pos).unitized() * (static_cast<float>((rand() % ue) + ub) * to_use_speed);
+						p->distance = (p->tar - p->pos).len();
+	    			}
+	    			else
+	    			if (back.get_pixel(x, y) == Cnt::EMPTY_PIXEL && last.get_pixel(x, y) != Cnt::EMPTY_PIXEL)
+	    			{
+	    				auto& p = get_use_to_out(x, y);
+	    				p->pos = cgm::vec2{ static_cast<float>(x),static_cast<float>(y) };
+	    				p->tar = rd_out_pos(x, y);
+	    				p->v = (p->tar - p->pos).unitized() * (static_cast<float>((rand() % oe) + ob) * to_out_speed);
+						p->distance = (p->tar - p->pos).len();
+	    			}
+	    		}
+	    	}
+	    }
+
+	    fill();
+	    sur.present(drive->get_present());
+	    auto [to_use_stable,to_out_stable] = step();
+	    auto end2 = std::chrono::system_clock::now();
+	    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start).count();
+	    start = std::chrono::system_clock::now();
+	    if (duration < min_frame_ms)
+	    {
+	    	std::this_thread::sleep_for(std::chrono::milliseconds(min_frame_ms - duration));
+	    }
+
+	    auto end = std::chrono::system_clock::now();
+	    if (drive->need_transfar(
+			static_cast<uint32_t>( std::chrono::duration_cast<std::chrono::milliseconds>(end - now).count()),
+			to_use_stable,
+			to_out_stable))
+	    {
+	    	drive->step();
+	    	back.swap(last);
+	    	back.clear();
+			if(!drive->is_end())
+	    		drive->set_text(back,fill_byte);
+	    	alread_set = true;
+	    	now = std::chrono::system_clock::now();
+	    }
+	}
+
+	void pre_go()
+	{
+		drive->set_text(back,fill_byte);
+
+	    now = std::chrono::system_clock::now();
+	    start = std::chrono::system_clock::now();
+    
+	    alread_set = true;
+	}
+
+	bool is_end() const
+	{
+		return drive->is_end();
+	}
+
+    void go()
+    {
+        pre_go();
+
+	    while (!is_end())
+	    {
+			ani_step();
+	    }
     }
 
-    // Scatter active (lit) pixels of use_sur to random positions.
-    void setup_to_out_particles() {
-        std::mt19937 rng(std::random_device{}());
-        float cx = w_ * 0.5f, cy = h_ * 0.5f;
-        for (int y = 0; y < h_; ++y) {
-            for (int x = 0; x < w_; ++x) {
-                auto& p = points_[y * w_ + x];
-                auto px = use_sur.get_pixel(x, y);
-                bool lit = !(px == Content::EMPTY_PIXEL);
-                p.lit = lit;
-                if (lit) {
-                    p.pos = vec2f(static_cast<float>(x), static_cast<float>(y));
-                    p.tar = random_scatter_pos(cx, cy, scatter_dist_, rng);
-                    auto d = p.tar - p.pos;
-                    float dl = d.len();
-                    p.v = dl > 0.f ? d * (1.f / dl) : vec2f(1.f, 0.f);
-                    p.distance = dl;
-                    p.active = true;
-                } else {
-                    p.active = false;
-                }
-            }
-        }
-    }
+    typename Cnt::PIXEL_TYPE fill_byte;
+	std::function<void(point&)> move_to_func;
+	std::function<typename Cnt::PIXEL_TYPE(int,int)> custom_pixel;
 
-    // Set up particles so lit pixels of out_sur fly in from random positions.
-    void setup_to_use_particles() {
-        std::mt19937 rng(std::random_device{}());
-        float cx = w_ * 0.5f, cy = h_ * 0.5f;
-        // Copy out_sur content into use_sur so callers can read it
-        use_sur.get_content().swap(out_sur.get_content());
+	float to_use_speed_min = 5.0f;
+	float to_use_speed_max = 15.0f;
+	float to_use_speed = 0.05f;
 
-        for (int y = 0; y < h_; ++y) {
-            for (int x = 0; x < w_; ++x) {
-                auto& p = points_[y * w_ + x];
-                auto px = use_sur.get_pixel(x, y);
-                bool lit = !(px == Content::EMPTY_PIXEL);
-                p.lit = lit;
-                if (lit) {
-                    p.tar = vec2f(static_cast<float>(x), static_cast<float>(y));
-                    p.pos = random_scatter_pos(cx, cy, scatter_dist_, rng);
-                    auto d = p.tar - p.pos;
-                    float dl = d.len();
-                    p.v = dl > 0.f ? d * (1.f / dl) : vec2f(0.f, 0.f);
-                    p.distance = dl;
-                    p.active = true;
-                } else {
-                    p.active = false;
-                }
-            }
-        }
-    }
+	float to_out_speed_min = 5.0f;
+	float to_out_speed_max = 15.0f;
+	float to_out_speed = 0.05f;
 
-    // Move particles outward; return true when all are stable.
-    bool step_to_out() {
-        constexpr float THRESH = 1.5f;
-        bool all_done = true;
-        for (auto& p : points_) {
-            if (!p.active) continue;
-            float rem = (p.tar - p.pos).len();
-            if (rem < THRESH) { p.active = false; continue; }
-            all_done = false;
-            float step = rem * to_out_speed;
-            p.pos = p.pos + (p.v * step);
-        }
-        return all_done;
-    }
+    protected:
+        int out_MaxW = 16;
+        int out_M = 10;
 
-    // Move particles toward their home pixel; return true when all are stable.
-    bool step_to_use() {
-        constexpr float THRESH = 0.8f;
-        bool all_done = true;
-        for (auto& p : points_) {
-            if (!p.active) continue;
-            float rem = (p.tar - p.pos).len();
-            if (rem < THRESH) {
-                p.pos = p.tar;
-                p.active = false;
-                continue;
-            }
-            all_done = false;
-            if (move_to_func) {
-                move_to_func(p);
-            } else {
-                float step = rem * to_use_speed;
-                p.pos = p.pos + (p.v * step); // v points toward tar
-            }
-        }
-        return all_done;
-    }
+        std::vector<std::unique_ptr<point>> use;
+	    std::vector<std::unique_ptr<point>> out;
 
-    // Render TO_OUT intermediate frame: active lit particles at current pos.
-    void render_out_frame() {
-        use_sur.get_content().clear();
-        for (auto& p : points_) {
-            if (!p.active || !p.lit) continue;
-            int px = static_cast<int>(p.pos.x_ + 0.5f);
-            int py = static_cast<int>(p.pos.y_ + 0.5f);
-            if (px >= 0 && px < w_ && py >= 0 && py < h_)
-                use_sur.set_pixel(px, py, color_);
-        }
-        if (present_cb_) use_sur.get_content().present(present_cb_);
-    }
+        surface<Cnt> sur;
+	    surface<Cnt> last;
+	    surface<Cnt> back;
 
-    // Render TO_USE intermediate frame: active particles at current pos,
-    // already-arrived particles at their target.
-    void render_use_frame() {
-        use_sur.get_content().clear();
-        for (auto& p : points_) {
-            if (!p.lit) continue;
-            vec2f draw_pos = p.active ? p.pos : p.tar;
-            int px = static_cast<int>(draw_pos.x_ + 0.5f);
-            int py = static_cast<int>(draw_pos.y_ + 0.5f);
-            if (px >= 0 && px < w_ && py >= 0 && py < h_)
-                use_sur.set_pixel(px, py, color_);
-        }
-        if (present_cb_) use_sur.get_content().present(present_cb_);
-    }
+        std::chrono::system_clock::time_point now;
+	    std::chrono::system_clock::time_point start;
 
-    // -----------------------------------------------------------------------
-    // Data
-    // -----------------------------------------------------------------------
-    int w_, h_;
-    ASDrive<Content>* drive_;   // non-owning
-    PixelTy color_;
-    float scatter_dist_;
+        int min_frame_ms = 18;
+	
+	    bool alread_set;
 
-    surface<Content> use_sur;  // currently shown surface
-    surface<Content> out_sur;  // surface being prepared
+        ASDrive<Cnt>* drive = nullptr;
+    };
 
-    std::vector<point> points_;
-
-    std::function<void(const Content*)> present_cb_;
-
-    uint32_t min_frame_ms_ = 16;
-
-    enum class State { IDLE, USING, TO_OUT, TO_USE } state_ = State::IDLE;
-
-    using clock_t = std::chrono::steady_clock;
-    clock_t::time_point last_transfer_tp_ = clock_t::now();
-    clock_t::time_point last_frame_tp_    = clock_t::now();
-};
-
-} // namespace wws
+}
