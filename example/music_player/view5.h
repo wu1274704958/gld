@@ -84,7 +84,7 @@ struct View5 : public FFTView {
     float drift_freq_speed = 1.0f; // frequency → drift speed boost (0 = off)
     float drift_freq_amp   = 0.6f; // frequency → drift amplitude boost (0 = off)
 
-    float bright_gain   = 2.2f;
+    float bright_gain   = 1.2f;
     float base_size     = 3.0f;
     float size_gain     = 16.f;
     float ref_width     = 800.f; // reference window size (diagonal) for point-size scaling
