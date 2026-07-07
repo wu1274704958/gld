@@ -54,7 +54,7 @@ struct View5 : public FFTView {
     //  Easy-to-tweak parameters
     // =======================================================================
     // --- point generation (independent of frequency) ---
-    int   point_count    = 34000;  // target total number of points
+    int   point_count    = 54000;  // target total number of points
     float point_spacing  = 0.012f;  // world distance between adjacent points
     float scalex         = 0.75f;  // inscribed-circle jitter ellipsoid scale (x)
     float scaley         = 0.75f;  // (y)
@@ -63,11 +63,11 @@ struct View5 : public FFTView {
     glm::vec3 spin_scale = glm::vec3(1.3f, 1.3f, 1.3f); // spin child node scale (tunable)
 
     // --- frequency rings (concentric circles by actual radius) ---
-    float ring_start_radius = 0.0f; // radius where ring 0 begins
+    float ring_start_radius = 0.01f; // radius where ring 0 begins
     int   ring_count        = 9;   // number of frequency rings
     float ring_width        = 0.1f;// world radial width of each ring
     float ring_gap          = 0.07f; // base gap unit (scaled by Fibonacci per ring)
-    float catenary_k        = 2.2f; // inverted-catenary curvature (ripple shape)
+    float wave_sigma        = 0.35f; // Gaussian ripple width (std-dev of the bell)
 
     // --- terrain / audio ---
     float tilt_deg      = 46.f;   // terrain tilt toward camera (0..30)
@@ -81,15 +81,23 @@ struct View5 : public FFTView {
     float orbit_z_min = 0.040f, orbit_z_max = 0.060f; // vertical drift amplitude range
     float drift_speed_min = 0.20f, drift_speed_max = 0.75f; // per-point speed range
     float drift_speed_mul = 1.0f; // global drift speed multiplier
+    float drift_freq_speed = 1.0f; // frequency → drift speed boost (0 = off)
+    float drift_freq_amp   = 0.6f; // frequency → drift amplitude boost (0 = off)
 
     float bright_gain   = 2.2f;
-    float base_size     = 5.0f;
-    float size_gain     = 26.f;
+    float base_size     = 3.0f;
+    float size_gain     = 16.f;
+    float ref_width     = 800.f; // reference window size (diagonal) for point-size scaling
+    float ref_height    = 600.f;
 
     int   BLOOM_FRAMES  = 45;
 
     // -----------------------------------------------------------------------
     View5() = default;
+
+    // Current window/framebuffer pixel size (drives resolution-independent point
+    // size). Defaults equal the reference so scale = 1 until set.
+    void set_viewport(int w, int h) { vp_width_ = w; vp_height_ = h; }
 
     void create()
     {
@@ -163,6 +171,19 @@ struct View5 : public FFTView {
     }
 
     // -----------------------------------------------------------------------
+    // Frequency-ring ripple waveform: height of the point at normalised edge
+    // distance `dist` (0 = ring middle, 1 = ring edge) for frequency amplitude
+    // `freq`. Normal-distribution (Gaussian) bell: peak at the ring middle,
+    // smoothly falling to the edges. Peak is normalised to 1 at dist=0, so the
+    // maximum ripple height equals freq * height_gain.
+    float f(float dist, float freq) const
+    {
+        float s = (wave_sigma > 1e-4f) ? wave_sigma : 1e-4f;
+        float g = std::exp(-(dist * dist) / (2.f * s * s));
+        return g * freq * height_gain;
+    }
+
+    // -----------------------------------------------------------------------
     void on_update(float* data, int len) override
     {
         int N = (int)pts.size();
@@ -174,7 +195,6 @@ struct View5 : public FFTView {
         } else {
             bloom_t = 1.f;
         }
-        time_ += 0.016f;
 
         // Drive the two split transforms:
         //   View5 own transform → tilt (rotate.x); child node → Y spin + scale.
@@ -187,42 +207,64 @@ struct View5 : public FFTView {
         }
 
         int rc = (ring_count > 1) ? ring_count : 1;
-        float cosh_k = std::cosh(catenary_k);
-        float cat_den = (cosh_k - 1.f > 1e-5f) ? (cosh_k - 1.f) : 1e-5f;
+
+        // Resolution-independent point size: gl_PointSize is in pixels, so scale
+        // by the window DIAGONAL relative to the reference resolution's diagonal.
+        // Using the diagonal accounts for both width and height (aspect ratio),
+        // staying robust across different window aspect ratios. height_gain is
+        // world-space (already resolution-independent) and is NOT scaled.
+        float ref_diag = std::sqrt(ref_width * ref_width + ref_height * ref_height);
+        float cur_diag = std::sqrt((float)vp_width_ * (float)vp_width_
+                                 + (float)vp_height_ * (float)vp_height_);
+        float res_scale = (ref_diag > 1e-3f) ? cur_diag / ref_diag : 1.f;
 
         for (int i = 0; i < N; ++i) {
             Pt& p = pts[i];
 
-            // ---- looping drift (per-axis amplitude, global speed mul) -------
-            float sp = p.drift_speed * drift_speed_mul;
-            float a1 = time_ * sp + p.phase;
-            float a2 = time_ * sp * 1.3f + p.phase2;
-            float a3 = time_ * sp * 0.7f + p.phase3;
-            float du = std::cos(a1) * p.orbit_x;
-            float dv = std::sin(a2) * p.orbit_y;
-            float dh = std::sin(a3) * p.orbit_z;
-
-            float H = p.baseH + dh;               // random base height + drift
+            // ---- frequency amplitude (needed before drift for modulation) ---
             float amp_norm = 0.f;
-
             if (p.in_ring) {
                 // frequency bin: CENTER = HIGH, OUTER = LOW
-                int bin = (len > 0)
+                /*int bin = (len > 0)
                     ? (int)std::lround((float)(rc - 1 - p.freq_ring)
                                        / (float)(rc - 1 > 0 ? rc - 1 : 1)
                                        * (float)(len - 1))
-                    : 0;
+                    : 0;*/
+                int bin = (len > 0)
+                    ? (int)std::lround((float)(p.freq_ring)
+                        / (float)(rc)
+                        * (float)(len - 1))
+					: 0;
                 if (bin < 0) bin = 0; else if (bin > len - 1) bin = len - 1;
 
                 float raw = std::log1p(std::sqrt(std::max(0.f, data[bin])) * comp_k)
                           / std::log1p(comp_k) * max_amp;
                 p.amp = (raw > p.amp) ? raw : p.amp * 0.80f + raw * 0.20f;
-
-                // inverted catenary: dist=0 → 1 (highest), dist=1 → 0 (lowest)
-                float f = (cosh_k - std::cosh(catenary_k * p.dist)) / cat_den;
-
-                H += f * p.amp * height_gain;
                 amp_norm = p.amp / max_amp;
+            }
+
+            // ---- looping drift, modulated by frequency ----------------------
+            // Frequency boosts both speed and amplitude "to some degree". Uses a
+            // per-point phase accumulator so a per-frame-varying speed advances
+            // the phase smoothly (no jumps that time_*sp would cause).
+            float fboost = amp_norm;                                  // [0,1]
+            float sp = p.drift_speed * drift_speed_mul
+                     * (1.f + drift_freq_speed * fboost);
+            p.drift_phase += sp * 0.016f;
+            float a1 = p.drift_phase + p.phase;
+            float a2 = p.drift_phase * 1.3f + p.phase2;
+            float a3 = p.drift_phase * 0.7f + p.phase3;
+            float amp_scale = 1.f + drift_freq_amp * fboost;
+            float du = std::cos(a1) * p.orbit_x * amp_scale;
+            float dv = std::sin(a2) * p.orbit_y * amp_scale;
+            float dh = std::sin(a3) * p.orbit_z * amp_scale;
+
+            float H = p.baseH + dh;               // random base height + drift
+
+            if (p.in_ring) {
+                // Gaussian (normal-distribution) bell ripple: peak at ring
+                // middle (dist=0), smoothly falling to the edges.
+                H -= f(p.dist, p.amp);
             }
 
             // Local ground plane = XZ (u→x, v→z); ripple height → local Y (up).
@@ -230,7 +272,7 @@ struct View5 : public FFTView {
             p.pos = glm::vec3(p.anchor.x + du, H, p.anchor.y + dv) * bloom_t;
 
             p.bright = 0.30f + amp_norm * bright_gain;
-            p.size   = base_size + amp_norm * size_gain;
+            p.size   = (base_size + amp_norm * size_gain) * res_scale;
         }
 
         rebuild_points(N);
@@ -264,6 +306,7 @@ private:
         float orbit_x, orbit_y, orbit_z;
         float phase, phase2, phase3;
         float drift_speed;
+        float drift_phase = 0.f;   // per-point accumulated drift angle
         float amp    = 0.f;
         float bright = 0.f;
         float size   = 5.f;
@@ -429,8 +472,9 @@ private:
     // -----------------------------------------------------------------------
     float bloom_t     = 0.f;
     int   bloom_frame = 0;
-    float time_       = 0.f;
     float ext_x_ = 1.f, ext_y_ = 1.f;
+    int   vp_width_  = 1920;   // current window pixel size (for point-size scale)
+    int   vp_height_ = 1080;   // default = ref_height → scale 1 until set
 
     std::vector<Pt>          pts;
     std::vector<PointVertex> pt_verts;

@@ -52,6 +52,7 @@
 #include "view5.h"
 #include "cover_art.h"
 #include "bloom.h"
+#include "motion_trail.h"
 #include "ui/wheel.h"
 #include "lrc/lrc_mgr.hpp"
 
@@ -140,8 +141,9 @@ public:
         glClearColor(0.f, 0.f, 0.f, 0.f);
 
         bloom.create(width, height);
-
-        return 0;
+        motion_trail.create(width, height);
+        trail_objs_.push_back(view5);
+        view5->set_viewport(width, height);
 
         return 0;
     }
@@ -447,6 +449,11 @@ public:
 
         bloom.end_and_present();
 
+        if (trail_enabled_)
+            motion_trail.render(width, height, [this] {
+                for (auto& t : trail_objs_) t->draw();
+            });
+
         update();
         update_matrix();
         App::instance()->exec.do_loop();
@@ -533,6 +540,8 @@ public:
     {
         glViewport(0, 0, w, h);
         bloom.resize(w, h);
+        motion_trail.resize(w, h);
+        if (view5) view5->set_viewport(w, h);
     }
 private:
     std::shared_ptr<Program> program;
@@ -541,6 +550,9 @@ private:
     std::vector<std::shared_ptr< gld::Node<gld::Component>>> cxts;
     GlmUniform<UT::Vec3> fill_color;
     BloomPipeline bloom;
+    MotionTrailPipeline motion_trail;
+    std::vector<std::shared_ptr<Node<Component>>> trail_objs_;
+    bool trail_enabled_ = true;
     EventDispatcher<Node<Component>> event_dispatcher;
     glm::vec3 down_pos,camera_dir = glm::vec3(0.f,0.f,-1.f);
     std::shared_ptr<Sphere> list_ui;
