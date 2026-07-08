@@ -76,7 +76,7 @@ namespace txt {
 				curr_x += (w + Off);
 				if (h > curr_h)
 					curr_h = h;
-				refresh();
+				refresh_rect(wd.x, wd.y, static_cast<int>(w), static_cast<int>(h));
 				return true;
 			}
 			else
@@ -126,6 +126,17 @@ namespace txt {
 		{
 			if (generate_ptr)
 				Gen::refresh(surface, generate_ptr);
+			else
+				generate();
+		}
+
+		// Incremental: upload only the just-written glyph rectangle. On the very
+		// first glyph the texture doesn't exist yet, so fall back to a full
+		// generate() (which uploads the whole current surface once).
+		void refresh_rect(int x, int y, int w, int h)
+		{
+			if (generate_ptr)
+				Gen::refresh(surface, generate_ptr, x, y, w, h);
 			else
 				generate();
 		}

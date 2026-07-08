@@ -243,7 +243,36 @@ namespace ft2 {
 
 			return gs->advance.x / 64;
 		}
-		
+
+		// 8-bit anti-aliased blit: writes the glyph's real coverage (0..255)
+		// from an FT_RENDER_MODE_NORMAL bitmap, one byte per pixel. The coverage
+		// value itself is passed to set_pixel (no constant "ink" value), so this
+		// path is immune to the 0x255 mistake of the MONO path.
+		template<typename Sur, typename Ret, typename CustomOff>
+		int render_surface_aa(Sur& sur, CustomOff custom_off,
+			Ret(Sur::* set_pixel)(int, int, unsigned char), int bx, int by)
+		{
+			if (!face)
+				return 0;
+			auto gs = glyph_slot();
+			auto bits = &gs->bitmap;
+
+			int a = custom_off.off_x(gs) + bx;
+			int b = custom_off.off_y(gs) + by;
+
+			for (unsigned int y = 0; y < bits->rows; ++y)
+			{
+				for (unsigned int x = 0; x < bits->width; ++x)
+				{
+					unsigned char cov = bits->buffer[(y * bits->pitch) + x];
+					if (cov)
+						(sur.*set_pixel)(a + (int)x, b + (int)y, cov);
+				}
+			}
+
+			return gs->advance.x / 64;
+		}
+
 		template<typename CustomOff>
 		std::optional<std::tuple<int,int,int,unsigned int, unsigned int>> get_glyph_data(CustomOff custom_off)
 		{

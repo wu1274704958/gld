@@ -289,6 +289,21 @@ namespace gld{
             glGenerateMipmap(static_cast<int>(Tt));
         }
 
+        // Incremental sub-region upload (2D). Used to update only the dirty
+        // glyph rectangle in a font atlas instead of re-uploading the whole
+        // texture. Caller is responsible for GL_UNPACK_* pixel-store state.
+        template<typename T>
+        void tex_sub_image(int level, int xoffset, int yoffset, int width, int height,
+                           unsigned int format, const T* pixels)
+        {
+            unsigned int type = static_cast<unsigned int>(MapGlTypeEnum<T>::val);
+            if constexpr(Tt == TexType::D2)
+            {
+                glTexSubImage2D(static_cast<int>(Tt), level, xoffset, yoffset,
+                                width, height, format, type, pixels);
+            }
+        }
+
         template<ActiveTexId Id>
         void active()
         {
