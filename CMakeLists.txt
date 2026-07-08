@@ -121,6 +121,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR word FILES main.cpp)
     CreateExample(DIR photo_viewer FILES main.cpp)
     CreateExample(DIR test_sphere FILES main.cpp)
+    CreateExample(DIR text3d FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
