@@ -36,6 +36,10 @@ message(---------------------------------)
 
 add_executable(${BUILD_NAME} ${SOURCE_FILE_LIST}  glad.c ${ALL_SOURCE_FILES})
 
+if(TARGET EnTT::EnTT)
+    target_link_libraries(${BUILD_NAME} EnTT::EnTT)
+endif()
+
 if(USE_GLFW)
     target_link_libraries(${BUILD_NAME} ${GLFW3_LIBRARY})
 endif(USE_GLFW)

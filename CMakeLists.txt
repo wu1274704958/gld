@@ -3,7 +3,8 @@ project("OpenGL demo" VERSION 0.1.0)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(WIN32)
 
     message("is Windows")
@@ -34,6 +35,7 @@ find_package(FT2PP)
 find_package(FREE_TYPE)
 find_package(SPY)
 find_package(BASS24)
+find_package(EnTT CONFIG REQUIRED)
 
 add_definitions(-DNOMINMAX)
 add_definitions(-DGLM_ENABLE_EXPERIMENTAL)
@@ -122,6 +124,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR photo_viewer FILES main.cpp)
     CreateExample(DIR test_sphere FILES main.cpp)
     CreateExample(DIR text3d FILES main.cpp)
+    CreateExample(DIR ecs_demo FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
