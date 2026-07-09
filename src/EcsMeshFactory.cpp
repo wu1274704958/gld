@@ -47,4 +47,29 @@ namespace gld::ecs {
         m.mode = GL_TRIANGLES;
         return m;
     }
+
+    MeshHandle MeshFactory::quad(float size) {
+        const float s = size * 0.5f;
+        std::vector<float> v = {
+            -s,-s, 0, 0,0,   s,-s, 0, 1,0,   s, s, 0, 1,1,  -s, s, 0, 0,1,
+        };
+        std::vector<int> idx = { 0, 1, 2, 0, 2, 3 };
+
+        auto vao = std::make_shared<VertexArr>();
+        vao->create();
+        vao->create_arr<ArrayBufferType::VERTEX>();
+        vao->create_arr<ArrayBufferType::ELEMENT>();
+        vao->bind();
+        vao->buffs().get<ArrayBufferType::VERTEX>().bind_data(v, GL_STATIC_DRAW);
+        vao->buffs().get<ArrayBufferType::VERTEX>().vertex_attrib_pointer<
+            VAP_DATA<3, float, false>, VAP_DATA<2, float, false>>();
+        vao->buffs().get<ArrayBufferType::ELEMENT>().bind_data(idx, GL_STATIC_DRAW);
+        vao->unbind();
+
+        MeshHandle m;
+        m.vao = std::move(vao);
+        m.index_count = static_cast<int>(idx.size());
+        m.mode = GL_TRIANGLES;
+        return m;
+    }
 }

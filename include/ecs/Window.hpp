@@ -19,6 +19,7 @@ namespace gld::ecs {
         int height = 0;
         std::string title;
         bool should_close = false;
+        bool presented = false;   // set by present_system; run_app skips its swap
         glm::vec2 last_cursor{0.f};
         bool has_cursor = false;
     };

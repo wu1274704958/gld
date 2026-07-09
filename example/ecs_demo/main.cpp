@@ -1,7 +1,6 @@
-// ECS demo: parent-child hierarchy + async asset loading + input + rendering,
-// all driven by the ECS App (WindowPlugin owns the loop). A textured parent cube
-// spins; child cubes are parented to it so they orbit as it rotates. The shader
-// and texture are loaded asynchronously through AssetServer.
+// ECS demo: parent-child hierarchy + async asset loading + input + multi-camera
+// rendering. A textured parent cube spins; child cubes are parented so they
+// orbit. The Camera is now a COMPONENT (an entity), driven by an orbit control.
 #define _CRT_SECURE_NO_WARNINGS
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -12,6 +11,7 @@
 #include <cmath>
 #include <filesystem>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
 
 #include <ecs/App.hpp>
@@ -28,6 +28,9 @@
 using namespace gld::ecs;
 namespace fs = std::filesystem;
 
+// Orbit parameters attached to a camera entity.
+struct OrbitControl { float yaw = 0.6f, pitch = 0.4f, dist = 7.f; glm::vec3 target{ 0.f }; };
+
 // BaseSystem demo: spin entities by their AutoRotate speed (reads Time resource).
 struct AutoRotateSystem : BaseSystem<AutoRotateSystem, Transform, AutoRotate> {
     void Update(entt::entity, Transform& t, AutoRotate& r) {
@@ -35,19 +38,31 @@ struct AutoRotateSystem : BaseSystem<AutoRotateSystem, Transform, AutoRotate> {
     }
 };
 
-// Left-drag orbits the camera; R resets.
+// Left-drag orbits every camera that has an OrbitControl; R resets. Writes the
+// camera's view matrix directly.
 static void camera_orbit_system(EcsWorld& w) {
-    auto& cam = w.resource_or_add<Camera>();
     auto& mouse = w.resource_or_add<MouseButtons>();
     auto& cur = w.resource_or_add<CursorPosition>();
     auto& kb = w.resource_or_add<Keyboard>();
+    auto& reg = w.reg();
 
-    if (mouse.is_pressed(GLFW_MOUSE_BUTTON_LEFT)) {
-        cam.yaw -= cur.delta.x * 0.005f;
-        cam.pitch += cur.delta.y * 0.005f;
-        cam.pitch = glm::clamp(cam.pitch, -1.4f, 1.4f);
+    for (auto e : reg.view<Camera, OrbitControl>()) {
+        auto& cam = reg.get<Camera>(e);
+        auto& orb = reg.get<OrbitControl>(e);
+
+        if (mouse.is_pressed(GLFW_MOUSE_BUTTON_LEFT)) {
+            orb.yaw -= cur.delta.x * 0.005f;
+            orb.pitch += cur.delta.y * 0.005f;
+            orb.pitch = glm::clamp(orb.pitch, -1.4f, 1.4f);
+        }
+        if (kb.just_now_pressed(GLFW_KEY_R)) { orb.yaw = 0.6f; orb.pitch = 0.4f; orb.dist = 7.f; }
+
+        float cp = std::cos(orb.pitch), sp = std::sin(orb.pitch);
+        float cy = std::cos(orb.yaw),   sy = std::sin(orb.yaw);
+        glm::vec3 dir(cp * sy, sp, cp * cy);
+        glm::vec3 eye = orb.target + orb.dist * dir;
+        cam.view = glm::lookAt(eye, orb.target, glm::vec3(0.f, 1.f, 0.f));
     }
-    if (kb.just_now_pressed(GLFW_KEY_R)) { cam.yaw = 0.6f; cam.pitch = 0.4f; cam.dist = 7.f; }
 }
 
 int main()
@@ -63,7 +78,7 @@ int main()
     app.add_plugin(CorePlugin);       // Time
     app.add_plugin(TransformPlugin);  // hierarchy propagation
     app.add_plugin(InputPlugin);
-    app.add_plugin(RenderPlugin);
+    app.add_plugin(RenderPlugin);     // multi-camera + present
     app.add_system<AutoRotateSystem>(Stage::Update);
     app.add_system(Stage::Update, camera_orbit_system);
 
@@ -75,8 +90,11 @@ int main()
         auto shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_fg.glsl");
         auto tex = srv.load_texture("textures/container.jpg");
 
-        auto& cam = w.resource_or_add<Camera>();
-        cam.dist = 7.f; cam.pitch = 0.4f; cam.yaw = 0.6f;
+        // Camera entity (perspective, renders to the window).
+        entt::entity camE = w.spawn();
+        Camera cam; cam.kind = CameraKind::Perspective; cam.priority = 0; cam.target = 0; cam.fov = 60.f;
+        reg.emplace<Camera>(camE, cam);
+        reg.emplace<OrbitControl>(camE, OrbitControl{});
 
         // Parent cube (spins about Y).
         entt::entity parent = w.spawn();
@@ -107,7 +125,7 @@ int main()
             reg.emplace<AutoRotate>(c, AutoRotate{ glm::vec3(0.6f, 0.6f, 0.f) });
             reg.get<Children>(parent).value.push_back(c);
         }
-        std::printf("[ECS_DEMO] scene spawned: 1 parent + %d children\n", N);
+        std::printf("[ECS_DEMO] scene spawned: 1 camera + 1 parent + %d children\n", N);
         std::fflush(stdout);
     });
 

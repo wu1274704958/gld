@@ -93,6 +93,7 @@ namespace gld::ecs {
     }
 
     static void frame_end(EcsWorld& world) {
+        if (auto* win = world.try_resource<Window>()) win->presented = false;
         if (auto* kb = world.try_resource<Keyboard>()) kb->clear_transitions();
         if (auto* mb = world.try_resource<MouseButtons>()) mb->clear_transitions();
         if (auto* cur = world.try_resource<CursorPosition>()) cur->delta = glm::vec2(0.f);
@@ -113,7 +114,10 @@ namespace gld::ecs {
                !glfwWindowShouldClose(handle)) {
             glfwPollEvents();
             app.tick();
-            glfwSwapBuffers(handle);
+            // present_system (if present) swaps and sets Window.presented; only
+            // swap here when nothing already presented this frame (back-compat).
+            if (!app.world.resource<Window>().presented)
+                glfwSwapBuffers(handle);
             frame_end(app.world);
         }
 

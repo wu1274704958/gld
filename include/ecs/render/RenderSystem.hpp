@@ -1,7 +1,16 @@
 #pragma once
 
-// ECS render systems: build a mesh, compute the camera matrices, and draw all
-// (GlobalTransform, MeshHandle, Material) entities. GL lives in EcsRender.cpp.
+// Multi-camera ECS render pipeline (modern GL, Vulkan-shaped).
+//
+//   spawn_camera_system    (First)      – allocate contiguous, gap-filling ids
+//   camera_matrices_system (PostUpdate) – projection per CameraKind
+//   render_system          (Render)     – passes ordered by priority: bind target
+//                                          (FBO or window), layer-filtered draws,
+//                                          then insert WaitPresent on the primary
+//                                          window camera
+//   present_system         (Last)       – wait the fence, swap (present command)
+//
+// GL lives in EcsRender.cpp.
 
 #include "RenderComponents.hpp"
 #include "../App.hpp"
@@ -9,8 +18,11 @@
 
 namespace gld::ecs {
 
-    void camera_system(EcsWorld& w);      // projection (window aspect) + view (orbit)
-    void render_system(EcsWorld& w);      // draw pass (clears + depth test)
+    void spawn_camera_system(EcsWorld& w);
+    void camera_matrices_system(EcsWorld& w);
+    void render_system(EcsWorld& w);
+    void present_system(EcsWorld& w);
 
-    void RenderPlugin(App& app);          // Camera resource + camera_system + render_system
+    // Registers all of the above (2D/text passes require a BatchPlugin).
+    void RenderPlugin(App& app);
 }

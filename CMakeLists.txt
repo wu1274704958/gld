@@ -125,6 +125,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR test_sphere FILES main.cpp)
     CreateExample(DIR text3d FILES main.cpp)
     CreateExample(DIR ecs_demo FILES main.cpp)
+    CreateExample(DIR ecs_text FILES main.cpp)
+    CreateExample(DIR ecs_multicam FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
