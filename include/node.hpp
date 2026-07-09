@@ -3,12 +3,21 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <functional>
 
 namespace gld{
+
+    // Structural tree-change notification op (see Node::s_tree_hook).
+    enum class TreeOp { ChildAdded, ChildRemoved };
 
     template<typename Comp>
     struct Node : public std::enable_shared_from_this<Node<Comp>>
     {
+        // Optional global hook fired on structural changes (add/remove child).
+        // Left null by default → zero overhead and unchanged behaviour until a
+        // TreeManager installs it. node.hpp does NOT depend on TreeManager.
+        static inline std::function<void(Node<Comp>* parent, Node<Comp>* child, TreeOp op)> s_tree_hook;
+
         template<typename T>
         T* get_comp()
         {
@@ -129,6 +138,7 @@ namespace gld{
                 {
                     ch->parent = weak_ptr();
                     children.push_back(ch);
+                    if(s_tree_hook) s_tree_hook(this, ch.get(), TreeOp::ChildAdded);
                     return true;
                 }
             }
@@ -141,6 +151,7 @@ namespace gld{
             {
                 auto child = children.erase(it);
                 ch->clear_parent();
+                if(s_tree_hook) s_tree_hook(this, ch.get(), TreeOp::ChildRemoved);
                 return true;
             }
             return false;
@@ -149,6 +160,9 @@ namespace gld{
 
         void remove_all()
         {
+            if(s_tree_hook)
+                for(auto& c : children)
+                    if(c) s_tree_hook(this, c.get(), TreeOp::ChildRemoved);
             children.clear();
         }
 
