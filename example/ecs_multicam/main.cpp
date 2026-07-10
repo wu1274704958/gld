@@ -59,7 +59,7 @@ int main()
     app.add_plugin(TransformPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(TextPlugin);
-    BatchPlugin<TextLayout>(app);
+    TextBatchPlugin(app);
     app.add_plugin(RenderPlugin);
     app.add_system<AutoRotateSystem>(Stage::Update);
 

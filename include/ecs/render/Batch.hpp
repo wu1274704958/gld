@@ -1,19 +1,19 @@
 #pragma once
 
-// Generic instanced-quad batching – data layer.
+// Instanced-quad batching – data layer.
 //
-// A batch groups textured unit-quads that share the SAME (atlas texture, shader)
-// into one instanced draw. It is deliberately generic (knows nothing about
-// "text"): any component type can feed it by specialising BatchSource<C>. Today
-// the only source is TextLayout, but Sprite etc. plug in the same way.
+// A batch groups textured unit-quads that share the SAME (atlas texture, shader,
+// layers) into one instanced draw. Batches are ECS COMPONENTS (BatchComponent),
+// produced by per-type collector systems (text_batch_system today; a future
+// sprite_batch_system plugs in the same way) and drawn generically by the
+// renderer via view<BatchComponent>.
 //
 // InstanceData mirrors the attribute layout of res/ecs/text_vs.glsl
-// (loc1=uv, loc2=uv2, loc3=color, loc4..7=model, loc8..11=local), so the same
+// (loc1=uv, loc2=uv2, loc3=color, loc4..7=model, loc8..11=local), so one
 // instanced shader draws every batch.
 
 #include <cstdint>
 #include <vector>
-#include <unordered_map>
 
 #include <glm/glm.hpp>
 
@@ -23,58 +23,55 @@ namespace gld::ecs {
         glm::vec4 uv{ 0.f };    // packed atlas corners (see text_vs.glsl)
         glm::vec4 uv2{ 0.f };
         glm::vec4 color{ 1.f };
-        glm::mat4 model{ 1.f }; // entity world transform (kept per-instance: a
-                                // global batch mixes many parents)
+        glm::mat4 model{ 1.f }; // entity world transform (per-instance: a batch mixes parents)
         glm::mat4 local{ 1.f }; // per-glyph/sprite local matrix
     };
 
-    // Grouping key: same texture + same shader program => one batch.
+    // Grouping key: same texture + same shader + same layer mask => one batch.
     struct BatchKey {
-        const void* atlas = nullptr;  // Texture<D2>* (opaque here)
-        const void* shader = nullptr; // Program*
-        bool operator==(const BatchKey& o) const { return atlas == o.atlas && shader == o.shader; }
+        const void* atlas = nullptr;        // Texture<D2>* (opaque here)
+        const void* shader = nullptr;       // Program*
+        std::uint32_t layers = 0xFFFFFFFFu; // camera culling mask this batch belongs to
+        bool operator==(const BatchKey& o) const {
+            return atlas == o.atlas && shader == o.shader && layers == o.layers;
+        }
     };
     struct BatchKeyHash {
         std::size_t operator()(const BatchKey& k) const {
             std::size_t a = std::hash<const void*>{}(k.atlas);
             std::size_t b = std::hash<const void*>{}(k.shader);
-            return a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
+            std::size_t c = std::hash<std::uint32_t>{}(k.layers);
+            std::size_t h = a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
+            return h ^ (c + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2));
         }
     };
 
-    struct Batch {
-        std::vector<InstanceData> instances;   // rebuilt every frame
-        unsigned int vao = 0;                  // GL: created lazily at render
+    // One batch = one instanced draw. Lives on a batch entity, maintained by a
+    // collector system. Dirty/upload is decided by a cheap integer signature
+    // (sig,count) over the contributing sources — never by hashing the output
+    // instance bytes.
+    struct BatchComponent {
+        BatchKey key;
+        std::uint32_t layers = 0xFFFFFFFFu;   // == key.layers (kept for fast filtering)
+        std::vector<InstanceData> instances;  // CPU side
+
+        unsigned int vao = 0;                 // GL: created lazily at render
         unsigned int instance_vbo = 0;
-        std::size_t  gpu_cap = 0;              // instances currently allocated on GPU
-        std::uint64_t content_hash = 0;
-        bool dirty = true;                     // needs GPU re-upload
+        std::size_t  gpu_cap = 0;             // instances currently allocated on GPU
+
+        std::uint64_t sig = 0;                // source signature at last rebuild
+        std::size_t   count = 0;              // contributing source count at last rebuild
+        bool dirty = true;                    // needs GPU re-upload
+        bool used = false;                    // touched this frame (GC bookkeeping)
     };
 
-    struct BatchStore {
-        std::unordered_map<BatchKey, Batch, BatchKeyHash> batches;
-
-        // Keep GL handles + capacity; only clear the CPU instance lists.
-        void begin_frame() {
-            for (auto& [k, b] : batches) b.instances.clear();
-        }
-        void append(const BatchKey& key, const InstanceData& d) {
-            batches[key].instances.push_back(d);
-        }
-    };
-
-    // FNV-1a over the raw instance bytes; used to skip GPU uploads when unchanged.
-    inline std::uint64_t hash_instances(const std::vector<InstanceData>& v) {
+    // Fold one source into a batch signature. Order-independent (summed by the
+    // caller), integer-only — no output bytes touched.
+    inline std::uint64_t batch_mix(std::uint32_t entity_raw, std::uint64_t rev, std::uint32_t ver) {
         std::uint64_t h = 1469598103934665603ull;
-        const auto* p = reinterpret_cast<const unsigned char*>(v.data());
-        const std::size_t n = v.size() * sizeof(InstanceData);
-        for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+        h = (h ^ entity_raw) * 1099511628211ull;
+        h = (h ^ rev)        * 1099511628211ull;
+        h = (h ^ ver)        * 1099511628211ull;
         return h;
     }
-
-    // Extension point: specialise for each batchable component type.
-    //   static Program* shader(EcsWorld&);
-    //   static void collect(entt::entity, const C&, const glm::mat4& world,
-    //                       BatchStore&, Program* shader);
-    template<class C> struct BatchSource;
 }

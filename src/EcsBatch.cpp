@@ -42,7 +42,7 @@ namespace gld::ecs {
     // One-time per batch: a VAO wiring the shared quad (loc 0) + this batch's own
     // instance VBO (loc 1..11, divisor 1). Attributes are set up ONCE here, not
     // every frame (the old WordPatch re-specified them per draw).
-    static void setup_batch_vao(BatchResources& res, Batch& b) {
+    static void setup_batch_vao(BatchResources& res, BatchComponent& b) {
         glGenVertexArrays(1, &b.vao);
         glGenBuffers(1, &b.instance_vbo);
 
@@ -71,7 +71,7 @@ namespace gld::ecs {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    static void upload_batch(Batch& b) {
+    static void upload_batch(BatchComponent& b) {
         glBindBuffer(GL_ARRAY_BUFFER, b.instance_vbo);
         const std::size_t bytes = b.instances.size() * sizeof(InstanceData);
         if (b.instances.size() > b.gpu_cap) {
@@ -85,17 +85,20 @@ namespace gld::ecs {
     }
 
     void draw_batches(EcsWorld& w, const Camera& cam) {
-        auto& res   = w.resource_or_add<BatchResources>();
-        auto& store = w.resource_or_add<BatchStore>();
+        auto& res = w.resource_or_add<BatchResources>();
+        auto& reg = w.reg();
 
         // Render state (blend/depth/target/clear) is set by render_system.
         ensure_quad(res);
 
-        for (auto& [key, b] : store.batches) {
+        auto view = reg.view<BatchComponent>();
+        for (auto e : view) {
+            auto& b = view.get<BatchComponent>(e);
             if (b.instances.empty()) continue;
+            if ((cam.layers & b.layers) == 0) continue;   // camera layer filtering
 
-            auto* prog  = static_cast<Program*>(const_cast<void*>(key.shader));
-            auto* atlas = static_cast<Texture<TexType::D2>*>(const_cast<void*>(key.atlas));
+            auto* prog  = static_cast<Program*>(const_cast<void*>(b.key.shader));
+            auto* atlas = static_cast<Texture<TexType::D2>*>(const_cast<void*>(b.key.atlas));
             if (!prog) continue;
 
             prog->use();

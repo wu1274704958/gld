@@ -32,8 +32,11 @@ namespace gld::ecs {
                 if (auto* t = reg.try_get<Transform>(e)) local = local_matrix(*t);
                 glm::mat4 world = parent_world * local;
 
-                if (auto* g = reg.try_get<GlobalTransform>(e)) g->world = world;
-                else reg.emplace<GlobalTransform>(e, GlobalTransform{world});
+                if (auto* g = reg.try_get<GlobalTransform>(e)) {
+                    if (g->world != world) { g->world = world; ++g->version; }
+                } else {
+                    reg.emplace<GlobalTransform>(e, GlobalTransform{world, 1});
+                }
 
                 if (auto* ch = reg.try_get<Children>(e))
                     for (auto c : ch->value) visit(c, world);
@@ -51,7 +54,8 @@ namespace gld::ecs {
     // both declared in the CTS list). Useful for flat (non-hierarchical) nodes.
     struct LocalToWorldSystem : BaseSystem<LocalToWorldSystem, Transform, GlobalTransform> {
         void Update(entt::entity, Transform& t, GlobalTransform& g) {
-            g.world = local_matrix(t);
+            glm::mat4 world = local_matrix(t);
+            if (g.world != world) { g.world = world; ++g.version; }
         }
     };
 

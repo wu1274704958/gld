@@ -5,6 +5,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <vector>
+#include <cstdint>
 
 namespace gld::ecs {
 
@@ -15,9 +16,12 @@ namespace gld::ecs {
         glm::vec3 scale{1.f};
     };
 
-    // World transform, computed by transform_propagate_system.
+    // World transform, computed by transform_propagate_system. `version` bumps
+    // only when `world` actually changes, so consumers (e.g. the batcher) can do
+    // cheap change detection without hashing.
     struct GlobalTransform {
         glm::mat4 world{1.f};
+        std::uint32_t version = 0;
     };
 
     // Hierarchy.

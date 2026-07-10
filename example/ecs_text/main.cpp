@@ -44,7 +44,7 @@ int main()
     app.add_plugin(CorePlugin);       // Time
     app.add_plugin(TransformPlugin);  // GlobalTransform propagation
     app.add_plugin(TextPlugin);       // font loader + glyph atlas + layout
-    BatchPlugin<TextLayout>(app);     // generic collect for TextLayout
+    TextBatchPlugin(app);             // text -> BatchComponent collection
     app.add_plugin(RenderPlugin);     // multi-camera render + present
 
     app.add_system(Stage::Startup, [](EcsWorld& w) {
@@ -102,11 +102,15 @@ int main()
     app.add_system(Stage::Last, [](EcsWorld& w) {
         static int f = 0;
         if (++f != 60) return;
-        auto& s = w.resource<BatchStore>();
-        std::size_t inst = 0, nonempty = 0;
-        for (auto& [k, b] : s.batches) { inst += b.instances.size(); if (!b.instances.empty()) ++nonempty; }
+        auto& reg = w.reg();
+        std::size_t total = 0, nonempty = 0, inst = 0;
+        for (auto e : reg.view<BatchComponent>()) {
+            auto& b = reg.get<BatchComponent>(e);
+            ++total; inst += b.instances.size();
+            if (!b.instances.empty()) ++nonempty;
+        }
         std::printf("[ecs_text] frame 60: batches=%zu (non-empty=%zu) instances=%zu\n",
-                    s.batches.size(), nonempty, inst);
+                    total, nonempty, inst);
         std::fflush(stdout);
     });
 
