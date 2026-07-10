@@ -5,6 +5,7 @@
 #include <ecs/assets/AssetServer.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <memory>
 
@@ -14,16 +15,21 @@ namespace gld::ecs {
 
     namespace {
 
-        // Build a TextLayout for `t` using `atlas` (which rasterises + uploads on
-        // demand). Layout is in the entity's local pixel space, y-up, with the
-        // block anchored per t.anchor about the entity origin.
-        void build_layout(GlyphAtlasAA& atlas, const Text& t,
-                           const std::shared_ptr<ft2::Face>& face, TextLayout& out) {
+        // Build a TextLayout for `t` using `atlas`. Layout is in the entity's
+        // local pixel space, y-up, block anchored per t.anchor about the origin.
+        // `margin` (px) expands each glyph quad + its uv `pad` so an offset drop
+        // shadow has room to draw (0 when no shadow).
+        template<class Atlas>
+        void build_layout(Atlas& atlas, const Text& t,
+                           const std::shared_ptr<ft2::Face>& face, float margin, TextLayout& out) {
             const float lineH  = static_cast<float>(t.size) + t.leading;
             const float spaceW = 0.5f * static_cast<float>(t.size);
             const float tabW   = spaceW * 4.f;
+            const float T = static_cast<float>(Atlas::PageTy::MAXSurfaceSize);
+            const float muv = margin / T;
 
-            struct G { GlyphAtlasAA::GlyphInfo gi; float pen_x; };
+            using GI = decltype(atlas.ensure_glyph(face, 0, 0));
+            struct G { GI gi; float pen_x; };
             std::vector<std::vector<G>> rows;
             std::vector<float> row_w;
             rows.emplace_back();
@@ -57,7 +63,6 @@ namespace gld::ecs {
             const float total_h = static_cast<float>(rows.size()) * lineH;
             out.size = glm::vec2(max_w, total_h);
 
-            // Map the block anchor point to the entity origin (top of block at y=0).
             const float offX = -t.anchor.x * max_w;
             const float offY =  t.anchor.y * total_h;
 
@@ -76,20 +81,44 @@ namespace gld::ecs {
 
                     GlyphQuad q;
                     q.atlas = g.gi.atlas;
-                    q.uv    = g.gi.uv;
+                    q.rect  = g.gi.uv;
+                    q.pad   = glm::vec4(g.gi.uv.x - muv, g.gi.uv.y - muv,
+                                        g.gi.uv.z + 2.f * muv, g.gi.uv.w + 2.f * muv);
                     q.color = t.color;
+                    // Quad enlarged by margin on all sides (centred on the glyph).
                     q.local = glm::translate(glm::mat4(1.f), glm::vec3(cx, cy, 0.f))
-                            * glm::scale(glm::mat4(1.f), glm::vec3(w, h, 1.f));
+                            * glm::scale(glm::mat4(1.f), glm::vec3(w + 2.f * margin, h + 2.f * margin, 1.f));
                     out.quads.push_back(std::move(q));
                 }
                 cell_top -= lineH;
             }
         }
 
+        TextRenderMode resolve_backend(const TextEffects* fx) {
+            if (!fx) return TextRenderMode::AA;
+            if (fx->mode != TextRenderMode::Auto) return fx->mode;
+            return fx->outline ? TextRenderMode::SDF : TextRenderMode::AA;
+        }
+
+        float shadow_margin(const TextEffects* fx) {
+            if (!fx || !fx->shadow) return 0.f;
+            float o = std::max(std::abs(fx->shadow_offset.x), std::abs(fx->shadow_offset.y));
+            return std::ceil(o + fx->shadow_softness + 2.f);
+        }
+
+        // Layout revision: re-lay-out when the text OR its effects change.
+        uint64_t layout_rev(const Text& t, const TextEffects* fx) {
+            uint64_t r = t.rev * 1099511628211ull;
+            if (fx) r ^= (static_cast<uint64_t>(fx->rev) * 2654435761ull
+                          + static_cast<uint64_t>(fx->mode) * 40503ull + 1ull);
+            return r;
+        }
+
     } // namespace
 
     void text_layout_system(EcsWorld& w) {
-        auto& atlas = w.resource_or_add<GlyphAtlasAA>();
+        auto& aa  = w.resource_or_add<GlyphAtlasAA>();
+        auto& sdf = w.resource_or_add<GlyphAtlasSDF>();
         auto& reg = w.reg();
 
         auto view = reg.view<Text>();
@@ -99,12 +128,22 @@ namespace gld::ecs {
             FontAsset* fa = t.font.get();
             if (!fa || !fa->face) continue;   // font not loaded yet
 
-            if (auto* layout = reg.try_get<TextLayout>(e); layout && layout->src_rev == t.rev)
+            auto* fx = reg.try_get<TextEffects>(e);
+            const uint64_t want = layout_rev(t, fx);
+
+            if (auto* layout = reg.try_get<TextLayout>(e); layout && layout->src_rev == want)
                 continue;                      // unchanged
 
+            const TextRenderMode backend = resolve_backend(fx);
+            const float margin = shadow_margin(fx);
+
             TextLayout out;
-            out.src_rev = t.rev;
-            build_layout(atlas, t, fa->face, out);
+            out.src_rev = want;
+            out.backend = backend;
+            if (backend == TextRenderMode::SDF)
+                build_layout(sdf, t, fa->face, margin, out);
+            else
+                build_layout(aa, t, fa->face, margin, out);
 
             if (auto* layout = reg.try_get<TextLayout>(e)) *layout = std::move(out);
             else reg.emplace<TextLayout>(e, std::move(out));
@@ -117,6 +156,7 @@ namespace gld::ecs {
         srv.register_loader<FontDesc>(std::make_shared<FontLoader>());
 
         app.world.resource_or_add<GlyphAtlasAA>();
+        app.world.resource_or_add<GlyphAtlasSDF>();
         app.add_system(Stage::Update, text_layout_system);
     }
 }

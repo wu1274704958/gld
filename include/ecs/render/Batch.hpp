@@ -23,13 +23,14 @@ namespace gld { class Program; }   // fwd: BatchComponent keeps a Program* for b
 namespace gld::ecs {
 
     struct InstanceData {
-        glm::vec4 uv{ 0.f };    // packed atlas corners (see text_vs.glsl)
-        glm::vec4 uv2{ 0.f };
+        glm::vec4 rect{ 0.f };  // glyph atlas uv rect (x,y,w,h) — fg sampling clamp
+        glm::vec4 pad{ 0.f };   // shadow-expanded uv rect (x,y,w,h) — quad corner uv
         glm::vec4 color{ 1.f };
-        glm::mat4 model{ 1.f }; // entity world transform (per-instance: a batch mixes parents)
-        glm::mat4 local{ 1.f }; // per-glyph/sprite local matrix
-        glm::vec4 mparam0{ 0.f }; // material param 0 (forwarded to fg; e.g. outline colour)
-        glm::vec4 mparam1{ 0.f }; // material param 1 (e.g. outline width/softness)
+        glm::mat4 transform{ 1.f };  // world * local (merged; entity world + glyph quad)
+        glm::vec4 mparam0{ 0.f };    // material param 0 (e.g. outline colour)
+        glm::vec4 mparam1{ 0.f };    // (outline_width_px, shadow_softness, flags, 0)
+        glm::vec4 mparam2{ 0.f };    // shadow colour rgba
+        glm::vec4 mparam3{ 0.f };    // (shadow_off_x_px, shadow_off_y_px, 0, 0)
     };
 
     // Grouping key: same texture + same shader + same layer mask => one batch.

@@ -25,12 +25,13 @@
 #include <text/Page.hpp>
 #include <text/TexGenerate.hpp>
 #include <text/TextRender.hpp>
+#include "SdfRender.hpp"
 
 namespace gld::ecs {
 
-    template<class TextGen = txt::TexGenerate, class TextRender = txt::DefTextRender>
+    template<class TextGen = txt::TexGenerate, class TextRender = txt::DefTextRender, int Gap = 2>
     struct GlyphAtlasT {
-        static constexpr int GAP = 2;
+        static constexpr int GAP = Gap;
         using PageTy = txt::Page<TextGen, TextRender, GAP>;
 
         struct GlyphInfo {
@@ -90,5 +91,6 @@ namespace gld::ecs {
         std::unordered_map<Key, std::vector<PageTy>, KeyHash> buckets_;
     };
 
-    using GlyphAtlasAA = GlyphAtlasT<>;
+    using GlyphAtlasAA = GlyphAtlasT<txt::TexGenerate, EcsAaRender, 2>;
+    using GlyphAtlasSDF = GlyphAtlasT<txt::TexGenerate, SdfRender, 2>;
 }

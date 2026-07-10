@@ -29,7 +29,8 @@
 namespace gld::ecs {
 
     struct BatchResources {
-        Handle<Program> text_shader;
+        Handle<Program> aa_shader;   // ecs/text_fg  (AA coverage fill + shadow)
+        Handle<Program> sdf_shader;  // ecs/text_sdf_fg (SDF fill + outline + shadow)
         unsigned int quad_vbo = 0;   // shared unit quad (pos only)
         unsigned int quad_ebo = 0;
         int index_count = 6;
@@ -49,7 +50,8 @@ namespace gld::ecs {
     inline void TextBatchPlugin(App& app) {
         auto& res = app.world.resource_or_add<BatchResources>();
         auto& srv = app.world.resource<AssetServer>();
-        res.text_shader = srv.load_program("ecs/text_vs.glsl", "ecs/text_fg.glsl");
+        res.aa_shader  = srv.load_program("ecs/text_vs.glsl", "ecs/text_fg.glsl");
+        res.sdf_shader = srv.load_program("ecs/text_vs.glsl", "ecs/text_sdf_fg.glsl");
 
         app.world.resource_or_add<TextBatchIndex>();
 

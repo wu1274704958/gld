@@ -21,6 +21,10 @@ namespace gld::ecs {
 
     enum class TextAlign : int { Left = 0, Center, Right };
 
+    // Backend selection for a Text. Auto resolves to SDF when outline is needed
+    // (outline requires the distance field), else the faster AA coverage path.
+    enum class TextRenderMode : int { Auto = 0, AA, SDF };
+
     struct Text {
         std::u32string text;
         Handle<FontAsset> font;
@@ -31,6 +35,24 @@ namespace gld::ecs {
         float max_width = 0.f;               // 0 = no wrapping (px)
         glm::vec2 anchor{ 0.5f, 0.5f };      // block anchor: (0,0)=top-left .. (1,1)=bottom-right
         uint64_t rev = 1;                    // bump to force a re-layout
+    };
+
+    // Optional text effects (outline / drop shadow) + backend selection. Without
+    // this component a Text renders as plain AA. Outline is SDF-only; shadow is
+    // supported on both AA and SDF. Effects feed per-instance shader params.
+    struct TextEffects {
+        TextRenderMode mode = TextRenderMode::Auto;
+
+        bool outline = false;
+        glm::vec4 outline_color{ 0.f, 0.f, 0.f, 1.f };
+        float outline_width = 2.f;           // px
+
+        bool shadow = false;
+        glm::vec4 shadow_color{ 0.f, 0.f, 0.f, 0.6f };
+        glm::vec2 shadow_offset{ 2.f, -2.f }; // px (atlas space)
+        float shadow_softness = 1.f;
+
+        uint32_t rev = 1;                    // bump on change (re-layout + re-batch)
     };
 
     // Optional per-Text material: selects a custom fragment shader (paired with
@@ -48,16 +70,21 @@ namespace gld::ecs {
     };
 
     // One laid-out glyph: a textured quad in the entity's local (pixel) space.
+    // `rect` is the glyph's atlas uv rect; `pad` is that rect expanded by the
+    // shadow margin (the quad's corner uv spans `pad`, sampling is clamped to
+    // `rect`), so an offset shadow has room to draw without bleeding neighbours.
     struct GlyphQuad {
         std::shared_ptr<Texture<TexType::D2>> atlas;
-        glm::vec4 uv{ 0.f };    // normalised atlas rect (x, y, w, h)
+        glm::vec4 rect{ 0.f };  // glyph atlas uv (x, y, w, h)
+        glm::vec4 pad{ 0.f };   // shadow-expanded uv (x, y, w, h)
         glm::vec4 color{ 1.f };
-        glm::mat4 local{ 1.f }; // translate(center) * scale(w, h) about the entity origin
+        glm::mat4 local{ 1.f }; // translate(center) * scale(quad_w, quad_h) about the entity origin
     };
 
     struct TextLayout {
         std::vector<GlyphQuad> quads;
         glm::vec2 size{ 0.f };  // laid-out block size in pixels
         uint64_t src_rev = 0;   // Text.rev this layout was built from
+        TextRenderMode backend = TextRenderMode::AA;  // resolved atlas/shader backend
     };
 }

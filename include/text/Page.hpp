@@ -9,9 +9,13 @@
 namespace txt {
 
 	struct WordData{
-		uint16_t x = 0, y = 0, w = 0, h = 0, off_x = 0, off_y = 0,advance = 0;
-		WordData(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t off_x, uint16_t off_y, uint16_t advance)
-			: x(x),y(y),w(w),h(h),off_x(off_x),off_y(off_y),advance(advance)
+		// off_x/off_y are glyph bearings and can be negative (notably for SDF
+		// glyphs whose spread border pushes bitmap_left/top negative), so they
+		// must be signed — uint16_t would wrap -8 to 65528.
+		uint16_t x = 0, y = 0, w = 0, h = 0, advance = 0;
+		int16_t off_x = 0, off_y = 0;
+		WordData(uint16_t x, uint16_t y, uint16_t w, uint16_t h, int16_t off_x, int16_t off_y, uint16_t advance)
+			: x(x),y(y),w(w),h(h),advance(advance),off_x(off_x),off_y(off_y)
 		{}
 		WordData(const WordData&) = default;
 		WordData () {}
@@ -68,7 +72,7 @@ namespace txt {
 					curr_h = 0;
 				}
 				WordData wd(static_cast<uint16_t>(curr_x), static_cast<uint16_t>(curr_y),
-					static_cast<uint16_t>(w), static_cast<uint16_t>(h), static_cast<uint16_t>(off_x), static_cast<uint16_t>(off_y),
+					static_cast<uint16_t>(w), static_cast<uint16_t>(h), static_cast<int16_t>(off_x), static_cast<int16_t>(off_y),
 					static_cast<uint16_t>(advance));
 
 				Render::render(surface, *face, curr_x, curr_y);

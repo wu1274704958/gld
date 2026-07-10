@@ -61,13 +61,14 @@ namespace gld::ecs {
             glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, stride, (void*)off);
             glVertexAttribDivisor(loc, 1);
         };
-        attr(1, offsetof(InstanceData, uv));
-        attr(2, offsetof(InstanceData, uv2));
+        attr(1, offsetof(InstanceData, rect));
+        attr(2, offsetof(InstanceData, pad));
         attr(3, offsetof(InstanceData, color));
-        for (int i = 0; i < 4; ++i) attr(4 + i, offsetof(InstanceData, model) + i * sizeof(glm::vec4));
-        for (int i = 0; i < 4; ++i) attr(8 + i, offsetof(InstanceData, local) + i * sizeof(glm::vec4));
-        attr(12, offsetof(InstanceData, mparam0));
-        attr(13, offsetof(InstanceData, mparam1));
+        for (int i = 0; i < 4; ++i) attr(4 + i, offsetof(InstanceData, transform) + i * sizeof(glm::vec4));
+        attr(8,  offsetof(InstanceData, mparam0));
+        attr(9,  offsetof(InstanceData, mparam1));
+        attr(10, offsetof(InstanceData, mparam2));
+        attr(11, offsetof(InstanceData, mparam3));
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);

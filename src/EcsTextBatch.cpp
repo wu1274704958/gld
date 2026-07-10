@@ -26,8 +26,9 @@ namespace gld::ecs {
 
     void text_batch_system(EcsWorld& w) {
         auto& res = w.resource_or_add<BatchResources>();
-        Program* def_shader = res.text_shader.get();
-        if (!def_shader) return;             // default text shader not loaded yet
+        Program* aa_shader  = res.aa_shader.get();
+        Program* sdf_shader = res.sdf_shader.get();
+        if (!aa_shader || !sdf_shader) return;   // text shaders not loaded yet
 
         auto& reg = w.reg();
         auto& index = w.resource_or_add<TextBatchIndex>();
@@ -55,13 +56,15 @@ namespace gld::ecs {
             std::uint32_t layerMask = 0x1u;
             if (auto* rl = reg.try_get<RenderLayer>(e)) layerMask = rl->mask;
 
-            // Per-entity shader: TextMaterial's (if loaded) else the default.
-            Program* prog = def_shader;
+            // Per-entity shader: explicit TextMaterial override wins; else the
+            // backend the layout resolved picks AA vs SDF shader.
+            Program* prog = (tl.backend == TextRenderMode::SDF) ? sdf_shader : aa_shader;
             std::uint32_t mat_rev = 0;
             if (auto* tm = reg.try_get<TextMaterial>(e)) {
                 if (Program* mp = tm->shader.get()) prog = mp;
                 mat_rev = tm->rev;
             }
+            if (auto* fx = reg.try_get<TextEffects>(e)) mat_rev ^= (fx->rev * 2654435761u);
             const unsigned int shaderId = static_cast<unsigned int>(*prog);
 
             std::uint64_t m = batch_mix(
@@ -112,21 +115,33 @@ namespace gld::ecs {
                     auto& tl = reg.get<TextLayout>(me);
                     auto& gt = reg.get<GlobalTransform>(me);
 
-                    glm::vec4 mp0(0.f), mp1(0.f);
-                    if (auto* tm = reg.try_get<TextMaterial>(me)) { mp0 = tm->mparam0; mp1 = tm->mparam1; }
+                    // Pack effect params (per entity) into the instance params.
+                    glm::vec4 mp0(0.f), mp1(0.f), mp2(0.f), mp3(0.f);
+                    if (auto* fx = reg.try_get<TextEffects>(me)) {
+                        int flags = 0;
+                        if (fx->outline) flags |= 1;
+                        if (fx->shadow)  flags |= 2;
+                        mp0 = fx->outline_color;
+                        mp1 = glm::vec4(fx->outline_width, fx->shadow_softness,
+                                        static_cast<float>(flags), 0.f);
+                        mp2 = fx->shadow_color;
+                        mp3 = glm::vec4(fx->shadow_offset.x, fx->shadow_offset.y, 0.f, 0.f);
+                    } else if (auto* tm = reg.try_get<TextMaterial>(me)) {
+                        mp0 = tm->mparam0; mp1 = tm->mparam1;  // custom-material params
+                    }
 
                     for (const auto& q : tl.quads) {
                         const unsigned int atlasId = q.atlas ? q.atlas->get_id() : 0u;
                         if (atlasId != key.atlas) continue;
                         InstanceData d;
-                        const float rx = q.uv.x, ry = q.uv.y, rz = q.uv.z, rw = q.uv.w;
-                        d.uv  = glm::vec4(rx + rz, ry,      rx,      ry);
-                        d.uv2 = glm::vec4(rx,      ry + rw, rx + rz, ry + rw);
+                        d.rect = q.rect;
+                        d.pad = q.pad;
                         d.color = q.color;
-                        d.model = gt.world;
-                        d.local = q.local;
+                        d.transform = gt.world * q.local;
                         d.mparam0 = mp0;
                         d.mparam1 = mp1;
+                        d.mparam2 = mp2;
+                        d.mparam3 = mp3;
                         bc.instances.push_back(d);
                     }
                 }
