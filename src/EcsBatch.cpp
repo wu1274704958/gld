@@ -66,6 +66,8 @@ namespace gld::ecs {
         attr(3, offsetof(InstanceData, color));
         for (int i = 0; i < 4; ++i) attr(4 + i, offsetof(InstanceData, model) + i * sizeof(glm::vec4));
         for (int i = 0; i < 4; ++i) attr(8 + i, offsetof(InstanceData, local) + i * sizeof(glm::vec4));
+        attr(12, offsetof(InstanceData, mparam0));
+        attr(13, offsetof(InstanceData, mparam1));
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -97,8 +99,7 @@ namespace gld::ecs {
             if (b.instances.empty()) continue;
             if ((cam.layers & b.layers) == 0) continue;   // camera layer filtering
 
-            auto* prog  = static_cast<Program*>(const_cast<void*>(b.key.shader));
-            auto* atlas = static_cast<Texture<TexType::D2>*>(const_cast<void*>(b.key.atlas));
+            Program* prog = b.prog;
             if (!prog) continue;
 
             prog->use();
@@ -106,8 +107,10 @@ namespace gld::ecs {
                 prog->locat_uniforms("uViewProj", "diffuseTex");
             glUniformMatrix4fv(prog->uniform_id("uViewProj"), 1, GL_FALSE, glm::value_ptr(cam.projection));
 
-            if (atlas) {
-                atlas->active<ActiveTexId::_0>();
+            // Bind the glyph atlas by its GL id (the batch key's identity).
+            if (b.key.atlas) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, b.key.atlas);
                 glUniform1i(prog->uniform_id("diffuseTex"), 0);
             }
 

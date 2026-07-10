@@ -12,6 +12,7 @@
 
 #include <glm/glm.hpp>
 #include <texture.hpp>
+#include <program.hpp>
 
 #include "FontAsset.hpp"
 #include "../assets/Handle.hpp"
@@ -30,6 +31,20 @@ namespace gld::ecs {
         float max_width = 0.f;               // 0 = no wrapping (px)
         glm::vec2 anchor{ 0.5f, 0.5f };      // block anchor: (0,0)=top-left .. (1,1)=bottom-right
         uint64_t rev = 1;                    // bump to force a re-layout
+    };
+
+    // Optional per-Text material: selects a custom fragment shader (paired with
+    // the shared text_vs) plus two per-instance parameter vectors forwarded to
+    // it. Without this component a Text uses the default text shader and zeroed
+    // params. Params are batched per-instance, so texts sharing the same shader
+    // + atlas batch together regardless of differing params. Meaning of the
+    // params is defined by the shader (e.g. outline: mparam0 = outline rgba,
+    // mparam1 = (width, softness, mode, _)).
+    struct TextMaterial {
+        Handle<Program> shader;      // custom fg; falls back to default until loaded
+        glm::vec4 mparam0{ 0.f };
+        glm::vec4 mparam1{ 0.f };
+        uint32_t rev = 1;            // bump when shader/params change (re-batches)
     };
 
     // One laid-out glyph: a textured quad in the entity's local (pixel) space.

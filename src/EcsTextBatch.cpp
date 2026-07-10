@@ -1,11 +1,16 @@
 // Text batching system: collect batchable glyphs from TextLayout entities into
-// BatchComponent entities (grouped by atlas + shader + layer). A batch is only
-// rebuilt/re-uploaded when its integer source signature (folded from each
-// contributing entity's TextLayout.src_rev + GlobalTransform.version) changes —
-// no hashing of the output instance bytes.
+// BatchComponent entities (grouped by atlas + shader + layer, all as GL ids). A
+// batch is only rebuilt/re-uploaded when its integer source signature (folded
+// from each contributing entity's TextLayout.src_rev, GlobalTransform.version
+// and TextMaterial.rev) changes — no hashing of the output instance bytes.
+//
+// Shader selection is per-Text: an optional TextMaterial picks a custom fragment
+// shader (and per-instance params); without it a Text uses the default text
+// shader. Different shaders => different GL program ids => different batches.
 
 #include <vector>
 #include <unordered_map>
+#include <memory>
 
 #include <glm/glm.hpp>
 #include <entt/entt.hpp>
@@ -13,7 +18,7 @@
 #include <ecs/render/Batch.hpp>
 #include <ecs/render/BatchSystem.hpp>
 #include <ecs/render/RenderComponents.hpp>   // RenderLayer
-#include <ecs/text/TextComponents.hpp>       // TextLayout
+#include <ecs/text/TextComponents.hpp>       // TextLayout, TextMaterial
 #include <ecs/Components.hpp>                 // GlobalTransform
 #include <ecs/EcsWorld.hpp>
 
@@ -21,8 +26,8 @@ namespace gld::ecs {
 
     void text_batch_system(EcsWorld& w) {
         auto& res = w.resource_or_add<BatchResources>();
-        Program* shader = res.text_shader.get();
-        if (!shader) return;                 // text shader not loaded yet
+        Program* def_shader = res.text_shader.get();
+        if (!def_shader) return;             // default text shader not loaded yet
 
         auto& reg = w.reg();
         auto& index = w.resource_or_add<TextBatchIndex>();
@@ -31,8 +36,14 @@ namespace gld::ecs {
         for (auto& [k, e] : index.map)
             if (reg.valid(e)) reg.get<BatchComponent>(e).used = false;
 
-        // ---- Pass 1: fold source signatures + members per (atlas,shader,layer) ----
-        struct Accum { std::uint64_t sig = 0; std::size_t count = 0; std::vector<entt::entity> members; };
+        // ---- Pass 1: fold signatures + members per (atlasId, shaderId, layer) ----
+        struct Accum {
+            std::uint64_t sig = 0;
+            std::size_t count = 0;
+            std::vector<entt::entity> members;
+            Program* prog = nullptr;              // binding program (shared by group)
+            std::shared_ptr<void> atlas_ref;      // keepalive for the atlas texture
+        };
         std::unordered_map<BatchKey, Accum, BatchKeyHash> groups;
 
         auto view = reg.view<TextLayout, GlobalTransform>();
@@ -44,23 +55,35 @@ namespace gld::ecs {
             std::uint32_t layerMask = 0x1u;
             if (auto* rl = reg.try_get<RenderLayer>(e)) layerMask = rl->mask;
 
+            // Per-entity shader: TextMaterial's (if loaded) else the default.
+            Program* prog = def_shader;
+            std::uint32_t mat_rev = 0;
+            if (auto* tm = reg.try_get<TextMaterial>(e)) {
+                if (Program* mp = tm->shader.get()) prog = mp;
+                mat_rev = tm->rev;
+            }
+            const unsigned int shaderId = static_cast<unsigned int>(*prog);
+
             std::uint64_t m = batch_mix(
                 static_cast<std::uint32_t>(entt::to_integral(e)), tl.src_rev, gt.version);
+            if (mat_rev) m ^= batch_mix(0xFFFFFFFFu, mat_rev, shaderId);
 
             // Each distinct atlas this entity touches becomes/updates a group.
-            std::vector<const void*> seen;
+            std::vector<unsigned int> seen;
             for (const auto& q : tl.quads) {
-                const void* atlas = q.atlas.get();
+                const unsigned int atlasId = q.atlas ? q.atlas->get_id() : 0u;
                 bool have = false;
-                for (auto p : seen) if (p == atlas) { have = true; break; }
+                for (auto id : seen) if (id == atlasId) { have = true; break; }
                 if (have) continue;
-                seen.push_back(atlas);
+                seen.push_back(atlasId);
 
-                BatchKey key{ atlas, shader, layerMask };
+                BatchKey key{ atlasId, shaderId, layerMask };
                 Accum& acc = groups[key];
                 acc.sig += m;
                 acc.count += 1;
                 acc.members.push_back(e);
+                acc.prog = prog;
+                if (!acc.atlas_ref) acc.atlas_ref = q.atlas;   // shared_ptr<Texture> -> void
             }
         }
 
@@ -79,6 +102,8 @@ namespace gld::ecs {
             auto& bc = reg.get<BatchComponent>(be);
             bc.key = key;
             bc.layers = key.layers;
+            bc.prog = acc.prog;
+            bc.atlas_ref = acc.atlas_ref;
             bc.used = true;
 
             if (bc.sig != acc.sig || bc.count != acc.count) {
@@ -86,8 +111,13 @@ namespace gld::ecs {
                 for (auto me : acc.members) {
                     auto& tl = reg.get<TextLayout>(me);
                     auto& gt = reg.get<GlobalTransform>(me);
+
+                    glm::vec4 mp0(0.f), mp1(0.f);
+                    if (auto* tm = reg.try_get<TextMaterial>(me)) { mp0 = tm->mparam0; mp1 = tm->mparam1; }
+
                     for (const auto& q : tl.quads) {
-                        if (q.atlas.get() != key.atlas) continue;
+                        const unsigned int atlasId = q.atlas ? q.atlas->get_id() : 0u;
+                        if (atlasId != key.atlas) continue;
                         InstanceData d;
                         const float rx = q.uv.x, ry = q.uv.y, rz = q.uv.z, rw = q.uv.w;
                         d.uv  = glm::vec4(rx + rz, ry,      rx,      ry);
@@ -95,6 +125,8 @@ namespace gld::ecs {
                         d.color = q.color;
                         d.model = gt.world;
                         d.local = q.local;
+                        d.mparam0 = mp0;
+                        d.mparam1 = mp1;
                         bc.instances.push_back(d);
                     }
                 }

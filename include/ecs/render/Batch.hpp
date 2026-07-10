@@ -14,8 +14,11 @@
 
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 #include <glm/glm.hpp>
+
+namespace gld { class Program; }   // fwd: BatchComponent keeps a Program* for binding
 
 namespace gld::ecs {
 
@@ -25,12 +28,17 @@ namespace gld::ecs {
         glm::vec4 color{ 1.f };
         glm::mat4 model{ 1.f }; // entity world transform (per-instance: a batch mixes parents)
         glm::mat4 local{ 1.f }; // per-glyph/sprite local matrix
+        glm::vec4 mparam0{ 0.f }; // material param 0 (forwarded to fg; e.g. outline colour)
+        glm::vec4 mparam1{ 0.f }; // material param 1 (e.g. outline width/softness)
     };
 
     // Grouping key: same texture + same shader + same layer mask => one batch.
+    // atlas / shader are GL object ids (not pointers): a GL id is the resource's
+    // true identity, immune to the pointer-reuse aliasing a freed+realloced
+    // object could cause.
     struct BatchKey {
-        const void* atlas = nullptr;        // Texture<D2>* (opaque here)
-        const void* shader = nullptr;       // Program*
+        unsigned int atlas = 0;             // texture GL id
+        unsigned int shader = 0;            // program GL id
         std::uint32_t layers = 0xFFFFFFFFu; // camera culling mask this batch belongs to
         bool operator==(const BatchKey& o) const {
             return atlas == o.atlas && shader == o.shader && layers == o.layers;
@@ -38,8 +46,8 @@ namespace gld::ecs {
     };
     struct BatchKeyHash {
         std::size_t operator()(const BatchKey& k) const {
-            std::size_t a = std::hash<const void*>{}(k.atlas);
-            std::size_t b = std::hash<const void*>{}(k.shader);
+            std::size_t a = std::hash<unsigned int>{}(k.atlas);
+            std::size_t b = std::hash<unsigned int>{}(k.shader);
             std::size_t c = std::hash<std::uint32_t>{}(k.layers);
             std::size_t h = a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
             return h ^ (c + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2));
@@ -53,6 +61,12 @@ namespace gld::ecs {
     struct BatchComponent {
         BatchKey key;
         std::uint32_t layers = 0xFFFFFFFFu;   // == key.layers (kept for fast filtering)
+
+        // Bind handles (key only holds GL ids). prog is used for use()+uniforms;
+        // atlas_ref keeps the atlas texture alive (its GL id is key.atlas).
+        gld::Program* prog = nullptr;
+        std::shared_ptr<void> atlas_ref;
+
         std::vector<InstanceData> instances;  // CPU side
 
         unsigned int vao = 0;                 // GL: created lazily at render

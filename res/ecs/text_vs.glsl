@@ -10,9 +10,13 @@ layout(location = 2) in vec4 vuv2;
 layout(location = 3) in vec4 vcolor;
 layout(location = 4) in mat4 vmodel;
 layout(location = 8) in mat4 vlocal;
+layout(location = 12) in vec4 vmparam0;
+layout(location = 13) in vec4 vmparam1;
 
 out vec2 oUv;
 out vec4 oColor;
+out vec4 oMParam0;
+out vec4 oMParam1;
 
 void main()
 {
@@ -24,4 +28,6 @@ void main()
     else                        oUv = vuv2.zw; // BR
 
     oColor = vcolor;
+    oMParam0 = vmparam0;
+    oMParam1 = vmparam1;
 }
