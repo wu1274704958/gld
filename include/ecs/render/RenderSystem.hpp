@@ -17,13 +17,42 @@
 #include "../App.hpp"
 #include "../EcsWorld.hpp"
 
+#include <type_traits>
+
 namespace gld::ecs {
+
+    template<IRenderPassComponent... Components>
+    struct RenderPassComponentRegistry {};
+
+    using DefaultRenderPassRegistry = RenderPassComponentRegistry<
+        RenderPasses<MeshPass>,
+        RenderPasses<BatchPass>,
+        RenderPasses<FullscreenRenderPass>,
+        RenderPasses<MeshPass, BatchPass>,
+        RenderPasses<BatchPass, MeshPass>
+    >;
+
+    template<IRenderPass... Passes>
+    RenderPasses<Passes...>& emplace_render_passes(EcsWorld& w, entt::entity e) {
+        using PassComponent = RenderPasses<Passes...>;
+        if (auto* existing = w.reg().try_get<PassComponent>(e)) {
+            *existing = PassComponent{};
+            return *existing;
+        }
+        return w.reg().emplace<PassComponent>(e);
+    }
+
+    template<IRenderPass... Passes>
+    RenderPasses<Passes...>& emplace_render_passes(App& app, entt::entity e) {
+        return emplace_render_passes<Passes...>(app.world, e);
+    }
 
     void spawn_camera_system(EcsWorld& w);
     void camera_matrices_system(EcsWorld& w);
     void render_graph_sync_system(EcsWorld& w);
     void render_graph_sort_system(EcsWorld& w);
     void render_system(EcsWorld& w);
+    void render_system_default(EcsWorld& w);
     void present_system(EcsWorld& w);
     void cleanup_render_resources(EcsWorld& w);
 

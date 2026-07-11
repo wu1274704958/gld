@@ -31,6 +31,16 @@ namespace gld::ecs {
         bool blend_enabled = false;
         bool depth_known = false;
         bool depth_enabled = false;
+        bool depth_write_known = false;
+        bool depth_write_enabled = false;
+        bool blend_func_known = false;
+        BlendFactor blend_src = BlendFactor::SrcAlpha;
+        BlendFactor blend_dst = BlendFactor::OneMinusSrcAlpha;
+        BlendEquation blend_equation = BlendEquation::Add;
+        bool stencil_known = false;
+        bool stencil_enabled = false;
+        bool stencil_func_known = false;
+        StencilFaceState stencil_state;
 
         void bind_framebuffer(unsigned int target) {
             if (framebuffer == target) return;
@@ -61,20 +71,59 @@ namespace gld::ecs {
             depth_enabled = enabled;
         }
 
-        void mesh_state() {
-            blend(false);
-            depth(true);
+        void depth_write(bool enabled) {
+            if (depth_write_known && depth_write_enabled == enabled) return;
+            glDepthMask(enabled ? GL_TRUE : GL_FALSE);
+            depth_write_known = true;
+            depth_write_enabled = enabled;
         }
 
-        void batch_state() {
-            blend(true);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            depth(false);
+        void blend_func(BlendFactor src, BlendFactor dst, BlendEquation equation) {
+            if (blend_func_known && blend_src == src && blend_dst == dst && blend_equation == equation) return;
+            glBlendFunc(static_cast<GLenum>(src), static_cast<GLenum>(dst));
+            glBlendEquation(static_cast<GLenum>(equation));
+            blend_func_known = true;
+            blend_src = src;
+            blend_dst = dst;
+            blend_equation = equation;
         }
 
-        void fullscreen_state() {
-            blend(false);
-            depth(false);
+        void stencil(bool enabled) {
+            if (stencil_known && stencil_enabled == enabled) return;
+            if (enabled) glEnable(GL_STENCIL_TEST);
+            else glDisable(GL_STENCIL_TEST);
+            stencil_known = true;
+            stencil_enabled = enabled;
+        }
+
+        void stencil_func_ops(const StencilFaceState& state) {
+            if (stencil_func_known &&
+                stencil_state.func == state.func &&
+                stencil_state.ref == state.ref &&
+                stencil_state.mask == state.mask &&
+                stencil_state.fail == state.fail &&
+                stencil_state.depth_fail == state.depth_fail &&
+                stencil_state.pass == state.pass) {
+                return;
+            }
+
+            glStencilFunc(static_cast<GLenum>(state.func), state.ref, state.mask);
+            glStencilOp(static_cast<GLenum>(state.fail),
+                        static_cast<GLenum>(state.depth_fail),
+                        static_cast<GLenum>(state.pass));
+            stencil_func_known = true;
+            stencil_state = state;
+        }
+
+        void apply(const ResolvedRenderPassState& state) {
+            blend(state.blend);
+            if (state.blend)
+                blend_func(state.blend_src, state.blend_dst, state.blend_equation);
+            depth(state.depth_test);
+            depth_write(state.depth_write);
+            stencil(state.stencil);
+            if (state.stencil)
+                stencil_func_ops(state.stencil_state);
         }
     };
 
@@ -420,7 +469,70 @@ namespace gld::ecs {
         w.resource_or_add<RenderDiagnostics>().begin_frame();
     }
 
-    void render_system(EcsWorld& w) {
+    static void execute_render_pass(
+        EcsWorld& w,
+        entt::entity e,
+        const Camera& cam,
+        RenderStateCache& state,
+        std::uint32_t pass_id,
+        const RenderPassState& pass_state) {
+
+        auto& reg = w.reg();
+        auto& diag = w.resource_or_add<RenderDiagnostics>();
+        state.apply(resolve_render_pass_state(pass_id, pass_state));
+
+        switch (pass_id) {
+        case RenderPassMesh:
+            draw_meshes(w, cam);
+            ++diag.passes;
+            break;
+        case RenderPassBatch:
+            draw_batches(w, cam);
+            ++diag.passes;
+            break;
+        case RenderPassFullscreen: {
+            const auto* fullscreen_pass = reg.try_get<FullscreenPass>(e);
+            if (fullscreen_pass) {
+                draw_fullscreen_pass(w, *fullscreen_pass);
+                ++diag.passes;
+            } else {
+                ++diag.graph_skipped_invalid;
+            }
+            break;
+        }
+        default:
+            ++diag.graph_skipped_invalid;
+            break;
+        }
+    }
+
+    template<IRenderPass Pass>
+    static void execute_tuple_pass(EcsWorld& w, entt::entity e, const Camera& cam, RenderStateCache& state, const Pass& pass) {
+        execute_render_pass(w, e, cam, state, Pass::id, pass.state);
+    }
+
+    template<IRenderPassComponent PassComponent>
+    static bool try_render_pass_component(EcsWorld& w, entt::entity e, const Camera& cam, RenderStateCache& state) {
+        auto* component = w.reg().try_get<PassComponent>(e);
+        if (!component) return false;
+
+        std::apply([&](const auto&... pass) {
+            (execute_tuple_pass(w, e, cam, state, pass), ...);
+        }, component->passes);
+        return true;
+    }
+
+    template<class... PassComponents>
+    static bool try_render_registered_passes(RenderPassComponentRegistry<PassComponents...>,
+                                             EcsWorld& w,
+                                             entt::entity e,
+                                             const Camera& cam,
+                                             RenderStateCache& state) {
+        return (try_render_pass_component<PassComponents>(w, e, cam, state) || ...);
+    }
+
+    template<class Registry>
+    static void render_system_t(EcsWorld& w) {
         auto& reg = w.reg();
         auto& diag = w.resource_or_add<RenderDiagnostics>();
         auto& graph = w.resource_or_add<RenderGraphResource>();
@@ -456,7 +568,6 @@ namespace gld::ecs {
                 continue;
             }
             const Camera& cam = *cam_ptr;
-            const std::uint32_t passes = effective_pass_mask(cam);
             int tw = cam.target_size.x > 0 ? cam.target_size.x : ww;
             int th = cam.target_size.y > 0 ? cam.target_size.y : wh;
 
@@ -465,29 +576,14 @@ namespace gld::ecs {
 
             if (cam.do_clear) {
                 glClearColor(cam.clear_color.r, cam.clear_color.g, cam.clear_color.b, cam.clear_color.a);
+                // Clear must not inherit depth-write=false from a previous
+                // batch/fullscreen pass; glClear respects the depth write mask.
+                state.depth_write(true);
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             }
 
-            if ((passes & RenderPassMesh) != 0) {
-                state.mesh_state();
-                draw_meshes(w, cam);
-                ++diag.passes;
-            }
-            if ((passes & RenderPassBatch) != 0) {
-                state.batch_state();
-                draw_batches(w, cam);
-                ++diag.passes;
-            }
-            if ((passes & RenderPassFullscreen) != 0) {
-                const auto* pass = reg.try_get<FullscreenPass>(e);
-                if (pass) {
-                    state.fullscreen_state();
-                    draw_fullscreen_pass(w, *pass);
-                    ++diag.passes;
-                } else {
-                    ++diag.graph_skipped_invalid;
-                }
-            }
+            if (!try_render_registered_passes(Registry{}, w, e, cam, state))
+                ++diag.graph_skipped_invalid;
             ++diag.graph_executed;
         }
         state.bind_framebuffer(0);
@@ -514,6 +610,14 @@ namespace gld::ecs {
                 reg.emplace<WaitPresent>(primary, WaitPresent{ static_cast<void*>(fence) });
             }
         }
+    }
+
+    void render_system_default(EcsWorld& w) {
+        render_system_t<DefaultRenderPassRegistry>(w);
+    }
+
+    void render_system(EcsWorld& w) {
+        render_system_default(w);
     }
 
     void present_system(EcsWorld& w) {
@@ -586,7 +690,7 @@ namespace gld::ecs {
         app.add_system(Stage::First, render_graph_sync_system);
         app.add_system(Stage::First, render_graph_sort_system);
         app.add_system(Stage::PostUpdate, camera_matrices_system);
-        app.add_system(Stage::Render, render_system);
+        app.add_system(Stage::Render, render_system_default);
         app.add_system(Stage::Last, present_system);
     }
 }

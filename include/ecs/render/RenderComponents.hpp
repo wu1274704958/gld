@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
+#include <type_traits>
 #include <variant>
 #include <vector>
 #include <glad/glad.h>
@@ -42,9 +44,126 @@ namespace gld::ecs {
 
     enum class CameraKind { Perspective, Ortho };
 
+    enum class RenderStateValue { Auto, Enabled, Disabled };
+
+    enum class BlendFactor : unsigned int {
+        Zero = GL_ZERO,
+        One = GL_ONE,
+        SrcAlpha = GL_SRC_ALPHA,
+        OneMinusSrcAlpha = GL_ONE_MINUS_SRC_ALPHA,
+        SrcColor = GL_SRC_COLOR,
+        OneMinusSrcColor = GL_ONE_MINUS_SRC_COLOR,
+        DstAlpha = GL_DST_ALPHA,
+        OneMinusDstAlpha = GL_ONE_MINUS_DST_ALPHA,
+        DstColor = GL_DST_COLOR,
+        OneMinusDstColor = GL_ONE_MINUS_DST_COLOR
+    };
+
+    enum class BlendEquation : unsigned int {
+        Add = GL_FUNC_ADD,
+        Subtract = GL_FUNC_SUBTRACT,
+        ReverseSubtract = GL_FUNC_REVERSE_SUBTRACT,
+        Min = GL_MIN,
+        Max = GL_MAX
+    };
+
+    enum class StencilFunc : unsigned int {
+        Never = GL_NEVER,
+        Less = GL_LESS,
+        LessEqual = GL_LEQUAL,
+        Greater = GL_GREATER,
+        GreaterEqual = GL_GEQUAL,
+        Equal = GL_EQUAL,
+        NotEqual = GL_NOTEQUAL,
+        Always = GL_ALWAYS
+    };
+
+    enum class StencilOp : unsigned int {
+        Keep = GL_KEEP,
+        Zero = GL_ZERO,
+        Replace = GL_REPLACE,
+        Increment = GL_INCR,
+        IncrementWrap = GL_INCR_WRAP,
+        Decrement = GL_DECR,
+        DecrementWrap = GL_DECR_WRAP,
+        Invert = GL_INVERT
+    };
+
+    struct StencilFaceState {
+        StencilFunc func = StencilFunc::Always;
+        int ref = 0;
+        unsigned int mask = 0xFFu;
+        StencilOp fail = StencilOp::Keep;
+        StencilOp depth_fail = StencilOp::Keep;
+        StencilOp pass = StencilOp::Keep;
+    };
+
+    struct RenderPassState {
+        RenderStateValue depth_test = RenderStateValue::Auto;
+        RenderStateValue depth_write = RenderStateValue::Auto;
+        RenderStateValue blend = RenderStateValue::Auto;
+        BlendFactor blend_src = BlendFactor::SrcAlpha;
+        BlendFactor blend_dst = BlendFactor::OneMinusSrcAlpha;
+        BlendEquation blend_equation = BlendEquation::Add;
+        RenderStateValue stencil = RenderStateValue::Auto;
+        StencilFaceState stencil_state;
+    };
+
+    struct ResolvedRenderPassState {
+        bool depth_test = false;
+        bool depth_write = false;
+        bool blend = false;
+        BlendFactor blend_src = BlendFactor::SrcAlpha;
+        BlendFactor blend_dst = BlendFactor::OneMinusSrcAlpha;
+        BlendEquation blend_equation = BlendEquation::Add;
+        bool stencil = false;
+        StencilFaceState stencil_state;
+    };
+
     inline constexpr std::uint32_t RenderPassMesh  = 0x1u;
     inline constexpr std::uint32_t RenderPassBatch = 0x2u;
     inline constexpr std::uint32_t RenderPassFullscreen = 0x4u;
+
+    template<std::uint32_t PassId>
+    struct RenderPassT {
+        static constexpr std::uint32_t id = PassId;
+        RenderPassState state;
+    };
+
+    using MeshPass = RenderPassT<RenderPassMesh>;
+    using BatchPass = RenderPassT<RenderPassBatch>;
+    using FullscreenRenderPass = RenderPassT<RenderPassFullscreen>;
+
+    template<class T>
+    concept IRenderPass = requires(T pass) {
+        { T::id } -> std::convertible_to<std::uint32_t>;
+        { pass.state } -> std::same_as<RenderPassState&>;
+    };
+
+    template<IRenderPass... Passes>
+    struct RenderPasses {
+        static_assert(sizeof...(Passes) > 0, "RenderPasses requires at least one pass");
+        std::tuple<Passes...> passes;
+
+        template<class Pass>
+        Pass* get() {
+            return &std::get<Pass>(passes);
+        }
+
+        template<class Pass>
+        const Pass* get() const {
+            return &std::get<Pass>(passes);
+        }
+    };
+
+    template<class T>
+    struct IsRenderPasses : std::false_type {};
+
+    template<IRenderPass... Passes>
+    struct IsRenderPasses<RenderPasses<Passes...>> : std::true_type {};
+
+    template<class T>
+    concept IRenderPassComponent = IsRenderPasses<std::remove_cvref_t<T>>::value;
 
     // Camera is a COMPONENT (many allowed), not a resource. Each camera is a
     // render pass: it renders the drawables its `layers` mask selects, into
@@ -57,9 +176,6 @@ namespace gld::ecs {
         unsigned int target = 0;                  // FBO id; 0 = window default
         glm::ivec2 target_size{ 0, 0 };           // offscreen size; (0,0)=follow window
         std::uint32_t layers = 0xFFFFFFFFu;       // culling mask
-        // 0 keeps the legacy default: Perspective -> mesh, Ortho -> batch.
-        // Set RenderPassMesh | RenderPassBatch for mixed cameras.
-        std::uint32_t pass_mask = 0;
         bool do_clear = true;
         glm::vec4 clear_color{ 0.055f, 0.05f, 0.075f, 1.f };
 
@@ -69,9 +185,50 @@ namespace gld::ecs {
         glm::mat4 projection{ 1.f };  // computed by camera_matrices_system
     };
 
-    inline std::uint32_t effective_pass_mask(const Camera& c) {
-        if (c.pass_mask != 0) return c.pass_mask;
-        return c.kind == CameraKind::Perspective ? RenderPassMesh : RenderPassBatch;
+    inline bool resolve_state_value(RenderStateValue value, bool auto_value) {
+        switch (value) {
+        case RenderStateValue::Enabled: return true;
+        case RenderStateValue::Disabled: return false;
+        case RenderStateValue::Auto:
+        default: return auto_value;
+        }
+    }
+
+    inline ResolvedRenderPassState resolve_render_pass_state(std::uint32_t pass_id, const RenderPassState& state) {
+        bool default_depth_test = false;
+        bool default_depth_write = false;
+        bool default_blend = false;
+
+        switch (pass_id) {
+        case RenderPassMesh:
+            default_depth_test = true;
+            default_depth_write = true;
+            default_blend = false;
+            break;
+        case RenderPassBatch:
+            default_depth_test = false;
+            default_depth_write = false;
+            default_blend = true;
+            break;
+        case RenderPassFullscreen:
+            default_depth_test = false;
+            default_depth_write = false;
+            default_blend = false;
+            break;
+        default:
+            break;
+        }
+
+        return {
+            resolve_state_value(state.depth_test, default_depth_test),
+            resolve_state_value(state.depth_write, default_depth_write),
+            resolve_state_value(state.blend, default_blend),
+            state.blend_src,
+            state.blend_dst,
+            state.blend_equation,
+            resolve_state_value(state.stencil, false),
+            state.stencil_state
+        };
     }
 
     // Optional drawable layer membership. A camera renders an entity when

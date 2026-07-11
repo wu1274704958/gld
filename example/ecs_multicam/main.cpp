@@ -86,6 +86,7 @@ int main()
             cam.clear_color = glm::vec4(0.10f, 0.12f, 0.18f, 1.f);
             cam.view = glm::lookAt(glm::vec3(0.f, 1.4f, 3.6f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
             reg.emplace<Camera>(a, cam);
+            emplace_render_passes<MeshPass>(w, a);
         }
         // Camera B: perspective, renders the RT-textured quad (layer 2) to window.
         {
@@ -96,6 +97,7 @@ int main()
             cam.clear_color = glm::vec4(0.04f, 0.05f, 0.08f, 1.f);
             cam.view = glm::lookAt(glm::vec3(0.f, 0.f, 4.2f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
             reg.emplace<Camera>(b, cam);
+            emplace_render_passes<MeshPass>(w, b);
         }
         // Camera C: ortho HUD overlay (does not clear).
         {
@@ -104,6 +106,7 @@ int main()
             cam.kind = CameraKind::Ortho; cam.priority = 20;
             cam.target = 0; cam.layers = 0x4u; cam.do_clear = false;
             reg.emplace<Camera>(c, cam);
+            emplace_render_passes<BatchPass>(w, c);
         }
 
         // Spinning cube -> layer 1 (only camera A sees it).

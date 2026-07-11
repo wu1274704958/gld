@@ -95,6 +95,7 @@ int main()
         cam.clear_color = glm::vec4(0.015f, 0.018f, 0.028f, 1.f);
         cam.view = glm::lookAt(glm::vec3(0.f, 3.0f, 12.f), glm::vec3(0.f, 1.1f, -16.f), glm::vec3(0.f, 1.f, 0.f));
         reg.emplace<Camera>(camE, cam);
+        emplace_render_passes<MeshPass>(w, camE);
 
         auto make_box = [&](glm::vec3 pos, glm::vec3 scale, glm::vec4 color, bool textured, glm::vec3 spin) {
             entt::entity e = w.spawn();

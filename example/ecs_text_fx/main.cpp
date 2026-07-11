@@ -59,6 +59,7 @@ int main()
         Camera cam; cam.kind = CameraKind::Ortho; cam.priority = 0; cam.target = 0;
         cam.clear_color = glm::vec4(0.90f, 0.91f, 0.93f, 1.f);   // bright background
         reg.emplace<Camera>(camE, cam);
+        emplace_render_passes<BatchPass>(w, camE);
 
         Handle<FontAsset> font = srv.load(FontDesc(std::string("fonts/simkai.ttf"), 0));
 

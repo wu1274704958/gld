@@ -94,6 +94,7 @@ int main()
         entt::entity camE = w.spawn();
         Camera cam; cam.kind = CameraKind::Perspective; cam.priority = 0; cam.target = 0; cam.fov = 60.f;
         reg.emplace<Camera>(camE, cam);
+        emplace_render_passes<MeshPass>(w, camE);
         reg.emplace<OrbitControl>(camE, OrbitControl{});
 
         // Parent cube (spins about Y).

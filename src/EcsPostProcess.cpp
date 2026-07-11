@@ -1,4 +1,5 @@
 #include <ecs/render/PostProcess.hpp>
+#include <ecs/render/RenderSystem.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -53,10 +54,10 @@ namespace gld::ecs {
         cam.priority = base_priority_ + (++seq_);
         cam.target = target;
         cam.target_size = target_size;
-        cam.pass_mask = RenderPassFullscreen;
         cam.do_clear = true;
         cam.clear_color = glm::vec4(0.f, 0.f, 0.f, 1.f);
         reg.emplace<Camera>(e, cam);
+        emplace_render_passes<FullscreenRenderPass>(world_, e);
 
         FullscreenPass pass;
         pass.shader = srv.load_sync(ProgramDesc("ecs/post_fullscreen_vs.glsl", fragment_shader, "", "", ""));

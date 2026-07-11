@@ -55,6 +55,7 @@ int main()
         entt::entity camE = w.spawn();
         Camera cam; cam.kind = CameraKind::Ortho; cam.priority = 0; cam.target = 0;
         reg.emplace<Camera>(camE, cam);
+        emplace_render_passes<BatchPass>(w, camE);
 
         Handle<FontAsset> font = srv.load(FontDesc(std::string("fonts/simkai.ttf"), 0));
 
