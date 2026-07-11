@@ -54,7 +54,10 @@ namespace gld::ecs {
     public:
         PostProcessBuilder(EcsWorld& world, entt::entity source, std::uint64_t owner,
                            int width, int height, unsigned int final_target,
-                           glm::ivec2 final_size, int base_priority, bool final_process);
+                           glm::ivec2 final_size, int base_priority, bool final_process,
+                           PostProcessInput source_input);
+
+        const PostProcessInput& source_input() const { return source_input_; }
 
         PostProcessOutput add_pass(
             const std::string& name,
@@ -103,6 +106,7 @@ namespace gld::ecs {
         int base_priority_ = 0;
         int seq_ = 0;
         bool final_process_ = false;
+        PostProcessInput source_input_;
     };
 
     template<class T>
@@ -220,6 +224,86 @@ namespace gld::ecs {
                 {
                     FullscreenUniform{ "intensity", intensity },
                     FullscreenUniform{ "exposure", exposure },
+                });
+        }
+    };
+
+    struct FogBloomPostProcessDesc {
+        glm::vec4 fog_color{ 0.28f, 0.34f, 0.45f, 1.f };
+        float fog_start = 7.f;
+        float fog_end = 38.f;
+        float fog_density = 0.018f;
+        float fog_max_amount = 0.96f;
+
+        float bloom_threshold = 0.62f;
+        float bloom_knee = 0.28f;
+        float bloom_intensity = 2.2f;
+        float exposure = 1.10f;
+        float bloom_fog_attenuation = 0.55f;
+
+        PostProcessOutput build(PostProcessBuilder& builder, PostProcessInput input) const {
+            const PostProcessInput& source = builder.source_input();
+
+            std::vector<PostProcessTextureInput> fog_inputs{
+                PostProcessTextureInput{ "scene", source }
+            };
+            if (source.depth) {
+                fog_inputs.push_back(PostProcessTextureInput{ "depthTex", PostProcessInput{
+                    source.depth, nullptr, source.producer, source.width, source.height, source.near_z, source.far_z
+                } });
+            }
+
+            auto fogged = builder.add_pass("dag_fog", "ecs/post_fog_fg.glsl", fog_inputs, {
+                FullscreenUniform{ "fogColor", fog_color },
+                FullscreenUniform{ "fogStart", fog_start },
+                FullscreenUniform{ "fogEnd", fog_end },
+                FullscreenUniform{ "density", fog_density },
+                FullscreenUniform{ "maxAmount", fog_max_amount },
+                FullscreenUniform{ "nearZ", source.near_z },
+                FullscreenUniform{ "farZ", source.far_z },
+                FullscreenUniform{ "hasDepth", source.depth ? 1 : 0 },
+            });
+
+            auto bright = builder.add_pass("dag_bloom_bright", "bloom/bright_fg.glsl", source, {
+                FullscreenUniform{ "threshold", bloom_threshold },
+                FullscreenUniform{ "knee", bloom_knee },
+            });
+            auto blur_h = builder.add_pass("dag_bloom_blur_h", "bloom/blur_fg.glsl",
+                { PostProcessTextureInput{ "image", bright } },
+                {
+                    FullscreenUniform{ "horizontal", 1 },
+                    FullscreenUniform{ "texel", glm::vec2(1.f / static_cast<float>(bright.width), 1.f / static_cast<float>(bright.height)) },
+                });
+            auto blur_v = builder.add_pass("dag_bloom_blur_v", "bloom/blur_fg.glsl",
+                { PostProcessTextureInput{ "image", blur_h } },
+                {
+                    FullscreenUniform{ "horizontal", 0 },
+                    FullscreenUniform{ "texel", glm::vec2(1.f / static_cast<float>(blur_h.width), 1.f / static_cast<float>(blur_h.height)) },
+                });
+
+            std::vector<PostProcessTextureInput> composite_inputs{
+                PostProcessTextureInput{ "scene", fogged },
+                PostProcessTextureInput{ "bloomBlur", blur_v }
+            };
+            if (source.depth) {
+                composite_inputs.push_back(PostProcessTextureInput{ "depthTex", PostProcessInput{
+                    source.depth, nullptr, source.producer, source.width, source.height, source.near_z, source.far_z
+                } });
+            }
+
+            return builder.add_final_pass("dag_fog_bloom_composite", "bloom/composite_fg.glsl",
+                composite_inputs,
+                {
+                    FullscreenUniform{ "intensity", bloom_intensity },
+                    FullscreenUniform{ "exposure", exposure },
+                    FullscreenUniform{ "bloomFogAttenuation", bloom_fog_attenuation },
+                    FullscreenUniform{ "fogStart", fog_start },
+                    FullscreenUniform{ "fogEnd", fog_end },
+                    FullscreenUniform{ "density", fog_density },
+                    FullscreenUniform{ "maxAmount", fog_max_amount },
+                    FullscreenUniform{ "nearZ", source.near_z },
+                    FullscreenUniform{ "farZ", source.far_z },
+                    FullscreenUniform{ "hasDepth", source.depth ? 1 : 0 },
                 });
         }
     };

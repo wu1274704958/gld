@@ -1,6 +1,7 @@
 #include <ecs/render/PostProcess.hpp>
 
 #include <algorithm>
+#include <utility>
 
 #include <ecs/Window.hpp>
 #include <ecs/assets/AssetServer.hpp>
@@ -9,7 +10,8 @@ namespace gld::ecs {
 
     PostProcessBuilder::PostProcessBuilder(EcsWorld& world, entt::entity source, std::uint64_t owner,
                                            int width, int height, unsigned int final_target,
-                                           glm::ivec2 final_size, int base_priority, bool final_process)
+                                           glm::ivec2 final_size, int base_priority, bool final_process,
+                                           PostProcessInput source_input)
         : world_(world),
           source_(source),
           owner_(owner),
@@ -18,7 +20,8 @@ namespace gld::ecs {
           final_target_(final_target),
           final_size_(final_size),
           base_priority_(base_priority),
-          final_process_(final_process) {}
+          final_process_(final_process),
+          source_input_(std::move(source_input)) {}
 
     PostProcessOutput PostProcessBuilder::add_pass(
         const std::string& name,
@@ -193,7 +196,7 @@ namespace gld::ecs {
             PostProcessBuilder builder(
                 *world, source_camera, entry.handle.value, size.x, size.y,
                 state.original_target, state.original_target_size,
-                base_priority, i + 1 == enabled_ids.size());
+                base_priority, i + 1 == enabled_ids.size(), input);
             input = entry.build(builder, input);
             state.generated_entities.insert(state.generated_entities.end(),
                 builder.created_entities.begin(), builder.created_entities.end());

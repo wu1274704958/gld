@@ -36,10 +36,8 @@ struct SpinSystem : BaseSystem<SpinSystem, Transform, AutoRotate> {
 
 struct PostHandles {
     entt::entity camera = entt::null;
-    PostProcessHandle fog;
-    PostProcessHandle bloom;
-    bool fog_enabled = true;
-    bool bloom_enabled = true;
+    PostProcessHandle effect;
+    bool enabled = true;
 };
 
 static void toggle_post_system(EcsWorld& w) {
@@ -50,26 +48,13 @@ static void toggle_post_system(EcsWorld& w) {
 
     bool changed = false;
     if (kb.just_now_pressed(GLFW_KEY_P)) {
-        bool enabled = !(handles->fog_enabled || handles->bloom_enabled);
-        handles->fog_enabled = enabled;
-        handles->bloom_enabled = enabled;
-        changed = true;
-    }
-    if (kb.just_now_pressed(GLFW_KEY_F)) {
-        handles->fog_enabled = !handles->fog_enabled;
-        changed = true;
-    }
-    if (kb.just_now_pressed(GLFW_KEY_B)) {
-        handles->bloom_enabled = !handles->bloom_enabled;
+        handles->enabled = !handles->enabled;
         changed = true;
     }
     if (!changed) return;
 
-    ppm->set_enabled(handles->fog, handles->fog_enabled);
-    if (handles->bloom) ppm->set_enabled(handles->bloom, handles->bloom_enabled);
-    std::printf("[ecs_postprocess] fog=%s bloom=%s\n",
-        handles->fog_enabled ? "on" : "off",
-        handles->bloom_enabled ? "on" : "off");
+    ppm->set_enabled(handles->effect, handles->enabled);
+    std::printf("[ecs_postprocess] dag fog+bloom=%s\n", handles->enabled ? "on" : "off");
     std::fflush(stdout);
 }
 
@@ -149,19 +134,21 @@ int main()
         make_box({  3.0f, 1.7f, -18.f }, { 0.50f, 0.50f, 0.50f }, { 0.75f, 0.95f, 1.0f, 1.f }, false, { 0.f, 1.0f, 0.f });
 
         auto& ppm = w.resource<PostProcessManager>();
-        auto fog = ppm.add_post_process(camE, FogPostProcessDesc{
+        auto effect = ppm.add_post_process(camE, FogBloomPostProcessDesc{
             glm::vec4(0.28f, 0.34f, 0.45f, 1.f),
             7.0f,
             38.0f,
             0.018f,
-            0.96f
-        });
-        auto bloom = ppm.add_post_process(camE, BloomPostProcessDesc{
-            0.62f, 0.28f, 2.2f, 1.10f
+            0.96f,
+            0.62f,
+            0.28f,
+            2.2f,
+            1.10f,
+            0.55f
             });
-        w.add_resource<PostHandles>(PostHandles{ camE, fog, bloom, true, true });
+        w.add_resource<PostHandles>(PostHandles{ camE, effect, true });
 
-        std::printf("[ecs_postprocess] depth fog + bloom scene spawned; P all, F fog, B bloom\n");
+        std::printf("[ecs_postprocess] DAG depth fog + bloom scene spawned; P toggles effect\n");
         std::fflush(stdout);
     });
 
