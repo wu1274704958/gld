@@ -8,6 +8,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdio>
 
 namespace gld::ecs {
 
@@ -102,7 +103,9 @@ namespace gld::ecs {
             sundry::compile_shaders<100>(
                 GL_VERTEX_SHADER, &vs_p, 1, (GLuint*)vertex,
                 GL_FRAGMENT_SHADER, &fg_p, 1, (GLuint*)frag);
-        } catch (...) {
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[ProgramLoader] compile failed vs=%s fs=%s: %s\n",
+                         desc.vs().c_str(), desc.fs().c_str(), e.what());
             return nullptr;
         }
 
@@ -116,7 +119,9 @@ namespace gld::ecs {
             const char* gs_p = src->gs.c_str();
             try {
                 sundry::compile_shaders<100>(GL_GEOMETRY_SHADER, &gs_p, 1, (GLuint*)geom);
-            } catch (...) {
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[ProgramLoader] compile failed gs=%s: %s\n",
+                             desc.gs().c_str(), e.what());
                 return nullptr;
             }
             prog->attach_shader(std::move(geom));
@@ -124,7 +129,11 @@ namespace gld::ecs {
 
         prog->link();
         auto [succ, err] = prog->check_link_state<200>();
-        if (!succ) return nullptr;
+        if (!succ) {
+            std::fprintf(stderr, "[ProgramLoader] link failed vs=%s fs=%s: %s\n",
+                         desc.vs().c_str(), desc.fs().c_str(), err ? err->c_str() : "");
+            return nullptr;
+        }
         return prog;
     }
 }

@@ -37,6 +37,7 @@ namespace gld
         {
             if(good())
                 glDeleteBuffers(1,&id);
+            id = 0;
         }
 
         VABuffer(const VABuffer&) = delete;
@@ -198,6 +199,7 @@ namespace gld
         {
             if(good())
                 glDeleteVertexArrays(1,&id);
+            id = 0;
         }
 
         VertexArr(const VertexArr&) = delete;

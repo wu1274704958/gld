@@ -4,6 +4,19 @@
 #include <ecs/Window.hpp>
 #include <ecs/Events.hpp>
 #include <ecs/Input.hpp>
+#include <ecs/render/RenderSystem.hpp>
+#include <ecs/render/BatchSystem.hpp>
+#include <ecs/render/RenderTarget.hpp>
+#include <ecs/render/PostProcess.hpp>
+#include <ecs/assets/AssetServer.hpp>
+#include <ecs/assets/Assets.hpp>
+#include <ecs/text/FontAsset.hpp>
+#include <ecs/text/GlyphAtlas.hpp>
+
+#include <program.hpp>
+#include <texture.hpp>
+
+#include <memory>
 
 namespace gld::ecs {
 
@@ -105,6 +118,30 @@ namespace gld::ecs {
         if (auto* e = world.try_resource<Events<CloseRequested>>()) e->clear();
     }
 
+    static void cleanup_app_resources(App& app) {
+        auto& world = app.world;
+
+        cleanup_render_resources(world);
+
+        if (auto* srv = world.try_resource<AssetServer>())
+            srv->shutdown();
+
+        world.reg().clear();
+
+        world.remove_resource<BatchResources>();
+        world.remove_resource<FullscreenResources>();
+        world.remove_resource<PostProcessManager>();
+        world.remove_resource<TextBatchIndex>();
+        world.remove_resource<GlyphAtlasAA>();
+        world.remove_resource<GlyphAtlasSDF>();
+        world.remove_resource<std::shared_ptr<RenderTarget>>();
+
+        world.remove_resource<Assets<FontAsset>>();
+        world.remove_resource<Assets<Texture<TexType::D2>>>();
+        world.remove_resource<Assets<Program>>();
+        world.remove_resource<AssetServer>();
+    }
+
     void run_app(App& app) {
         auto* win = app.world.try_resource<Window>();
         if (!win || !win->handle) return;
@@ -121,6 +158,7 @@ namespace gld::ecs {
             frame_end(app.world);
         }
 
+        cleanup_app_resources(app);
         glfwDestroyWindow(handle);
         glfwTerminate();
     }

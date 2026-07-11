@@ -34,6 +34,15 @@ namespace gld::ecs {
         std::unordered_set<std::type_index> gc_registered;
         std::vector<std::function<void(double)>> gc_hooks;
 
+        ~AssetServer() { shutdown(); }
+
+        void shutdown() {
+            pool.stop();
+            completion.clear();
+            gc_hooks.clear();
+            gc_registered.clear();
+        }
+
         template<class D>
         void register_loader(std::shared_ptr<IAssetLoader<D>> loader) {
             registry.register_loader<D>(std::move(loader));

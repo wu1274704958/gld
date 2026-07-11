@@ -32,6 +32,7 @@ namespace gld::ecs {
 
         auto& reg = w.reg();
         auto& index = w.resource_or_add<TextBatchIndex>();
+        auto& diag = w.resource_or_add<RenderDiagnostics>();
 
         // Reset per-frame liveness.
         for (auto& [k, e] : index.map)
@@ -152,15 +153,20 @@ namespace gld::ecs {
         }
 
         // ---- Pass 3: GC batches whose group vanished this frame ----
+        std::vector<BatchKey> dead;
         for (auto& [k, e] : index.map) {
-            if (!reg.valid(e)) continue;
+            if (!reg.valid(e)) {
+                dead.push_back(k);
+                continue;
+            }
             auto& bc = reg.get<BatchComponent>(e);
-            if (!bc.used && !bc.instances.empty()) {
-                bc.instances.clear();
-                bc.sig = 0;
-                bc.count = 0;
-                bc.dirty = true;
+            if (!bc.used) {
+                destroy_batch_gpu(bc);
+                reg.destroy(e);
+                dead.push_back(k);
+                ++diag.batch_groups_destroyed;
             }
         }
+        for (const auto& k : dead) index.map.erase(k);
     }
 }

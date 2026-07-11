@@ -13,6 +13,7 @@
 // GL lives in EcsRender.cpp.
 
 #include "RenderComponents.hpp"
+#include "RenderGraph.hpp"
 #include "../App.hpp"
 #include "../EcsWorld.hpp"
 
@@ -20,8 +21,11 @@ namespace gld::ecs {
 
     void spawn_camera_system(EcsWorld& w);
     void camera_matrices_system(EcsWorld& w);
+    void render_graph_sync_system(EcsWorld& w);
+    void render_graph_sort_system(EcsWorld& w);
     void render_system(EcsWorld& w);
     void present_system(EcsWorld& w);
+    void cleanup_render_resources(EcsWorld& w);
 
     // Registers all of the above (2D/text passes require a BatchPlugin).
     void RenderPlugin(App& app);

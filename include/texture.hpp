@@ -233,6 +233,7 @@ namespace gld{
         {
             if(good())
                 glDeleteTextures(1,&id);
+            id = 0;
         }
 
         Texture(const Texture&) = delete;

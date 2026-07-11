@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <utility>
 
 #include <glm/glm.hpp>
 
@@ -60,6 +61,13 @@ namespace gld::ecs {
     // (sig,count) over the contributing sources — never by hashing the output
     // instance bytes.
     struct BatchComponent {
+        BatchComponent() = default;
+        ~BatchComponent();
+        BatchComponent(const BatchComponent&) = delete;
+        BatchComponent& operator=(const BatchComponent&) = delete;
+        BatchComponent(BatchComponent&& other) noexcept;
+        BatchComponent& operator=(BatchComponent&& other) noexcept;
+
         BatchKey key;
         std::uint32_t layers = 0xFFFFFFFFu;   // == key.layers (kept for fast filtering)
 

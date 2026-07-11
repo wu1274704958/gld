@@ -30,6 +30,8 @@ namespace gld::ecs {
         R* try_resource() { return registry.ctx().find<R>(); }
         template<class R>
         bool has_resource() { return registry.ctx().contains<R>(); }
+        template<class R>
+        bool remove_resource() { return registry.ctx().erase<R>(); }
         template<class R, class... Args>
         R& resource_or_add(Args&&... args) {
             if (auto* p = registry.ctx().find<R>()) return *p;

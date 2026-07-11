@@ -29,6 +29,11 @@
 namespace gld::ecs {
 
     struct BatchResources {
+        BatchResources() = default;
+        ~BatchResources();
+        BatchResources(const BatchResources&) = delete;
+        BatchResources& operator=(const BatchResources&) = delete;
+
         Handle<Program> aa_shader;   // ecs/text_fg  (AA coverage fill + shadow)
         Handle<Program> sdf_shader;  // ecs/text_sdf_fg (SDF fill + outline + shadow)
         unsigned int quad_vbo = 0;   // shared unit quad (pos only)
@@ -45,6 +50,8 @@ namespace gld::ecs {
     // ---- systems ----
     void text_batch_system(EcsWorld& w);                 // src/EcsTextBatch.cpp
     void draw_batches(EcsWorld& w, const Camera& cam);   // src/EcsBatch.cpp
+    void destroy_batch_gpu(BatchComponent& b);
+    void destroy_batch_resources_gpu(BatchResources& res);
 
     // ---- plugin ----
     inline void TextBatchPlugin(App& app) {

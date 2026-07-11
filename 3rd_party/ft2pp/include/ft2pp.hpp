@@ -22,7 +22,10 @@ namespace ft2 {
 		~Library() {
 			--InsteNum;
 			if(FaceInstanceNum <= 0)
+			{
 				FT_Done_FreeType(lib);
+				lib = nullptr;
+			}
 			else
 			{
 				BeLeftLib = lib;
@@ -61,7 +64,11 @@ namespace ft2 {
 		{
 			--FaceInstanceNum;
 			if(FaceInstanceNum == 0 && NeedDoneLib && BeLeftLib)
+			{
 				FT_Done_FreeType(BeLeftLib);
+				BeLeftLib = nullptr;
+				NeedDoneLib = false;
+			}
 		}
 
 	private:
@@ -292,7 +299,9 @@ namespace ft2 {
 		{
 			if (face)
 			{
-				FT_Done_Face(face);
+				FT_Face f = face;
+				face = nullptr;
+				FT_Done_Face(f);
 				Library::done_face();
 			}
 		}

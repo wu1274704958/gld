@@ -23,9 +23,20 @@ namespace gld::ecs {
         void enqueue(std::function<void()> job) {
             {
                 std::lock_guard<std::mutex> lk(m_);
+                if (stopping_) return;
                 jobs_.push(std::move(job));
             }
             cv_.notify_one();
+        }
+
+        void stop() {
+            {
+                std::lock_guard<std::mutex> lk(m_);
+                if (stopping_) return;
+                stopping_ = true;
+            }
+            cv_.notify_all();
+            for (auto& t : workers_) if (t.joinable()) t.join();
         }
 
     private:
@@ -46,14 +57,6 @@ namespace gld::ecs {
                 });
             }
         }
-        void stop() {
-            {
-                std::lock_guard<std::mutex> lk(m_);
-                stopping_ = true;
-            }
-            cv_.notify_all();
-            for (auto& t : workers_) if (t.joinable()) t.join();
-        }
 
         std::vector<std::thread> workers_;
         std::queue<std::function<void()>> jobs_;
@@ -72,6 +75,10 @@ namespace gld::ecs {
         std::vector<std::function<void()>> drain() {
             std::lock_guard<std::mutex> lk(m_);
             return std::move(items_);
+        }
+        void clear() {
+            std::lock_guard<std::mutex> lk(m_);
+            items_.clear();
         }
     private:
         std::vector<std::function<void()>> items_;

@@ -3,6 +3,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <utility>
+
 #include <program.hpp>
 #include <texture.hpp>
 
@@ -12,6 +14,67 @@
 #include <ecs/Window.hpp>
 
 namespace gld::ecs {
+
+    void destroy_batch_gpu(BatchComponent& b) {
+        if (b.instance_vbo != 0) {
+            glDeleteBuffers(1, &b.instance_vbo);
+            b.instance_vbo = 0;
+        }
+        if (b.vao != 0) {
+            glDeleteVertexArrays(1, &b.vao);
+            b.vao = 0;
+        }
+        b.gpu_cap = 0;
+    }
+
+    BatchComponent::~BatchComponent() {
+        destroy_batch_gpu(*this);
+    }
+
+    BatchComponent::BatchComponent(BatchComponent&& other) noexcept {
+        *this = std::move(other);
+    }
+
+    BatchComponent& BatchComponent::operator=(BatchComponent&& other) noexcept {
+        if (this == &other) return *this;
+
+        destroy_batch_gpu(*this);
+
+        key = other.key;
+        layers = other.layers;
+        prog = other.prog;
+        atlas_ref = std::move(other.atlas_ref);
+        instances = std::move(other.instances);
+        vao = other.vao;
+        instance_vbo = other.instance_vbo;
+        gpu_cap = other.gpu_cap;
+        sig = other.sig;
+        count = other.count;
+        dirty = other.dirty;
+        used = other.used;
+
+        other.vao = 0;
+        other.instance_vbo = 0;
+        other.gpu_cap = 0;
+        other.prog = nullptr;
+        return *this;
+    }
+
+    void destroy_batch_resources_gpu(BatchResources& res) {
+        if (res.quad_ebo != 0) {
+            glDeleteBuffers(1, &res.quad_ebo);
+            res.quad_ebo = 0;
+        }
+        if (res.quad_vbo != 0) {
+            glDeleteBuffers(1, &res.quad_vbo);
+            res.quad_vbo = 0;
+        }
+        res.quad_ready = false;
+    }
+
+    BatchResources::~BatchResources() {
+        destroy_batch_resources_gpu(*this);
+    }
 
     // Shared unit quad (pos only), centred at origin, size 1x1. Matches the
     // corner/uv assignment in text_vs.glsl (v0=TR, v1=TL, v2=BL, v3=BR).
@@ -74,7 +137,7 @@ namespace gld::ecs {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    static void upload_batch(BatchComponent& b) {
+    static std::size_t upload_batch(BatchComponent& b) {
         glBindBuffer(GL_ARRAY_BUFFER, b.instance_vbo);
         const std::size_t bytes = b.instances.size() * sizeof(InstanceData);
         if (b.instances.size() > b.gpu_cap) {
@@ -85,17 +148,21 @@ namespace gld::ecs {
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         b.dirty = false;
+        return bytes;
     }
 
     void draw_batches(EcsWorld& w, const Camera& cam) {
         auto& res = w.resource_or_add<BatchResources>();
+        auto& diag = w.resource_or_add<RenderDiagnostics>();
         auto& reg = w.reg();
 
         // Render state (blend/depth/target/clear) is set by render_system.
         ensure_quad(res);
 
         auto view = reg.view<BatchComponent>();
+        std::uint32_t groups = 0;
         for (auto e : view) {
+            ++groups;
             auto& b = view.get<BatchComponent>(e);
             if (b.instances.empty()) continue;
             if ((cam.layers & b.layers) == 0) continue;   // camera layer filtering
@@ -106,7 +173,8 @@ namespace gld::ecs {
             prog->use();
             if (prog->uniform_id("uViewProj") == -1)
                 prog->locat_uniforms("uViewProj", "diffuseTex");
-            glUniformMatrix4fv(prog->uniform_id("uViewProj"), 1, GL_FALSE, glm::value_ptr(cam.projection));
+            const glm::mat4 view_proj = cam.projection * cam.view;
+            glUniformMatrix4fv(prog->uniform_id("uViewProj"), 1, GL_FALSE, glm::value_ptr(view_proj));
 
             // Bind the glyph atlas by its GL id (the batch key's identity).
             if (b.key.atlas) {
@@ -116,12 +184,18 @@ namespace gld::ecs {
             }
 
             if (b.vao == 0) setup_batch_vao(res, b);
-            if (b.dirty || b.instances.size() > b.gpu_cap) upload_batch(b);
+            if (b.dirty || b.instances.size() > b.gpu_cap) {
+                diag.batch_upload_bytes += upload_batch(b);
+                ++diag.batch_uploads;
+            }
 
             glBindVertexArray(b.vao);
             glDrawElementsInstanced(GL_TRIANGLES, res.index_count, GL_UNSIGNED_INT, nullptr,
                                     static_cast<GLsizei>(b.instances.size()));
             glBindVertexArray(0);
+            ++diag.batch_draws;
+            diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
         }
+        if (groups > diag.batch_groups) diag.batch_groups = groups;
     }
 }

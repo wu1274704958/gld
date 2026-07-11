@@ -338,17 +338,19 @@ namespace gld {
 			}
 			else {
 				auto a = std::shared_ptr<Word>(new Word(font, size, c, glm::vec2(1.f, 0.f)));
-				a->load();
-				a->get_comp<Transform>()->pos = glm::vec3(x, y - static_cast<float>(a->wd.off_y) * Word::WORD_SCALE, 0.f);
-				a->get_comp<txt::DefTextMaterial>()->color = color;
-
-				if (mulitline && word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
-					do_enter();
-				else
+				if (a->load())
 				{
-					x += a->wd.advance * Word::WORD_SCALE;
+					a->get_comp<Transform>()->pos = glm::vec3(x, y - static_cast<float>(a->wd.off_y) * Word::WORD_SCALE, 0.f);
+					a->get_comp<txt::DefTextMaterial>()->color = color;
+
+					if (mulitline && word_warp && x + a->wd.advance * Word::WORD_SCALE > width)
+						do_enter();
+					else
+					{
+						x += a->wd.advance * Word::WORD_SCALE;
+					}
+					word_patch->add_word(a, glm::vec2(1.f, 0.f));
 				}
-				word_patch->add_word(a, glm::vec2(1.f, 0.f));
 				//node->add_child(a);
 			}
 		}

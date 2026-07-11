@@ -195,9 +195,9 @@ namespace gld{
         template<typename Fir,typename ...Args>
         void locat_uniforms_inside(Fir&& fir,Args&& ...args)
         {
-            if constexpr(std::is_same_v<Fir,std::string>)
+            if constexpr(std::is_same_v<std::decay_t<Fir>,std::string>)
             {
-                uniform_map[std::forward<Fir>(fir)] = glGetUniformLocation(program,fir.c_str()); 
+                uniform_map[fir] = glGetUniformLocation(program,fir.c_str()); 
             }else if constexpr(std::is_same_v<std::decay_t<Fir>,const char *>)
             {
                 uniform_map[std::string(fir)] = glGetUniformLocation(program,fir); 
