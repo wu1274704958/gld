@@ -24,6 +24,7 @@
 #include <ecs/render/RenderSystem.hpp>
 #include <ecs/render/MeshFactory.hpp>
 #include <ecs/render/PostProcess.hpp>
+#include <ecs/render/Lighting.hpp>
 
 using namespace gld::ecs;
 namespace fs = std::filesystem;
@@ -70,6 +71,7 @@ int main()
     app.add_plugin(AssetPlugin);
     app.add_plugin(CorePlugin);
     app.add_plugin(TransformPlugin);
+    app.add_plugin(LightingPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(PostProcessPlugin);
     app.add_plugin(RenderPlugin);
@@ -81,8 +83,14 @@ int main()
         auto& reg = w.reg();
 
         auto shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_fg.glsl");
+        auto emissive_shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_emissive_fg.glsl");
         auto tex = srv.load_texture("textures/container.jpg");
         auto cube = MeshFactory::cube();
+
+        reg.emplace<AmbientLight>(w.spawn(), AmbientLight{ glm::vec3(1.f), 0.18f });
+        reg.emplace<DirectionalLight>(w.spawn(), DirectionalLight{
+            glm::vec3(-0.25f, -1.0f, -0.35f), glm::vec3(1.0f, 0.95f, 0.82f), 0.75f
+        });
 
         entt::entity camE = w.spawn();
         Camera cam;
@@ -114,6 +122,14 @@ int main()
                 reg.emplace<AutoRotate>(e, AutoRotate{ spin });
             return e;
         };
+        auto make_emissive_box = [&](glm::vec3 pos, glm::vec3 scale, glm::vec4 color, float strength, glm::vec3 spin) {
+            entt::entity e = make_box(pos, scale, color, false, spin);
+            auto& mat = reg.get<Material>(e);
+            mat.shader = emissive_shader;
+            mat.uses_lighting = false;
+            mat.emissive_strength = strength;
+            return e;
+        };
 
         // Ground and depth markers.
         make_box({ 0.f, -0.62f, -13.f }, { 10.f, 0.08f, 34.f }, { 0.11f, 0.12f, 0.16f, 1.f }, false, {});
@@ -130,9 +146,9 @@ int main()
         make_box({ -1.2f, 0.2f, -35.f }, { 1.8f, 1.8f, 1.8f }, { 0.55f, 0.65f, 0.90f, 1.f }, true,  { 0.08f, 0.20f, 0.f });
 
         // Bright bloom emitters.
-        make_box({  3.1f, 1.1f,  0.0f }, { 0.32f, 0.32f, 0.32f }, { 1.0f, 0.92f, 0.22f, 1.f }, false, { 0.f, 1.5f, 0.f });
-        make_box({ -3.0f, 1.4f, -9.0f }, { 0.40f, 0.40f, 0.40f }, { 1.0f, 0.55f, 0.12f, 1.f }, false, { 0.f, 1.2f, 0.f });
-        make_box({  3.0f, 1.7f, -18.f }, { 0.50f, 0.50f, 0.50f }, { 0.75f, 0.95f, 1.0f, 1.f }, false, { 0.f, 1.0f, 0.f });
+        make_emissive_box({  3.1f, 1.1f,  0.0f }, { 0.32f, 0.32f, 0.32f }, { 1.0f, 0.92f, 0.22f, 1.f }, 2.8f, { 0.f, 1.5f, 0.f });
+        make_emissive_box({ -3.0f, 1.4f, -9.0f }, { 0.40f, 0.40f, 0.40f }, { 1.0f, 0.55f, 0.12f, 1.f }, 3.2f, { 0.f, 1.2f, 0.f });
+        make_emissive_box({  3.0f, 1.7f, -18.f }, { 0.50f, 0.50f, 0.50f }, { 0.75f, 0.95f, 1.0f, 1.f }, 3.5f, { 0.f, 1.0f, 0.f });
 
         auto& ppm = w.resource<PostProcessManager>();
         auto effect = ppm.add_post_process(camE, FogBloomPostProcessDesc{

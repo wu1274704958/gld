@@ -24,6 +24,7 @@
 #include <ecs/render/RenderComponents.hpp>
 #include <ecs/render/RenderSystem.hpp>
 #include <ecs/render/MeshFactory.hpp>
+#include <ecs/render/Lighting.hpp>
 
 using namespace gld::ecs;
 namespace fs = std::filesystem;
@@ -77,6 +78,7 @@ int main()
     app.add_plugin(AssetPlugin);
     app.add_plugin(CorePlugin);       // Time
     app.add_plugin(TransformPlugin);  // hierarchy propagation
+    app.add_plugin(LightingPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(RenderPlugin);     // multi-camera + present
     app.add_system<AutoRotateSystem>(Stage::Update);
@@ -89,6 +91,11 @@ int main()
         MeshHandle mesh = MeshFactory::cube();
         auto shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_fg.glsl");
         auto tex = srv.load_texture("textures/container.jpg");
+
+        reg.emplace<AmbientLight>(w.spawn(), AmbientLight{ glm::vec3(1.f), 0.16f });
+        reg.emplace<DirectionalLight>(w.spawn(), DirectionalLight{
+            glm::vec3(-0.35f, -1.0f, -0.25f), glm::vec3(1.0f, 0.94f, 0.82f), 0.75f
+        });
 
         // Camera entity (perspective, renders to the window).
         entt::entity camE = w.spawn();

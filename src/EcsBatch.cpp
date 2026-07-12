@@ -11,6 +11,7 @@
 #include <ecs/render/BatchSystem.hpp>
 #include <ecs/render/Batch.hpp>
 #include <ecs/render/RenderComponents.hpp>
+#include <ecs/render/RenderPassExec.hpp>
 #include <ecs/Window.hpp>
 
 namespace gld::ecs {
@@ -197,5 +198,9 @@ namespace gld::ecs {
             diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
         }
         if (groups > diag.batch_groups) diag.batch_groups = groups;
+    }
+
+    void render_batch_pass(RenderPassContext& ctx, const BatchPass&) {
+        draw_batches(ctx.world, ctx.camera);
     }
 }

@@ -8,6 +8,7 @@
 #include <ecs/render/BatchSystem.hpp>
 #include <ecs/render/RenderTarget.hpp>
 #include <ecs/render/PostProcess.hpp>
+#include <ecs/render/Lighting.hpp>
 #include <ecs/assets/AssetServer.hpp>
 #include <ecs/assets/Assets.hpp>
 #include <ecs/text/FontAsset.hpp>
@@ -130,6 +131,8 @@ namespace gld::ecs {
 
         world.remove_resource<BatchResources>();
         world.remove_resource<FullscreenResources>();
+        world.remove_resource<LightingGpuResource>();
+        world.remove_resource<LightingSettings>();
         world.remove_resource<PostProcessManager>();
         world.remove_resource<TextBatchIndex>();
         world.remove_resource<GlyphAtlasAA>();

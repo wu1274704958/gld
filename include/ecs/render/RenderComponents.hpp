@@ -34,6 +34,8 @@ namespace gld::ecs {
         // Optional non-asset texture (e.g. an offscreen render-target colour).
         // When set it overrides `texture`.
         std::shared_ptr<Texture<TexType::D2>> tex_override;
+        bool uses_lighting = true;
+        float emissive_strength = 1.0f;
     };
 
     struct Visibility { bool visible = true; };
@@ -164,6 +166,9 @@ namespace gld::ecs {
 
     template<class T>
     concept IRenderPassComponent = IsRenderPasses<std::remove_cvref_t<T>>::value;
+
+    template<IRenderPassComponent... Components>
+    struct RenderPassComponentRegistry {};
 
     // Camera is a COMPONENT (many allowed), not a resource. Each camera is a
     // render pass: it renders the drawables its `layers` mask selects, into

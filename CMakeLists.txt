@@ -130,6 +130,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR ecs_text_fx FILES main.cpp)
     CreateExample(DIR ecs_multicam FILES main.cpp)
     CreateExample(DIR ecs_postprocess FILES main.cpp)
+    CreateExample(DIR ecs_lighting FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

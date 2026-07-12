@@ -35,6 +35,7 @@
 #include <ecs/render/MeshFactory.hpp>
 #include <ecs/render/Batch.hpp>
 #include <ecs/render/BatchSystem.hpp>
+#include <ecs/render/Lighting.hpp>
 
 using namespace gld::ecs;
 namespace fs = std::filesystem;
@@ -57,6 +58,7 @@ int main()
     app.add_plugin(AssetPlugin);
     app.add_plugin(CorePlugin);
     app.add_plugin(TransformPlugin);
+    app.add_plugin(LightingPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(TextPlugin);
     TextBatchPlugin(app);
@@ -68,9 +70,15 @@ int main()
         auto& reg = w.reg();
 
         auto mesh_shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_fg.glsl");
+        auto unlit_shader = srv.load_program("ecs/mesh_vs.glsl", "ecs/mesh_unlit_fg.glsl");
         auto tex = srv.load_texture("textures/container.jpg");
         auto cube = MeshFactory::cube();
         auto quad = MeshFactory::quad(3.2f);
+
+        reg.emplace<AmbientLight>(w.spawn(), AmbientLight{ glm::vec3(1.f), 0.20f });
+        reg.emplace<DirectionalLight>(w.spawn(), DirectionalLight{
+            glm::vec3(-0.30f, -1.0f, -0.35f), glm::vec3(1.0f, 0.94f, 0.84f), 0.85f
+        });
 
         // Offscreen render target sampled by camera B.
         auto rt = create_render_target(512, 512);
@@ -125,7 +133,7 @@ int main()
             reg.emplace<Transform>(e, Transform{});
             reg.emplace<GlobalTransform>(e);
             reg.emplace<MeshHandle>(e, quad);
-            Material m; m.shader = mesh_shader; m.color = glm::vec4(1.f); m.tex_override = rt->color;
+            Material m; m.shader = unlit_shader; m.color = glm::vec4(1.f); m.tex_override = rt->color; m.uses_lighting = false;
             reg.emplace<Material>(e, m);
             reg.emplace<AutoRotate>(e, AutoRotate{ glm::vec3(0.f, 0.35f, 0.f) });
             reg.emplace<RenderLayer>(e, RenderLayer{ 0x2u });

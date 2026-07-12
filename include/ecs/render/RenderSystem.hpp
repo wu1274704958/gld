@@ -14,15 +14,13 @@
 
 #include "RenderComponents.hpp"
 #include "RenderGraph.hpp"
+#include "RenderPassExec.hpp"
 #include "../App.hpp"
 #include "../EcsWorld.hpp"
 
 #include <type_traits>
 
 namespace gld::ecs {
-
-    template<IRenderPassComponent... Components>
-    struct RenderPassComponentRegistry {};
 
     using DefaultRenderPassRegistry = RenderPassComponentRegistry<
         RenderPasses<MeshPass>,
@@ -54,7 +52,14 @@ namespace gld::ecs {
     void render_system(EcsWorld& w);
     void render_system_default(EcsWorld& w);
     void present_system(EcsWorld& w);
+    void cleanup_render_common_resources(EcsWorld& w);
     void cleanup_render_resources(EcsWorld& w);
+
+    template<class Registry>
+    void cleanup_render_resources_t(EcsWorld& w) {
+        cleanup_registered_render_passes<Registry>(w);
+        cleanup_render_common_resources(w);
+    }
 
     // Registers all of the above (2D/text passes require a BatchPlugin).
     void RenderPlugin(App& app);

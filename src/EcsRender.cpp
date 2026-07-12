@@ -10,233 +10,16 @@
 #include <climits>
 #include <unordered_map>
 
-#include <vertex_arr.hpp>
-#include <program.hpp>
-#include <texture.hpp>
-
 #include <ecs/render/RenderSystem.hpp>
 #include <ecs/render/BatchSystem.hpp>   // draw_batches
 #include <ecs/render/RenderTarget.hpp>
 #include <ecs/render/PostProcess.hpp>
+#include <ecs/render/Lighting.hpp>
+#include <ecs/render/RenderPassExec.hpp>
 #include <ecs/Components.hpp>
 #include <ecs/Window.hpp>
 
 namespace gld::ecs {
-
-    struct RenderStateCache {
-        unsigned int framebuffer = static_cast<unsigned int>(-1);
-        int viewport_w = -1;
-        int viewport_h = -1;
-        bool blend_known = false;
-        bool blend_enabled = false;
-        bool depth_known = false;
-        bool depth_enabled = false;
-        bool depth_write_known = false;
-        bool depth_write_enabled = false;
-        bool blend_func_known = false;
-        BlendFactor blend_src = BlendFactor::SrcAlpha;
-        BlendFactor blend_dst = BlendFactor::OneMinusSrcAlpha;
-        BlendEquation blend_equation = BlendEquation::Add;
-        bool stencil_known = false;
-        bool stencil_enabled = false;
-        bool stencil_func_known = false;
-        StencilFaceState stencil_state;
-
-        void bind_framebuffer(unsigned int target) {
-            if (framebuffer == target) return;
-            glBindFramebuffer(GL_FRAMEBUFFER, target);
-            framebuffer = target;
-        }
-
-        void viewport(int width, int height) {
-            if (viewport_w == width && viewport_h == height) return;
-            glViewport(0, 0, width, height);
-            viewport_w = width;
-            viewport_h = height;
-        }
-
-        void blend(bool enabled) {
-            if (blend_known && blend_enabled == enabled) return;
-            if (enabled) glEnable(GL_BLEND);
-            else glDisable(GL_BLEND);
-            blend_known = true;
-            blend_enabled = enabled;
-        }
-
-        void depth(bool enabled) {
-            if (depth_known && depth_enabled == enabled) return;
-            if (enabled) glEnable(GL_DEPTH_TEST);
-            else glDisable(GL_DEPTH_TEST);
-            depth_known = true;
-            depth_enabled = enabled;
-        }
-
-        void depth_write(bool enabled) {
-            if (depth_write_known && depth_write_enabled == enabled) return;
-            glDepthMask(enabled ? GL_TRUE : GL_FALSE);
-            depth_write_known = true;
-            depth_write_enabled = enabled;
-        }
-
-        void blend_func(BlendFactor src, BlendFactor dst, BlendEquation equation) {
-            if (blend_func_known && blend_src == src && blend_dst == dst && blend_equation == equation) return;
-            glBlendFunc(static_cast<GLenum>(src), static_cast<GLenum>(dst));
-            glBlendEquation(static_cast<GLenum>(equation));
-            blend_func_known = true;
-            blend_src = src;
-            blend_dst = dst;
-            blend_equation = equation;
-        }
-
-        void stencil(bool enabled) {
-            if (stencil_known && stencil_enabled == enabled) return;
-            if (enabled) glEnable(GL_STENCIL_TEST);
-            else glDisable(GL_STENCIL_TEST);
-            stencil_known = true;
-            stencil_enabled = enabled;
-        }
-
-        void stencil_func_ops(const StencilFaceState& state) {
-            if (stencil_func_known &&
-                stencil_state.func == state.func &&
-                stencil_state.ref == state.ref &&
-                stencil_state.mask == state.mask &&
-                stencil_state.fail == state.fail &&
-                stencil_state.depth_fail == state.depth_fail &&
-                stencil_state.pass == state.pass) {
-                return;
-            }
-
-            glStencilFunc(static_cast<GLenum>(state.func), state.ref, state.mask);
-            glStencilOp(static_cast<GLenum>(state.fail),
-                        static_cast<GLenum>(state.depth_fail),
-                        static_cast<GLenum>(state.pass));
-            stencil_func_known = true;
-            stencil_state = state;
-        }
-
-        void apply(const ResolvedRenderPassState& state) {
-            blend(state.blend);
-            if (state.blend)
-                blend_func(state.blend_src, state.blend_dst, state.blend_equation);
-            depth(state.depth_test);
-            depth_write(state.depth_write);
-            stencil(state.stencil);
-            if (state.stencil)
-                stencil_func_ops(state.stencil_state);
-        }
-    };
-
-    void destroy_fullscreen_resources_gpu(FullscreenResources& res) {
-        if (res.ebo != 0) {
-            glDeleteBuffers(1, &res.ebo);
-            res.ebo = 0;
-        }
-        if (res.vbo != 0) {
-            glDeleteBuffers(1, &res.vbo);
-            res.vbo = 0;
-        }
-        if (res.vao != 0) {
-            glDeleteVertexArrays(1, &res.vao);
-            res.vao = 0;
-        }
-        res.ready = false;
-    }
-
-    FullscreenResources::~FullscreenResources() {
-        destroy_fullscreen_resources_gpu(*this);
-    }
-
-    static void ensure_fullscreen_quad(FullscreenResources& res) {
-        if (res.ready) return;
-
-        static const float verts[] = {
-            -1.f, -1.f, 0.f, 0.f,
-             1.f, -1.f, 1.f, 0.f,
-             1.f,  1.f, 1.f, 1.f,
-            -1.f,  1.f, 0.f, 1.f,
-        };
-        static const unsigned int idx[] = { 0, 1, 2, 0, 2, 3 };
-
-        glGenVertexArrays(1, &res.vao);
-        glGenBuffers(1, &res.vbo);
-        glGenBuffers(1, &res.ebo);
-
-        glBindVertexArray(res.vao);
-        glBindBuffer(GL_ARRAY_BUFFER, res.vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, res.ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(idx), idx, GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(2 * sizeof(float)));
-
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-        res.index_count = 6;
-        res.ready = true;
-    }
-
-    static void set_fullscreen_uniform(Program& prog, const FullscreenUniform& uniform) {
-        if (prog.uniform_id(uniform.name) == -1)
-            prog.locat_uniforms(uniform.name);
-
-        const int loc = prog.uniform_id(uniform.name);
-        if (loc < 0) return;
-
-        std::visit([&](const auto& value) {
-            using V = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<V, int>) glUniform1i(loc, value);
-            else if constexpr (std::is_same_v<V, float>) glUniform1f(loc, value);
-            else if constexpr (std::is_same_v<V, glm::vec2>) glUniform2fv(loc, 1, glm::value_ptr(value));
-            else if constexpr (std::is_same_v<V, glm::vec3>) glUniform3fv(loc, 1, glm::value_ptr(value));
-            else if constexpr (std::is_same_v<V, glm::vec4>) glUniform4fv(loc, 1, glm::value_ptr(value));
-        }, uniform.value);
-    }
-
-    static void draw_fullscreen_pass(EcsWorld& w, const FullscreenPass& pass) {
-        auto& diag = w.resource_or_add<RenderDiagnostics>();
-        auto& res = w.resource_or_add<FullscreenResources>();
-        ensure_fullscreen_quad(res);
-
-        if (pass.shader.state() != LoadState::Loaded) {
-            ++diag.mesh_skipped_unloaded;
-            return;
-        }
-
-        Program* prog = pass.shader.get();
-        if (!prog) {
-            ++diag.mesh_skipped_invalid;
-            return;
-        }
-
-        prog->use();
-        for (std::size_t i = 0; i < pass.textures.size(); ++i) {
-            const auto& slot = pass.textures[i];
-            if (!slot.texture) {
-                ++diag.graph_skipped_invalid;
-                return;
-            }
-            if (prog->uniform_id(slot.uniform) == -1)
-                prog->locat_uniforms(slot.uniform);
-            glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(i));
-            glBindTexture(GL_TEXTURE_2D, slot.texture->get_id());
-            const int loc = prog->uniform_id(slot.uniform);
-            if (loc >= 0) glUniform1i(loc, static_cast<GLint>(i));
-        }
-
-        for (const auto& uniform : pass.uniforms)
-            set_fullscreen_uniform(*prog, uniform);
-
-        glBindVertexArray(res.vao);
-        glDrawElements(GL_TRIANGLES, res.index_count, GL_UNSIGNED_INT, nullptr);
-        glBindVertexArray(0);
-        ++diag.batch_draws;
-    }
 
     // Allocate contiguous, gap-filling ids to any camera with id < 0. Ids of
     // destroyed cameras disappear from the live set, so the next spawn reuses
@@ -407,117 +190,24 @@ namespace gld::ecs {
         graph.dirty = false;
     }
 
-    // 3D mesh pass for one perspective camera (layer-filtered).
-    static void draw_meshes(EcsWorld& w, const Camera& cam) {
-        auto& reg = w.reg();
-        auto& diag = w.resource_or_add<RenderDiagnostics>();
-        auto view = reg.view<GlobalTransform, MeshHandle, Material>();
-        for (auto e : view) {
-            if (auto* vis = reg.try_get<Visibility>(e); vis && !vis->visible) continue;
-
-            std::uint32_t mask = 0x1u;
-            if (auto* rl = reg.try_get<RenderLayer>(e)) mask = rl->mask;
-            if ((cam.layers & mask) == 0) continue;
-
-            auto& mat = view.get<Material>(e);
-            if (mat.shader.state() != LoadState::Loaded) {
-                ++diag.mesh_skipped_unloaded;
-                continue;
-            }
-            Program* prog = mat.shader.get();
-            if (!prog) {
-                ++diag.mesh_skipped_invalid;
-                continue;
-            }
-
-            auto& mesh = view.get<MeshHandle>(e);
-            if (!mesh.vao || mesh.index_count <= 0) {
-                ++diag.mesh_skipped_invalid;
-                continue;
-            }
-
-            auto& g = view.get<GlobalTransform>(e);
-
-            prog->use();
-            if (prog->uniform_id("projection") == -1)
-                prog->locat_uniforms("projection", "view", "model", "tex", "hasTex", "color");
-
-            glUniformMatrix4fv(prog->uniform_id("projection"), 1, GL_FALSE, glm::value_ptr(cam.projection));
-            glUniformMatrix4fv(prog->uniform_id("view"), 1, GL_FALSE, glm::value_ptr(cam.view));
-            glUniformMatrix4fv(prog->uniform_id("model"), 1, GL_FALSE, glm::value_ptr(g.world));
-
-            int hasTex = 0;
-            Texture<TexType::D2>* bindTex = nullptr;
-            if (mat.tex_override)                            bindTex = mat.tex_override.get();
-            else if (mat.texture.state() == LoadState::Loaded) bindTex = mat.texture.get();
-            if (bindTex) {
-                bindTex->active<ActiveTexId::_0>();
-                glUniform1i(prog->uniform_id("tex"), 0);
-                hasTex = 1;
-            }
-            glUniform1i(prog->uniform_id("hasTex"), hasTex);
-            glUniform4fv(prog->uniform_id("color"), 1, glm::value_ptr(mat.color));
-
-            mesh.vao->bind();
-            glDrawElements(mesh.mode, mesh.index_count, GL_UNSIGNED_INT, nullptr);
-            mesh.vao->unbind();
-            ++diag.mesh_draws;
-        }
-    }
-
     static void render_diagnostics_begin_frame_system(EcsWorld& w) {
         w.resource_or_add<RenderDiagnostics>().begin_frame();
     }
 
-    static void execute_render_pass(
-        EcsWorld& w,
-        entt::entity e,
-        const Camera& cam,
-        RenderStateCache& state,
-        std::uint32_t pass_id,
-        const RenderPassState& pass_state) {
-
-        auto& reg = w.reg();
-        auto& diag = w.resource_or_add<RenderDiagnostics>();
-        state.apply(resolve_render_pass_state(pass_id, pass_state));
-
-        switch (pass_id) {
-        case RenderPassMesh:
-            draw_meshes(w, cam);
-            ++diag.passes;
-            break;
-        case RenderPassBatch:
-            draw_batches(w, cam);
-            ++diag.passes;
-            break;
-        case RenderPassFullscreen: {
-            const auto* fullscreen_pass = reg.try_get<FullscreenPass>(e);
-            if (fullscreen_pass) {
-                draw_fullscreen_pass(w, *fullscreen_pass);
-                ++diag.passes;
-            } else {
-                ++diag.graph_skipped_invalid;
-            }
-            break;
-        }
-        default:
-            ++diag.graph_skipped_invalid;
-            break;
-        }
-    }
-
     template<IRenderPass Pass>
-    static void execute_tuple_pass(EcsWorld& w, entt::entity e, const Camera& cam, RenderStateCache& state, const Pass& pass) {
-        execute_render_pass(w, e, cam, state, Pass::id, pass.state);
+    static void execute_tuple_pass(RenderPassContext& ctx, const Pass& pass) {
+        ctx.state_cache.apply(resolve_render_pass_state(Pass::id, pass.state));
+        RenderPassExecutor<Pass>::render(ctx, pass);
     }
 
     template<IRenderPassComponent PassComponent>
-    static bool try_render_pass_component(EcsWorld& w, entt::entity e, const Camera& cam, RenderStateCache& state) {
+    static bool try_render_pass_component(EcsWorld& w, entt::entity e, const Camera& cam, RenderStateCache& state, int target_width, int target_height) {
         auto* component = w.reg().try_get<PassComponent>(e);
         if (!component) return false;
 
+        RenderPassContext ctx{ w, e, cam, state, target_width, target_height };
         std::apply([&](const auto&... pass) {
-            (execute_tuple_pass(w, e, cam, state, pass), ...);
+            (execute_tuple_pass(ctx, pass), ...);
         }, component->passes);
         return true;
     }
@@ -527,8 +217,10 @@ namespace gld::ecs {
                                              EcsWorld& w,
                                              entt::entity e,
                                              const Camera& cam,
-                                             RenderStateCache& state) {
-        return (try_render_pass_component<PassComponents>(w, e, cam, state) || ...);
+                                             RenderStateCache& state,
+                                             int target_width,
+                                             int target_height) {
+        return (try_render_pass_component<PassComponents>(w, e, cam, state, target_width, target_height) || ...);
     }
 
     template<class Registry>
@@ -582,7 +274,7 @@ namespace gld::ecs {
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             }
 
-            if (!try_render_registered_passes(Registry{}, w, e, cam, state))
+            if (!try_render_registered_passes(Registry{}, w, e, cam, state, tw, th))
                 ++diag.graph_skipped_invalid;
             ++diag.graph_executed;
         }
@@ -651,7 +343,7 @@ namespace gld::ecs {
         if (presented && win) win->presented = true;
     }
 
-    void cleanup_render_resources(EcsWorld& w) {
+    void cleanup_render_common_resources(EcsWorld& w) {
         auto& reg = w.reg();
         std::vector<entt::entity> waits;
         for (auto e : reg.view<WaitPresent>()) waits.push_back(e);
@@ -670,14 +362,18 @@ namespace gld::ecs {
         if (auto* res = w.try_resource<BatchResources>())
             destroy_batch_resources_gpu(*res);
 
-        if (auto* res = w.try_resource<FullscreenResources>())
-            destroy_fullscreen_resources_gpu(*res);
-
         if (auto* ppm = w.try_resource<PostProcessManager>())
             ppm->cleanup();
 
+        if (auto* lighting = w.try_resource<LightingGpuResource>())
+            lighting->cleanup();
+
         if (auto* rt = w.try_resource<std::shared_ptr<RenderTarget>>(); rt && *rt)
             destroy_render_target_gpu(**rt);
+    }
+
+    void cleanup_render_resources(EcsWorld& w) {
+        cleanup_render_resources_t<DefaultRenderPassRegistry>(w);
     }
 
     void RenderPlugin(App& app) {
