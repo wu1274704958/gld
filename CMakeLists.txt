@@ -38,6 +38,11 @@ find_package(SPY)
 find_package(BASS24)
 find_package(EnTT CONFIG REQUIRED)
 
+set(GLD_PLATFORM_LIBS "")
+if(WIN32)
+    list(APPEND GLD_PLATFORM_LIBS Ole32 Mmdevapi)
+endif()
+
 add_definitions(-DNOMINMAX)
 add_definitions(-DGLM_ENABLE_EXPERIMENTAL)
 
@@ -60,6 +65,10 @@ endif()
 
 if(GLM_FOUND AND GLFW3_FOUND)
     message(${GLM_INCLUDE_DIR})
+
+    if(GLD_PLATFORM_LIBS)
+        link_libraries(${GLD_PLATFORM_LIBS})
+    endif()
 
     include_directories( ${GLFW3_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/3rd_party/stb
@@ -131,6 +140,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR ecs_multicam FILES main.cpp)
     CreateExample(DIR ecs_postprocess FILES main.cpp)
     CreateExample(DIR ecs_lighting FILES main.cpp)
+    CreateExample(DIR ecs_audio_fft FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

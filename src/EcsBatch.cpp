@@ -175,13 +175,17 @@ namespace gld::ecs {
             if (prog->uniform_id("uViewProj") == -1)
                 prog->locat_uniforms("uViewProj", "diffuseTex");
             const glm::mat4 view_proj = cam.projection * cam.view;
-            glUniformMatrix4fv(prog->uniform_id("uViewProj"), 1, GL_FALSE, glm::value_ptr(view_proj));
+            const int view_proj_loc = prog->uniform_id("uViewProj");
+            if (view_proj_loc >= 0)
+                glUniformMatrix4fv(view_proj_loc, 1, GL_FALSE, glm::value_ptr(view_proj));
 
             // Bind the glyph atlas by its GL id (the batch key's identity).
             if (b.key.atlas) {
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, b.key.atlas);
-                glUniform1i(prog->uniform_id("diffuseTex"), 0);
+                const int tex_loc = prog->uniform_id("diffuseTex");
+                if (tex_loc >= 0)
+                    glUniform1i(tex_loc, 0);
             }
 
             if (b.vao == 0) setup_batch_vao(res, b);

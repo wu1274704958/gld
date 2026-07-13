@@ -27,6 +27,10 @@ namespace gld::ecs {
 
     template<class T>
     struct Assets {
+        struct StoreLifetime {
+            Assets* owner = nullptr;
+        };
+
         struct Entry {
             std::shared_ptr<T> data;
             LoadState state = LoadState::NotLoaded;
@@ -40,6 +44,36 @@ namespace gld::ecs {
         std::unordered_map<AssetId, Entry> map;
         UnloadConfig config;
         double now_ = 0.0;   // current frame time (set by gc each frame)
+
+        Assets() : lifetime_(std::make_shared<StoreLifetime>()) {
+            lifetime_->owner = this;
+        }
+
+        ~Assets() {
+            if (lifetime_) lifetime_->owner = nullptr;
+        }
+
+        Assets(const Assets&) = delete;
+        Assets& operator=(const Assets&) = delete;
+
+        Assets(Assets&& other) noexcept
+            : map(std::move(other.map)),
+              config(other.config),
+              now_(other.now_),
+              lifetime_(std::move(other.lifetime_)) {
+            if (lifetime_) lifetime_->owner = this;
+        }
+
+        Assets& operator=(Assets&& other) noexcept {
+            if (this == &other) return *this;
+            if (lifetime_) lifetime_->owner = nullptr;
+            map = std::move(other.map);
+            config = other.config;
+            now_ = other.now_;
+            lifetime_ = std::move(other.lifetime_);
+            if (lifetime_) lifetime_->owner = this;
+            return *this;
+        }
 
         Entry& entry(AssetId id) { return map[id]; }
         Entry* find(AssetId id) {
@@ -67,9 +101,12 @@ namespace gld::ecs {
         std::shared_ptr<void> acquire_token(AssetId id) {
             auto& e = map[id];
             if (auto t = e.token_weak.lock()) return t;
-            Assets* self = this;
+            std::weak_ptr<StoreLifetime> lifetime = lifetime_;
             std::shared_ptr<void> tok(reinterpret_cast<void*>(1),
-                [self, id](void*) { self->on_zero_refs(id); });
+                [lifetime, id](void*) {
+                    if (auto guard = lifetime.lock(); guard && guard->owner)
+                        guard->owner->on_zero_refs(id);
+                });
             e.token_weak = tok;
             e.zero_refs = false;
             e.released_at = 0.0;
@@ -115,6 +152,8 @@ namespace gld::ecs {
         }
 
     private:
+        std::shared_ptr<StoreLifetime> lifetime_;
+
         template<class Pred>
         void erase_if_zero(Pred pred) {
             for (auto it = map.begin(); it != map.end();) {
