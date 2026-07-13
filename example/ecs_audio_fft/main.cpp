@@ -25,6 +25,7 @@
 #include <ecs\assets\FileSystem.hpp>
 #include <ecs\audio\AudioCaptureSystem.hpp>
 #include <ecs\audio\FftSystem.hpp>
+#include <ecs\audio\PcmNormalizeSystem.hpp>
 #include <ecs\render\Batch.hpp>
 #include <ecs\render\BatchSystem.hpp>
 #include <ecs\render\PostProcess.hpp>
@@ -46,7 +47,6 @@ namespace {
         std::vector<float> smooth;
         std::uint64_t last_sequence = 0;
         int max_bars = 84;
-        int max_segments = 72;
         float nixie_aspect = 3.3708f;
         float segment_h = 3.0f;
         float gap_h = 3.5f;
@@ -64,7 +64,7 @@ namespace {
         float bar_emissive_power = 1.25f;
         float segment_emissive_gain = 1.15f;
         float segment_emissive_power = 1.4f;
-        float top_segment_emissive = 1.35f;
+        float top_segment_emissive = 1.65f;
     };
 
     glm::vec4 spectrum_color(const SpectrumVizState& state, int bar) {
@@ -77,14 +77,31 @@ namespace {
         return state.colors[static_cast<std::size_t>(idx)];
     }
 
-    float segment_emissive(const SpectrumVizState& state, float bar_level, float segment_t, bool is_top) {
-        const float bar_glow = 1.0f + state.bar_emissive_gain * std::pow(bar_level, state.bar_emissive_power);
-        const float segment_glow = 1.0f + state.segment_emissive_gain * std::pow(segment_t, state.segment_emissive_power);
-        const float top_glow = is_top ? state.top_segment_emissive : 1.0f;
-        return state.base_emissive * bar_glow * segment_glow * top_glow;
+    glm::vec4 top_segment_color(glm::vec4 base) {
+        constexpr float kTopDarken = 0.20f;
+        base.r *= kTopDarken;
+        base.g *= kTopDarken;
+        base.b *= kTopDarken;
+        return base;
     }
 
-    float band_volume(const FftSpectrum& spectrum, int bar, int bars, float min_hz, float max_hz) {
+    int segment_count_from_level(float level, int max_segments) {
+        const float clamped = std::max(level, 0.f);
+        int segments = static_cast<int>(std::ceil(clamped * static_cast<float>(max_segments)));
+        if (segments == 0 && level > 0.045f)
+            segments = 1;
+        return std::clamp(segments, 0, max_segments);
+    }
+
+    float segment_emissive(const SpectrumVizState& state, float bar_level, float segment_t, bool is_top) {
+        //const float bar_glow = 1.0f + state.bar_emissive_gain * std::pow(bar_level, state.bar_emissive_power);
+        const float segment_glow = 1.0f + state.segment_emissive_gain * std::pow(segment_t, state.segment_emissive_power);
+        const float top_glow = is_top ? state.top_segment_emissive : 1.0f;
+        return state.base_emissive * /*bar_glow* */  segment_glow * top_glow;
+    }
+
+    template<class SpectrumT>
+    float band_volume(const SpectrumT& spectrum, int bar, int bars, float min_hz, float max_hz) {
         if (spectrum.bins.empty()) return 0.f;
 
         const float nyquist = static_cast<float>(spectrum.sample_rate) * 0.5f;
@@ -148,6 +165,14 @@ namespace {
             break;
         }
 
+        if (!spectrum) {
+            auto& batch = w.reg().get<BatchComponent>(state->batch);
+            batch.used = true;
+            batch.instances.clear();
+            batch.dirty = true;
+            return;
+        }
+
         auto& batch = w.reg().get<BatchComponent>(state->batch);
         batch.used = true;
 
@@ -164,12 +189,6 @@ namespace {
         batch.layers = kSpectrumLayer;
         batch.key.layers = kSpectrumLayer;
 
-        if (!spectrum) {
-            batch.instances.clear();
-            batch.dirty = true;
-            return;
-        }
-
         if (state->smooth.size() != static_cast<std::size_t>(state->max_bars))
             state->smooth.assign(static_cast<std::size_t>(state->max_bars), 0.f);
 
@@ -185,31 +204,40 @@ namespace {
             1,
             std::min(state->max_bars, static_cast<int>(spectrum->bins.size())));
         const float segment_pitch = state->segment_h + state->gap_h;
-        const int max_segments = std::clamp(
-            static_cast<int>((height - 92.f) / segment_pitch),
+        const int max_segments = std::max(
             8,
-            state->max_segments);
+            static_cast<int>((height - 92.f) / segment_pitch));
 
         batch.instances.clear();
         batch.instances.reserve(static_cast<std::size_t>(visible_bars * max_segments));
 
         for (int i = 0; i < visible_bars; ++i) {
             const float raw = band_volume(*spectrum, i, visible_bars, state->min_hz, state->max_hz);
-            const float target = std::clamp(std::pow(std::log1p(raw * 420.f) / 4.0f, 0.62f), 0.f, 1.f);
+            const float target = std::pow(std::log1p(raw * 420.f) / 4.0f, 0.62f);
             const float speed = target > state->smooth[static_cast<std::size_t>(i)] ? 0.78f : 0.18f;
             float& smoothed = state->smooth[static_cast<std::size_t>(i)];
             smoothed += (target - smoothed) * speed;
 
-            int segments = std::clamp(static_cast<int>(std::ceil(smoothed * max_segments)), 0, max_segments);
-            if (segments == 0 && target > 0.045f)
-                segments = 1;
             const float x = -width * 0.5f + margin_x + bar_w * 0.5f + static_cast<float>(i) * bar_pitch;
             const glm::vec4 c = spectrum_color(*state, i);
-            for (int s = 0; s < segments; ++s) {
+            const glm::vec4 top_c = top_segment_color(c);
+            const int raw_segments = segment_count_from_level(target, max_segments);
+            const int smoothed_segments = segment_count_from_level(smoothed, max_segments);
+            const int top_index = smoothed_segments - 1;
+            const int body_segments = top_index >= 0 ? std::min(raw_segments, top_index) : raw_segments;
+
+            for (int s = 0; s < body_segments; ++s) {
                 const float t = static_cast<float>(s + 1) / static_cast<float>(max_segments);
                 const float y = bottom + state->segment_h * 0.5f + static_cast<float>(s) * segment_pitch;
-                const float emissive = segment_emissive(*state, smoothed, t, s == segments - 1);
+                const float emissive = segment_emissive(*state, target, t, false);
                 push_segment(batch, x, y, bar_w, state->segment_h, c, emissive);
+            }
+
+            if (top_index >= 0) {
+                const float t = static_cast<float>(top_index + 1) / static_cast<float>(max_segments);
+                const float y = bottom + state->segment_h * 0.5f + static_cast<float>(top_index) * segment_pitch;
+                const float emissive = segment_emissive(*state, smoothed, t, true);
+                push_segment(batch, x, y, bar_w, state->segment_h, top_c, emissive);
             }
         }
 
@@ -241,6 +269,9 @@ namespace {
 
             if (auto* spectrum = reg.try_get<FftSpectrum>(e))
                 std::printf(" fft_bins=%zu", spectrum->bins.size());
+            if (auto* normalized = reg.try_get<NormalizedPcmAudio>(e))
+                std::printf(" pcm_gain=%.2f pcm_rms=%.5f pcm_peak=%.5f",
+                    normalized->gain, normalized->measured_rms, normalized->measured_peak);
             std::printf("\n");
             printed = true;
         }
@@ -266,6 +297,7 @@ int main(int argc, char** argv)
     app.add_plugin(AssetPlugin);
     app.add_plugin(CorePlugin);
     app.add_plugin(AudioCapturePlugin);
+    app.add_plugin(PcmNormalizePlugin);
     app.add_plugin(FftPlugin);
     app.add_plugin(PostProcessPlugin);
     app.add_plugin(RenderPlugin);

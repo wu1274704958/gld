@@ -41,14 +41,20 @@ namespace gld::ecs {
             }
         }
 
+        struct PcmInputView {
+            std::uint32_t sample_rate = 0;
+            std::uint16_t channels = 0;
+            const std::vector<float>* samples = nullptr;
+        };
+
         std::vector<FrequencyVolume> compute_channel_bins(
-            const PcmAudio& pcm,
+            const PcmInputView& pcm,
             std::uint32_t fft_size,
             std::uint16_t source_channel) {
 
             std::vector<std::complex<float>> data(fft_size);
             const std::size_t channels = std::max<std::uint16_t>(pcm.channels, 1);
-            const std::size_t frame_count = pcm.samples.size() / channels;
+            const std::size_t frame_count = pcm.samples->size() / channels;
             const std::size_t start_frame = frame_count - fft_size;
 
             for (std::uint32_t i = 0; i < fft_size; ++i) {
@@ -57,10 +63,10 @@ namespace gld::ecs {
                 float sample = 0.f;
                 if (source_channel == std::numeric_limits<std::uint16_t>::max()) {
                     for (std::size_t ch = 0; ch < channels; ++ch)
-                        sample += pcm.samples[frame * channels + ch];
+                        sample += (*pcm.samples)[frame * channels + ch];
                     sample /= static_cast<float>(channels);
                 } else {
-                    sample = pcm.samples[frame * channels + source_channel];
+                    sample = (*pcm.samples)[frame * channels + source_channel];
                 }
                 data[i] = std::complex<float>(sample * window, 0.f);
             }
@@ -90,52 +96,61 @@ namespace gld::ecs {
 
         for (auto e : reg.view<PcmAudio>()) {
             const auto& pcm = reg.get<PcmAudio>(e);
-            if (pcm.channels == 0 || pcm.sample_rate == 0) {
+            const auto* normalized = reg.try_get<NormalizedPcmAudio>(e);
+            const bool use_normalized = normalized && normalized->source_sequence == pcm.sequence;
+            PcmInputView input{
+                use_normalized ? normalized->sample_rate : pcm.sample_rate,
+                use_normalized ? normalized->channels : pcm.channels,
+                use_normalized ? &normalized->samples : &pcm.samples
+            };
+
+            if (input.channels == 0 || input.sample_rate == 0 || !input.samples) {
                 insufficient.push_back(e);
                 continue;
             }
 
-            const std::size_t frame_count = pcm.samples.size() / pcm.channels;
+            const std::size_t frame_count = input.samples->size() / input.channels;
             if (frame_count < settings.fft_size) {
                 insufficient.push_back(e);
                 continue;
             }
 
+            const std::uint64_t source_sequence = use_normalized ? normalized->sequence : pcm.sequence;
             if (auto* existing = reg.try_get<FftSpectrum>(e);
                 existing &&
-                existing->source_sequence == pcm.sequence &&
+                existing->source_sequence == source_sequence &&
                 existing->fft_size == settings.fft_size &&
                 existing->channel_layout == settings.channel_layout &&
-                existing->channels == (settings.multi_channel ? pcm.channels : 1)) {
+                existing->channels == (settings.multi_channel ? input.channels : 1)) {
                 continue;
             }
 
             FftSpectrum spectrum;
             spectrum.process_id = pcm.process_id;
             spectrum.process_name = pcm.process_name;
-            spectrum.sample_rate = pcm.sample_rate;
+            spectrum.sample_rate = input.sample_rate;
             spectrum.fft_size = settings.fft_size;
             spectrum.channel_layout = settings.channel_layout;
-            spectrum.source_sequence = pcm.sequence;
+            spectrum.source_sequence = source_sequence;
 
             if (!settings.multi_channel) {
                 spectrum.channels = 1;
-                spectrum.bins = compute_channel_bins(pcm, settings.fft_size, std::numeric_limits<std::uint16_t>::max());
+                spectrum.bins = compute_channel_bins(input, settings.fft_size, std::numeric_limits<std::uint16_t>::max());
             } else {
-                spectrum.channels = pcm.channels;
+                spectrum.channels = input.channels;
                 const std::uint32_t bin_count = settings.fft_size / 2 + 1;
                 std::vector<std::vector<FrequencyVolume>> per_channel;
-                per_channel.reserve(pcm.channels);
-                for (std::uint16_t ch = 0; ch < pcm.channels; ++ch)
-                    per_channel.push_back(compute_channel_bins(pcm, settings.fft_size, ch));
+                per_channel.reserve(input.channels);
+                for (std::uint16_t ch = 0; ch < input.channels; ++ch)
+                    per_channel.push_back(compute_channel_bins(input, settings.fft_size, ch));
 
-                spectrum.bins.reserve(static_cast<std::size_t>(bin_count) * pcm.channels);
+                spectrum.bins.reserve(static_cast<std::size_t>(bin_count) * input.channels);
                 if (settings.channel_layout == FftChannelLayout::Planar) {
                     for (const auto& channel_bins : per_channel)
                         spectrum.bins.insert(spectrum.bins.end(), channel_bins.begin(), channel_bins.end());
                 } else {
                     for (std::uint32_t bin = 0; bin < bin_count; ++bin) {
-                        for (std::uint16_t ch = 0; ch < pcm.channels; ++ch)
+                        for (std::uint16_t ch = 0; ch < input.channels; ++ch)
                             spectrum.bins.push_back(per_channel[ch][bin]);
                     }
                 }
