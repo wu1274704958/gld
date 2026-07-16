@@ -139,10 +139,8 @@ namespace gld::ecs {
         world.remove_resource<GlyphAtlasSDF>();
         world.remove_resource<std::shared_ptr<RenderTarget>>();
 
-        world.remove_resource<Assets<FontAsset>>();
-        world.remove_resource<Assets<Texture<TexType::D2>>>();
-        world.remove_resource<Assets<Program>>();
         world.remove_resource<AssetServer>();
+        world.remove_resource<AssetManager>();
     }
 
     void run_app(App& app) {

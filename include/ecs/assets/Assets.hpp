@@ -1,178 +1,565 @@
 #pragma once
 
-// Assets<T> – reference-counted, policy-driven cache for one asset type.
-// Entries hold the finalised asset (shared_ptr<T>) plus load state, a weak
-// reference-count token, and bookkeeping for the unload policy. Main-thread only
-// (no locking): workers never touch this; they only hand back CPU data.
+// Asset storage primitives.
+//
+// The asset cache uses intrusive entry ref-counts instead of shared_ptr tokens.
+// AssetHandle<T> keeps an AssetEntry alive by incrementing the entry's
+// strong_refs. GC reclaims entries only after strong_refs reaches zero and the
+// configured static GC policy says the entry can be reclaimed.
 
-#include <string>
-#include <memory>
-#include <unordered_map>
-#include <vector>
 #include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <typeindex>
+#include <typeinfo>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace gld::ecs {
 
     using AssetId = std::size_t;
+    using AssetTypeId = std::type_index;
 
     enum class LoadState { NotLoaded, Loading, Loaded, Failed };
+
+    enum class GcPolicyId : std::uint8_t {
+        Default,
+        Persistent,
+        RefCountZero,
+        Timed,
+        Lru
+    };
 
     enum class UnloadPolicy { Persistent, RefCountZero, Timed, Lru };
 
     struct UnloadConfig {
         UnloadPolicy policy = UnloadPolicy::RefCountZero;
-        double ttl_sec = 5.0;       // Timed
-        std::size_t lru_budget = 128; // Lru: max unreferenced entries kept
+        double ttl_sec = 5.0;
+        std::size_t lru_budget = 128;
     };
 
-    template<class T>
-    struct Assets {
-        struct StoreLifetime {
-            Assets* owner = nullptr;
-        };
+    struct AssetLoadOptions {
+        GcPolicyId gc_policy = GcPolicyId::Default;
+    };
 
-        struct Entry {
-            std::shared_ptr<T> data;
-            LoadState state = LoadState::NotLoaded;
-            std::weak_ptr<void> token_weak;   // alive  <=>  a strong Handle exists
-            double last_used = 0.0;
-            double released_at = 0.0;         // when it became unreferenced (Timed)
-            bool zero_refs = false;
-            std::string key;
-        };
+    struct GcConfig {
+        double ttl_sec = 5.0;
+        std::size_t lru_budget = 128;
+    };
 
-        std::unordered_map<AssetId, Entry> map;
-        UnloadConfig config;
-        double now_ = 0.0;   // current frame time (set by gc each frame)
+    inline GcPolicyId to_gc_policy_id(UnloadPolicy policy) {
+        switch (policy) {
+        case UnloadPolicy::Persistent: return GcPolicyId::Persistent;
+        case UnloadPolicy::Timed: return GcPolicyId::Timed;
+        case UnloadPolicy::Lru: return GcPolicyId::Lru;
+        case UnloadPolicy::RefCountZero:
+        default: return GcPolicyId::RefCountZero;
+        }
+    }
 
-        Assets() : lifetime_(std::make_shared<StoreLifetime>()) {
-            lifetime_->owner = this;
+    template<class... Ts>
+    struct TypeList {};
+
+    struct EntrySlot {
+        std::uint32_t index = UINT32_MAX;
+        std::uint32_t generation = 0;
+        explicit operator bool() const { return index != UINT32_MAX; }
+        bool operator==(const EntrySlot&) const = default;
+    };
+
+    struct AssetEntryHeader {
+        AssetId id = 0;
+        std::uint32_t generation = 1;
+        std::uint32_t strong_refs = 0;
+        LoadState state = LoadState::NotLoaded;
+        GcPolicyId gc_policy = GcPolicyId::RefCountZero;
+        double last_used = 0.0;
+        double released_at = 0.0;
+        bool pending_reclaim = false;
+    };
+
+    struct AssetStoreStats {
+        AssetTypeId type{ typeid(void) };
+        std::size_t live_entries = 0;
+        std::size_t loaded_entries = 0;
+        std::size_t loading_entries = 0;
+        std::size_t unreferenced_entries = 0;
+    };
+
+    struct AssetStats {
+        std::vector<AssetStoreStats> stores;
+    };
+
+    template<class Entry>
+    class AssetEntryPool {
+    public:
+        template<class... Args>
+        EntrySlot allocate(Args&&... args) {
+            if (!free_.empty()) {
+                const std::uint32_t index = free_.back();
+                free_.pop_back();
+                Slot& slot = slots_[index];
+                slot.entry.emplace(std::forward<Args>(args)...);
+                return EntrySlot{ index, slot.generation };
+            }
+
+            Slot slot;
+            slot.generation = 1;
+            slot.entry.emplace(std::forward<Args>(args)...);
+            slots_.push_back(std::move(slot));
+            return EntrySlot{ static_cast<std::uint32_t>(slots_.size() - 1), 1 };
         }
 
-        ~Assets() {
-            if (lifetime_) lifetime_->owner = nullptr;
+        void release(EntrySlot slot_id) {
+            Slot* slot = raw_slot(slot_id.index);
+            if (!slot || slot->generation != slot_id.generation || !slot->entry) return;
+            slot->entry.reset();
+            ++slot->generation;
+            free_.push_back(slot_id.index);
         }
 
-        Assets(const Assets&) = delete;
-        Assets& operator=(const Assets&) = delete;
-
-        Assets(Assets&& other) noexcept
-            : map(std::move(other.map)),
-              config(other.config),
-              now_(other.now_),
-              lifetime_(std::move(other.lifetime_)) {
-            if (lifetime_) lifetime_->owner = this;
+        Entry* get(EntrySlot slot_id) {
+            Slot* slot = raw_slot(slot_id.index);
+            if (!slot || slot->generation != slot_id.generation || !slot->entry) return nullptr;
+            return &*slot->entry;
         }
 
-        Assets& operator=(Assets&& other) noexcept {
-            if (this == &other) return *this;
-            if (lifetime_) lifetime_->owner = nullptr;
-            map = std::move(other.map);
-            config = other.config;
-            now_ = other.now_;
-            lifetime_ = std::move(other.lifetime_);
-            if (lifetime_) lifetime_->owner = this;
-            return *this;
+        const Entry* get(EntrySlot slot_id) const {
+            const Slot* slot = raw_slot(slot_id.index);
+            if (!slot || slot->generation != slot_id.generation || !slot->entry) return nullptr;
+            return &*slot->entry;
         }
 
-        Entry& entry(AssetId id) { return map[id]; }
-        Entry* find(AssetId id) {
-            auto it = map.find(id);
-            return it == map.end() ? nullptr : &it->second;
+        template<class Fn>
+        void for_each_live(Fn&& fn) {
+            for (std::uint32_t i = 0; i < slots_.size(); ++i) {
+                Slot& slot = slots_[i];
+                if (slot.entry) fn(EntrySlot{ i, slot.generation }, *slot.entry);
+            }
         }
 
-        bool contains(AssetId id) const { return map.count(id) != 0; }
-
-        LoadState state(AssetId id) {
-            auto* e = find(id);
-            return e ? e->state : LoadState::NotLoaded;
-        }
-
-        // Returns the asset if Loaded (and touches last_used); nullptr otherwise.
-        T* data(AssetId id) {
-            auto* e = find(id);
-            if (!e || e->state != LoadState::Loaded) return nullptr;
-            e->last_used = now_;
-            return e->data.get();
-        }
-
-        // Acquire (or reuse) the ref-count token for id. Its deleter marks the
-        // entry unreferenced when the last Handle to id is destroyed.
-        std::shared_ptr<void> acquire_token(AssetId id) {
-            auto& e = map[id];
-            if (auto t = e.token_weak.lock()) return t;
-            std::weak_ptr<StoreLifetime> lifetime = lifetime_;
-            std::shared_ptr<void> tok(reinterpret_cast<void*>(1),
-                [lifetime, id](void*) {
-                    if (auto guard = lifetime.lock(); guard && guard->owner)
-                        guard->owner->on_zero_refs(id);
-                });
-            e.token_weak = tok;
-            e.zero_refs = false;
-            e.released_at = 0.0;
-            return tok;
-        }
-
-        void set_loading(AssetId id, std::string key) {
-            auto& e = map[id];
-            e.state = LoadState::Loading;
-            e.key = std::move(key);
-        }
-        void set_loaded(AssetId id, std::shared_ptr<T> data) {
-            auto& e = map[id];
-            e.data = std::move(data);
-            e.state = e.data ? LoadState::Loaded : LoadState::Failed;
-        }
-        void set_failed(AssetId id) { map[id].state = LoadState::Failed; }
-
-        void on_zero_refs(AssetId id) {
-            if (auto* e = find(id)) { e->zero_refs = true; }
-        }
-
-        // Enforce the unload policy. Called each frame (main thread).
-        void gc(double now) {
-            now_ = now;
-            switch (config.policy) {
-            case UnloadPolicy::Persistent:
-                break;
-            case UnloadPolicy::RefCountZero:
-                erase_if_zero([](const Entry&) { return true; });
-                break;
-            case UnloadPolicy::Timed:
-                for (auto& [id, e] : map) {
-                    if (e.zero_refs && e.released_at == 0.0) e.released_at = now;
-                    if (!e.zero_refs) e.released_at = 0.0;
-                }
-                erase_if_zero([&](const Entry& e) { return now - e.released_at >= config.ttl_sec; });
-                break;
-            case UnloadPolicy::Lru:
-                gc_lru();
-                break;
+        template<class Fn>
+        void for_each_live(Fn&& fn) const {
+            for (std::uint32_t i = 0; i < slots_.size(); ++i) {
+                const Slot& slot = slots_[i];
+                if (slot.entry) fn(EntrySlot{ i, slot.generation }, *slot.entry);
             }
         }
 
     private:
-        std::shared_ptr<StoreLifetime> lifetime_;
+        struct Slot {
+            std::uint32_t generation = 1;
+            std::optional<Entry> entry;
+        };
 
-        template<class Pred>
-        void erase_if_zero(Pred pred) {
-            for (auto it = map.begin(); it != map.end();) {
-                Entry& e = it->second;
-                if (e.zero_refs && e.token_weak.expired() && pred(e)) it = map.erase(it);
-                else ++it;
+        Slot* raw_slot(std::uint32_t index) {
+            return index < slots_.size() ? &slots_[index] : nullptr;
+        }
+
+        const Slot* raw_slot(std::uint32_t index) const {
+            return index < slots_.size() ? &slots_[index] : nullptr;
+        }
+
+        std::vector<Slot> slots_;
+        std::vector<std::uint32_t> free_;
+    };
+
+    struct PersistentGc {
+        static constexpr GcPolicyId id = GcPolicyId::Persistent;
+        static bool should_reclaim(const AssetEntryHeader&, double, const GcConfig&) { return false; }
+    };
+
+    struct RefCountZeroGc {
+        static constexpr GcPolicyId id = GcPolicyId::RefCountZero;
+        static bool should_reclaim(const AssetEntryHeader& entry, double, const GcConfig&) {
+            return entry.strong_refs == 0;
+        }
+    };
+
+    struct TimedGc {
+        static constexpr GcPolicyId id = GcPolicyId::Timed;
+        static bool should_reclaim(const AssetEntryHeader& entry, double now, const GcConfig& cfg) {
+            return entry.strong_refs == 0 && entry.released_at > 0.0 && now - entry.released_at >= cfg.ttl_sec;
+        }
+    };
+
+    struct LruGc {
+        static constexpr GcPolicyId id = GcPolicyId::Lru;
+        static bool should_reclaim(const AssetEntryHeader& entry, double, const GcConfig&) {
+            return entry.strong_refs == 0 && entry.pending_reclaim;
+        }
+    };
+
+    template<class... Policies>
+    bool should_reclaim_by_policy(TypeList<Policies...>, const AssetEntryHeader& entry, double now, const GcConfig& cfg) {
+        bool handled = false;
+        bool reclaim = false;
+        ((entry.gc_policy == Policies::id
+            ? (handled = true, reclaim = Policies::should_reclaim(entry, now, cfg), true)
+            : false), ...);
+        return handled && reclaim;
+    }
+
+    template<class T> class AssetStore;
+    template<class T> class AssetHandle;
+
+    template<class T>
+    class AssetRef {
+    public:
+        AssetRef() = default;
+        explicit AssetRef(T* ptr) : ptr_(ptr) {}
+
+        T* get() const { return ptr_; }
+        T* operator->() const { return ptr_; }
+        T& operator*() const { return *ptr_; }
+        explicit operator bool() const { return ptr_ != nullptr; }
+
+    private:
+        T* ptr_ = nullptr;
+    };
+
+    template<class T>
+    class AssetHandle {
+    public:
+        AssetHandle() = default;
+        AssetHandle(const AssetHandle& other) : store_(other.store_), slot_(other.slot_) {
+            add_ref();
+        }
+        AssetHandle(AssetHandle&& other) noexcept : store_(other.store_), slot_(other.slot_) {
+            other.store_ = nullptr;
+            other.slot_ = {};
+        }
+        AssetHandle& operator=(const AssetHandle& other) {
+            if (this == &other) return *this;
+            release();
+            store_ = other.store_;
+            slot_ = other.slot_;
+            add_ref();
+            return *this;
+        }
+        AssetHandle& operator=(AssetHandle&& other) noexcept {
+            if (this == &other) return *this;
+            release();
+            store_ = other.store_;
+            slot_ = other.slot_;
+            other.store_ = nullptr;
+            other.slot_ = {};
+            return *this;
+        }
+        ~AssetHandle() { release(); }
+
+        T* get(double now = 0.0) const;
+        LoadState state() const;
+        bool loaded() const { return state() == LoadState::Loaded; }
+        bool valid() const { return get() != nullptr; }
+        AssetRef<T> read() const { return AssetRef<T>(get()); }
+        std::shared_ptr<T> shared() const;
+        T* operator->() const { return get(); }
+        T& operator*() const { return *get(); }
+        explicit operator bool() const { return valid(); }
+
+    private:
+        friend class AssetStore<T>;
+        struct AdoptRef {};
+        AssetHandle(AssetStore<T>* store, EntrySlot slot, AdoptRef) : store_(store), slot_(slot) {}
+
+        void add_ref();
+        void release();
+
+        AssetStore<T>* store_ = nullptr;
+        EntrySlot slot_{};
+    };
+
+    template<class T>
+    class WeakHandle {
+    public:
+        WeakHandle() = default;
+        WeakHandle(AssetStore<T>* store, EntrySlot slot) : store_(store), slot_(slot) {}
+        explicit WeakHandle(const AssetHandle<T>& handle) : store_(handle.store_), slot_(handle.slot_) {}
+
+        AssetHandle<T> lock() const;
+
+    private:
+        AssetStore<T>* store_ = nullptr;
+        EntrySlot slot_{};
+    };
+
+    struct IAssetStore {
+        virtual AssetTypeId type_id() const = 0;
+        virtual void gc(double now) = 0;
+        virtual AssetStoreStats stats() const = 0;
+        virtual ~IAssetStore() = default;
+    };
+
+    struct AssetManager {
+        using GcPolicies = TypeList<PersistentGc, RefCountZeroGc, TimedGc, LruGc>;
+
+        AssetManager() = default;
+        AssetManager(const AssetManager&) = delete;
+        AssetManager& operator=(const AssetManager&) = delete;
+        AssetManager(AssetManager&&) noexcept = default;
+        AssetManager& operator=(AssetManager&&) noexcept = default;
+
+        template<class T>
+        AssetStore<T>& store();
+
+        void gc(double now) {
+            for (auto& [_, store] : stores_) store->gc(now);
+        }
+
+        AssetStats stats() const {
+            AssetStats out;
+            out.stores.reserve(stores_.size());
+            for (const auto& [_, store] : stores_) out.stores.push_back(store->stats());
+            return out;
+        }
+
+    private:
+        std::unordered_map<std::type_index, std::unique_ptr<IAssetStore>> stores_;
+    };
+
+    template<class T>
+    struct AssetEntry {
+        AssetEntryHeader header;
+        std::shared_ptr<T> data;
+        std::string key;
+    };
+
+    template<class T>
+    class AssetStore : public IAssetStore {
+    public:
+        using Entry = AssetEntry<T>;
+
+        AssetTypeId type_id() const override { return AssetTypeId(typeid(T)); }
+
+        AssetHandle<T> acquire(AssetId id, std::string key = {}, GcPolicyId policy = GcPolicyId::Default) {
+            EntrySlot slot = find_or_create(id, std::move(key), policy);
+            add_ref(slot);
+            return AssetHandle<T>(this, slot, typename AssetHandle<T>::AdoptRef{});
+        }
+
+        AssetHandle<T> acquire_existing(EntrySlot slot) {
+            if (!pool_.get(slot)) return {};
+            add_ref(slot);
+            return AssetHandle<T>(this, slot, typename AssetHandle<T>::AdoptRef{});
+        }
+
+        Entry* find(AssetId id) {
+            auto it = index_.find(id);
+            return it == index_.end() ? nullptr : pool_.get(it->second);
+        }
+
+        const Entry* find(AssetId id) const {
+            auto it = index_.find(id);
+            return it == index_.end() ? nullptr : pool_.get(it->second);
+        }
+
+        bool contains(AssetId id) const { return find(id) != nullptr; }
+
+        LoadState state(AssetId id) const {
+            auto* e = find(id);
+            return e ? e->header.state : LoadState::NotLoaded;
+        }
+
+        LoadState state(const AssetHandle<T>& handle) const {
+            auto* e = entry_for(handle);
+            return e ? e->header.state : LoadState::NotLoaded;
+        }
+
+        T* data(AssetId id) {
+            auto* e = find(id);
+            if (!e || e->header.state != LoadState::Loaded) return nullptr;
+            e->header.last_used = now_;
+            return e->data.get();
+        }
+
+        T* data(const AssetHandle<T>& handle, double = 0.0) {
+            auto* e = entry_for(handle);
+            if (!e || e->header.state != LoadState::Loaded) return nullptr;
+            e->header.last_used = now_;
+            return e->data.get();
+        }
+
+        std::shared_ptr<T> shared(const AssetHandle<T>& handle) const {
+            auto* e = entry_for(handle);
+            if (!e || e->header.state != LoadState::Loaded) return {};
+            return e->data;
+        }
+
+        void set_policy(UnloadConfig cfg) {
+            default_policy_ = to_gc_policy_id(cfg.policy);
+            default_config_.ttl_sec = cfg.ttl_sec;
+            default_config_.lru_budget = cfg.lru_budget;
+        }
+
+        void set_loading(AssetId id, std::string key) {
+            EntrySlot slot = find_or_create(id, std::move(key), GcPolicyId::Default);
+            if (auto* e = pool_.get(slot)) e->header.state = LoadState::Loading;
+        }
+
+        void set_loaded(AssetId id, std::shared_ptr<T> data) {
+            EntrySlot slot = find_or_create(id, {}, GcPolicyId::Default);
+            if (auto* e = pool_.get(slot)) {
+                e->data = std::move(data);
+                e->header.state = e->data ? LoadState::Loaded : LoadState::Failed;
             }
         }
 
-        void gc_lru() {
-            std::vector<AssetId> unref;
-            for (auto& [id, e] : map)
-                if (e.zero_refs && e.token_weak.expired()) unref.push_back(id);
-            if (unref.size() <= config.lru_budget) return;
-            std::sort(unref.begin(), unref.end(), [&](AssetId a, AssetId b) {
-                return map[a].last_used > map[b].last_used; // newest first
-            });
-            for (std::size_t i = config.lru_budget; i < unref.size(); ++i)
-                map.erase(unref[i]);
+        void set_failed(AssetId id) {
+            EntrySlot slot = find_or_create(id, {}, GcPolicyId::Default);
+            if (auto* e = pool_.get(slot)) e->header.state = LoadState::Failed;
         }
+
+        void gc(double now) override {
+            now_ = now;
+            std::vector<EntrySlot> reclaim;
+
+            std::size_t lru_unref = 0;
+            pool_.for_each_live([&](EntrySlot, Entry& e) {
+                if (e.header.strong_refs == 0 && e.header.gc_policy == GcPolicyId::Lru) ++lru_unref;
+            });
+            if (lru_unref > default_config_.lru_budget) {
+                std::vector<EntrySlot> lru;
+                pool_.for_each_live([&](EntrySlot slot, Entry& e) {
+                    if (e.header.strong_refs == 0 && e.header.gc_policy == GcPolicyId::Lru) lru.push_back(slot);
+                });
+                std::sort(lru.begin(), lru.end(), [&](EntrySlot a, EntrySlot b) {
+                    return pool_.get(a)->header.last_used > pool_.get(b)->header.last_used;
+                });
+                for (std::size_t i = default_config_.lru_budget; i < lru.size(); ++i)
+                    if (auto* e = pool_.get(lru[i])) e->header.pending_reclaim = true;
+            }
+
+            pool_.for_each_live([&](EntrySlot slot, Entry& e) {
+                if (e.header.strong_refs == 0 && e.header.released_at == 0.0) e.header.released_at = now;
+                if (e.header.strong_refs != 0) {
+                    e.header.released_at = 0.0;
+                    e.header.pending_reclaim = false;
+                }
+                if (should_reclaim_by_policy(typename AssetManager::GcPolicies{}, e.header, now, default_config_))
+                    reclaim.push_back(slot);
+            });
+
+            for (EntrySlot slot : reclaim) {
+                if (auto* e = pool_.get(slot)) index_.erase(e->header.id);
+                pool_.release(slot);
+            }
+        }
+
+        AssetStoreStats stats() const override {
+            AssetStoreStats s;
+            s.type = type_id();
+            pool_.for_each_live([&](EntrySlot, const Entry& e) {
+                ++s.live_entries;
+                if (e.header.state == LoadState::Loaded) ++s.loaded_entries;
+                if (e.header.state == LoadState::Loading) ++s.loading_entries;
+                if (e.header.strong_refs == 0) ++s.unreferenced_entries;
+            });
+            return s;
+        }
+
+    private:
+        friend class AssetHandle<T>;
+        friend class WeakHandle<T>;
+
+        EntrySlot find_or_create(AssetId id, std::string key, GcPolicyId policy) {
+            if (auto it = index_.find(id); it != index_.end()) {
+                if (auto* e = pool_.get(it->second); e && !key.empty()) e->key = std::move(key);
+                return it->second;
+            }
+
+            Entry entry;
+            entry.header.id = id;
+            entry.header.gc_policy = policy == GcPolicyId::Default ? default_policy_ : policy;
+            entry.key = std::move(key);
+            EntrySlot slot = pool_.allocate(std::move(entry));
+            if (auto* e = pool_.get(slot)) e->header.generation = slot.generation;
+            index_[id] = slot;
+            return slot;
+        }
+
+        Entry* entry_for(const AssetHandle<T>& handle) {
+            return handle.store_ == this ? pool_.get(handle.slot_) : nullptr;
+        }
+
+        const Entry* entry_for(const AssetHandle<T>& handle) const {
+            return handle.store_ == this ? pool_.get(handle.slot_) : nullptr;
+        }
+
+        void add_ref(EntrySlot slot) {
+            if (auto* e = pool_.get(slot)) {
+                ++e->header.strong_refs;
+                e->header.pending_reclaim = false;
+                e->header.released_at = 0.0;
+            }
+        }
+
+        void release_ref(EntrySlot slot) {
+            if (auto* e = pool_.get(slot); e && e->header.strong_refs > 0) {
+                --e->header.strong_refs;
+                if (e->header.strong_refs == 0) {
+                    e->header.pending_reclaim = false;
+                    e->header.released_at = now_;
+                }
+            }
+        }
+
+        AssetEntryPool<Entry> pool_;
+        std::unordered_map<AssetId, EntrySlot> index_;
+        GcPolicyId default_policy_ = GcPolicyId::RefCountZero;
+        GcConfig default_config_;
+        double now_ = 0.0;
     };
+
+    template<class T>
+    AssetStore<T>& AssetManager::store() {
+        const std::type_index key(typeid(T));
+        auto it = stores_.find(key);
+        if (it != stores_.end()) return *static_cast<AssetStore<T>*>(it->second.get());
+        auto store = std::make_unique<AssetStore<T>>();
+        auto* ptr = store.get();
+        stores_[key] = std::move(store);
+        return *ptr;
+    }
+
+    template<class T>
+    void AssetHandle<T>::add_ref() {
+        if (store_) store_->add_ref(slot_);
+    }
+
+    template<class T>
+    void AssetHandle<T>::release() {
+        if (store_) {
+            store_->release_ref(slot_);
+            store_ = nullptr;
+            slot_ = {};
+        }
+    }
+
+    template<class T>
+    T* AssetHandle<T>::get(double now) const {
+        (void)now;
+        return store_ ? store_->data(*this) : nullptr;
+    }
+
+    template<class T>
+    LoadState AssetHandle<T>::state() const {
+        return store_ ? store_->state(*this) : LoadState::NotLoaded;
+    }
+
+    template<class T>
+    std::shared_ptr<T> AssetHandle<T>::shared() const {
+        return store_ ? store_->shared(*this) : std::shared_ptr<T>{};
+    }
+
+    template<class T>
+    AssetHandle<T> WeakHandle<T>::lock() const {
+        return store_ ? store_->acquire_existing(slot_) : AssetHandle<T>{};
+    }
+
+    template<class T>
+    using Assets = AssetStore<T>;
 }

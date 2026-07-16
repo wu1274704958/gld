@@ -9,7 +9,6 @@
 #include <functional>
 #include <vector>
 #include <typeindex>
-#include <unordered_set>
 #include <memory>
 
 #include "../EcsWorld.hpp"
@@ -31,16 +30,11 @@ namespace gld::ecs {
         IoPool pool{ 2 };
         CompletionQueue completion;
 
-        std::unordered_set<std::type_index> gc_registered;
-        std::vector<std::function<void(double)>> gc_hooks;
-
         ~AssetServer() { shutdown(); }
 
         void shutdown() {
             pool.stop();
             completion.clear();
-            gc_hooks.clear();
-            gc_registered.clear();
         }
 
         template<class D>
@@ -50,58 +44,58 @@ namespace gld::ecs {
 
         template<class T>
         void set_policy(UnloadConfig cfg) {
-            world->resource_or_add<Assets<T>>().config = cfg;
+            world->resource_or_add<AssetManager>().store<T>().set_policy(cfg);
         }
 
         // Async load. Returns immediately; Handle resolves once finalized.
         template<class D>
-        Handle<typename D::Asset> load(const D& desc) {
+        Handle<typename D::Asset> load(const D& desc, AssetLoadOptions options = {}) {
             using T = typename D::Asset;
-            auto& assets = ensure_assets<T>();
+            auto& assets = ensure_store<T>();
             const std::string key = desc.key();
             const AssetId id = std::hash<std::string>{}(key);
-            auto token = assets.acquire_token(id);
+            auto handle = assets.acquire(id, key, options.gc_policy);
 
             if (auto* e = assets.find(id);
-                e && (e->state == LoadState::Loaded || e->state == LoadState::Loading))
-                return Handle<T>{ &assets, id, token };
+                e && (e->header.state == LoadState::Loaded || e->header.state == LoadState::Loading))
+                return handle;
 
             assets.set_loading(id, key);
             auto* loader = registry.template get<D>();
-            if (!loader) { assets.set_failed(id); return Handle<T>{ &assets, id, token }; }
+            if (!loader) { assets.set_failed(id); return handle; }
 
             D d = desc;
             auto fsptr = fs;
             CompletionQueue* comp = &completion;
-            Assets<T>* store = &assets;
+            AssetStore<T>* store = &assets;
             pool.enqueue([loader, d, fsptr, comp, store, id] {
                 std::shared_ptr<void> cpu = loader->load_cpu(d, *fsptr);   // worker
                 comp->push([loader, d, cpu, store, id] {
                     store->set_loaded(id, loader->finalize(cpu, d));       // main/GL
                 });
             });
-            return Handle<T>{ &assets, id, token };
+            return handle;
         }
 
         // Blocking load (both phases inline on the calling/main thread).
         template<class D>
-        Handle<typename D::Asset> load_sync(const D& desc) {
+        Handle<typename D::Asset> load_sync(const D& desc, AssetLoadOptions options = {}) {
             using T = typename D::Asset;
-            auto& assets = ensure_assets<T>();
+            auto& assets = ensure_store<T>();
             const std::string key = desc.key();
             const AssetId id = std::hash<std::string>{}(key);
-            auto token = assets.acquire_token(id);
+            auto handle = assets.acquire(id, key, options.gc_policy);
 
-            if (auto* e = assets.find(id); e && e->state == LoadState::Loaded)
-                return Handle<T>{ &assets, id, token };
+            if (auto* e = assets.find(id); e && e->header.state == LoadState::Loaded)
+                return handle;
 
             assets.set_loading(id, key);
             auto* loader = registry.template get<D>();
-            if (!loader) { assets.set_failed(id); return Handle<T>{ &assets, id, token }; }
+            if (!loader) { assets.set_failed(id); return handle; }
 
             auto cpu = loader->load_cpu(desc, *fs);
             assets.set_loaded(id, loader->finalize(cpu, desc));
-            return Handle<T>{ &assets, id, token };
+            return handle;
         }
 
         // ---- convenience wrappers ----
@@ -118,14 +112,8 @@ namespace gld::ecs {
 
     private:
         template<class T>
-        Assets<T>& ensure_assets() {
-            auto& assets = world->resource_or_add<Assets<T>>();
-            std::type_index ti(typeid(T));
-            if (gc_registered.insert(ti).second) {
-                Assets<T>* store = &assets;
-                gc_hooks.push_back([store](double now) { store->gc(now); });
-            }
-            return assets;
+        AssetStore<T>& ensure_store() {
+            return world->resource_or_add<AssetManager>().store<T>();
         }
     };
 
@@ -137,16 +125,18 @@ namespace gld::ecs {
 
     // Last (main thread): enforce unload policies for every Assets<T>.
     inline void asset_gc_system(EcsWorld& w) {
-        auto& srv = w.resource<AssetServer>();
+        auto& manager = w.resource<AssetManager>();
         double now = 0.0;
         if (auto* t = w.try_resource<Time>()) now = t->elapsed;
-        for (auto& hook : srv.gc_hooks) hook(now);
+        manager.gc(now);
     }
 
     inline void AssetPlugin(App& app) {
         // Default file system (relative to current dir) unless one is already set.
         if (!app.world.has_resource<std::shared_ptr<IFileSystem>>())
             FileSystemPlugin(app, std::make_shared<StdFileSystem>("."));
+
+        app.world.resource_or_add<AssetManager>();
 
         auto& srv = app.world.resource_or_add<AssetServer>();
         srv.world = &app.world;
