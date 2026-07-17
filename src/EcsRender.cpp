@@ -388,5 +388,6 @@ namespace gld::ecs {
         app.add_system(Stage::PostUpdate, camera_matrices_system);
         app.add_system(Stage::Render, render_system_default);
         app.add_system(Stage::Last, present_system);
+        app.add_system(Stage::Shutdown, cleanup_render_resources);
     }
 }

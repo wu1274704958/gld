@@ -119,30 +119,6 @@ namespace gld::ecs {
         if (auto* e = world.try_resource<Events<CloseRequested>>()) e->clear();
     }
 
-    static void cleanup_app_resources(App& app) {
-        auto& world = app.world;
-
-        cleanup_render_resources(world);
-
-        if (auto* srv = world.try_resource<AssetServer>())
-            srv->shutdown();
-
-        world.reg().clear();
-
-        world.remove_resource<BatchResources>();
-        world.remove_resource<FullscreenResources>();
-        world.remove_resource<LightingGpuResource>();
-        world.remove_resource<LightingSettings>();
-        world.remove_resource<PostProcessManager>();
-        world.remove_resource<TextBatchIndex>();
-        world.remove_resource<GlyphAtlasAA>();
-        world.remove_resource<GlyphAtlasSDF>();
-        world.remove_resource<std::shared_ptr<RenderTarget>>();
-
-        world.remove_resource<AssetServer>();
-        world.remove_resource<AssetManager>();
-    }
-
     void run_app(App& app) {
         auto* win = app.world.try_resource<Window>();
         if (!win || !win->handle) return;
@@ -159,7 +135,7 @@ namespace gld::ecs {
             frame_end(app.world);
         }
 
-        cleanup_app_resources(app);
+        app.shutdown();
         glfwDestroyWindow(handle);
         glfwTerminate();
     }

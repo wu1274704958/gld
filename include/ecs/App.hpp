@@ -23,6 +23,7 @@ namespace gld::ecs {
         PostUpdate,
         Render,
         Last,
+        Shutdown,
         COUNT
     };
 
@@ -65,6 +66,13 @@ namespace gld::ecs {
 
         void run(int frames) { for (int i = 0; i < frames; ++i) tick(); }
 
+        void shutdown() {
+            if (shutdown_) return;
+            run_stage(Stage::Shutdown);
+            world.cleanup_resources();
+            shutdown_ = true;
+        }
+
         entt::entity spawn() { return world.spawn(); }
 
     private:
@@ -75,5 +83,6 @@ namespace gld::ecs {
         std::array<std::vector<SysFn>, static_cast<size_t>(Stage::COUNT)> stages_;
         std::vector<std::shared_ptr<void>> keep_alive_;
         bool started_ = false;
+        bool shutdown_ = false;
     };
 }

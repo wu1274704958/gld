@@ -136,9 +136,11 @@ namespace gld::ecs {
         if (!app.world.has_resource<std::shared_ptr<IFileSystem>>())
             FileSystemPlugin(app, std::make_shared<StdFileSystem>("."));
 
-        app.world.resource_or_add<AssetManager>();
+        app.world.resource_or_add_with_priority<AssetManager>(
+            static_cast<int>(ResourceCleanupPriority::AssetManager));
 
-        auto& srv = app.world.resource_or_add<AssetServer>();
+        auto& srv = app.world.resource_or_add_with_priority<AssetServer>(
+            static_cast<int>(ResourceCleanupPriority::AssetServer));
         srv.world = &app.world;
         srv.fs = app.world.resource<std::shared_ptr<IFileSystem>>();
 
@@ -148,5 +150,9 @@ namespace gld::ecs {
         app.world.resource_or_add<Time>();
         app.add_system(Stage::PreUpdate, asset_update_system);
         app.add_system(Stage::Last, asset_gc_system);
+        app.add_system(Stage::Shutdown, [](EcsWorld& w) {
+            if (auto* srv = w.try_resource<AssetServer>())
+                srv->shutdown();
+        });
     }
 }
