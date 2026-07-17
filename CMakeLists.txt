@@ -141,6 +141,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR ecs_postprocess FILES main.cpp)
     CreateExample(DIR ecs_lighting FILES main.cpp)
     CreateExample(DIR ecs_audio_fft FILES main.cpp)
+    CreateExample(DIR aoe2de_spearman FILES main.cpp)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
