@@ -159,7 +159,8 @@ namespace gld::ecs {
         return bytes;
     }
 
-    void draw_batches(EcsWorld& w, const Camera& cam) {
+    void draw_batches(EcsWorld& w, const Camera& cam, RenderStateCache& state_cache,
+                      const ResolvedRenderPassState& pass_state) {
         auto& res = w.resource_or_add<BatchResources>();
         auto& diag = w.resource_or_add<RenderDiagnostics>();
         auto& reg = w.reg();
@@ -183,6 +184,9 @@ namespace gld::ecs {
             auto& b = view.get<BatchComponent>(e);
             if (b.instances.empty()) continue;
             if ((cam.layers & b.layers) == 0) continue;   // camera layer filtering
+
+            state_cache.depth(resolve_batch_state(b.key.depth_test, pass_state.depth_test));
+            state_cache.depth_write(resolve_batch_state(b.key.depth_write, pass_state.depth_write));
 
             Program* prog = b.prog;
             if (!prog) continue;
@@ -233,7 +237,8 @@ namespace gld::ecs {
         if (ordered.size() > diag.batch_groups) diag.batch_groups = static_cast<std::uint32_t>(ordered.size());
     }
 
-    void render_batch_pass(RenderPassContext& ctx, const BatchPass&) {
-        draw_batches(ctx.world, ctx.camera);
+    void render_batch_pass(RenderPassContext& ctx, const BatchPass& pass) {
+        const auto pass_state = resolve_render_pass_state(BatchPass::id, pass.state);
+        draw_batches(ctx.world, ctx.camera, ctx.state_cache, pass_state);
     }
 }

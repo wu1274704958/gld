@@ -41,6 +41,15 @@ int main() {
     assert(!(one == same));
     assert(BatchKeyHash{}(one) != BatchKeyHash{}(same));
 
+    BatchKey shadow = one;
+    shadow.depth_write = BatchStateOverride::Disabled;
+    assert(!(one == shadow));
+    assert(BatchKeyHash{}(one) != BatchKeyHash{}(shadow));
+    assert(resolve_batch_state(BatchStateOverride::Inherit, true));
+    assert(!resolve_batch_state(BatchStateOverride::Inherit, false));
+    assert(resolve_batch_state(BatchStateOverride::Enabled, false));
+    assert(!resolve_batch_state(BatchStateOverride::Disabled, true));
+
     auto synchronized_unit_signature = [](std::uint64_t revision) {
         std::uint64_t signature = BatchSignatureSeed;
         for (std::uint32_t entity = 3; entity < 19; ++entity)

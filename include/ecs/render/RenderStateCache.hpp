@@ -6,7 +6,7 @@
 
 namespace gld::ecs {
 
-    struct RenderStateCache {
+    struct RenderStateCache{
         unsigned int framebuffer = static_cast<unsigned int>(-1);
         int viewport_w = -1;
         int viewport_h = -1;

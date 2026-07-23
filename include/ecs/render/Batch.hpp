@@ -29,6 +29,21 @@ namespace gld::ecs {
 
     inline constexpr std::size_t MaxBatchTextures = 4;
 
+    enum class BatchStateOverride : std::uint8_t {
+        Inherit,
+        Enabled,
+        Disabled
+    };
+
+    inline bool resolve_batch_state(BatchStateOverride value, bool inherited) {
+        switch (value) {
+        case BatchStateOverride::Enabled: return true;
+        case BatchStateOverride::Disabled: return false;
+        case BatchStateOverride::Inherit:
+        default: return inherited;
+        }
+    }
+
     struct InstanceData {
         glm::vec4 rect{ 0.f };  // glyph atlas uv rect (x,y,w,h) — fg sampling clamp
         glm::vec4 pad{ 0.f };   // shadow-expanded uv rect (x,y,w,h) — quad corner uv
@@ -49,8 +64,11 @@ namespace gld::ecs {
         std::uint8_t texture_count = 0;
         unsigned int shader = 0;            // program GL id
         std::uint32_t layers = 0xFFFFFFFFu; // camera culling mask this batch belongs to
+        BatchStateOverride depth_test = BatchStateOverride::Inherit;
+        BatchStateOverride depth_write = BatchStateOverride::Inherit;
         bool operator==(const BatchKey& o) const {
-            if (texture_count != o.texture_count || shader != o.shader || layers != o.layers)
+            if (texture_count != o.texture_count || shader != o.shader || layers != o.layers ||
+                depth_test != o.depth_test || depth_write != o.depth_write)
                 return false;
             for (std::size_t i = 0; i < texture_count; ++i)
                 if (textures[i] != o.textures[i]) return false;
@@ -67,6 +85,8 @@ namespace gld::ecs {
                 mix(std::hash<unsigned int>{}(k.textures[i]));
             mix(std::hash<unsigned int>{}(k.shader));
             mix(std::hash<std::uint32_t>{}(k.layers));
+            mix(std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(k.depth_test)));
+            mix(std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(k.depth_write)));
             return h;
         }
     };

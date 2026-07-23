@@ -28,6 +28,8 @@
 
 namespace gld::ecs {
 
+    struct RenderStateCache;
+
     struct BatchResources {
         BatchResources() = default;
         ~BatchResources();
@@ -49,7 +51,8 @@ namespace gld::ecs {
 
     // ---- systems ----
     void text_batch_system(EcsWorld& w);                 // src/EcsTextBatch.cpp
-    void draw_batches(EcsWorld& w, const Camera& cam);   // src/EcsBatch.cpp
+    void draw_batches(EcsWorld& w, const Camera& cam, RenderStateCache& state_cache,
+                      const ResolvedRenderPassState& pass_state); // src/EcsBatch.cpp
     void destroy_batch_gpu(BatchComponent& b);
     void destroy_batch_resources_gpu(BatchResources& res);
 

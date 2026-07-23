@@ -170,6 +170,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR aoe2_unit_preview FILES main.cpp)
     target_link_libraries(aoe2_unit_preview gld_aoe2)
 
+    CreateExample(DIR aoe2_unit_benchmark FILES main.cpp)
+    target_link_libraries(aoe2_unit_benchmark gld_aoe2)
+
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
     target_include_directories(music_player PRIVATE ${BASS24_INCLUDE_DIR})

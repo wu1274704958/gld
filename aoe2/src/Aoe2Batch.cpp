@@ -72,6 +72,10 @@ void aoe2_batch_system(EcsWorld& world) {
                 key.textures[0] = texture->get_id();
                 key.shader = static_cast<unsigned int>(*shadow_program);
                 key.layers = layers;
+                // Shadows blend into the ground before unit bodies are drawn,
+                // but must not claim depth and hide bodies behind translucent
+                // pixels. They still inherit the pass's depth-test setting.
+                key.depth_write = BatchStateOverride::Disabled;
                 auto& group = groups[key];
                 group.signature = batch_signature_append_source(
                     group.signature, entity_raw, render.revision, global.version);
