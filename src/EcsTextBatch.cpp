@@ -40,7 +40,7 @@ namespace gld::ecs {
 
         // ---- Pass 1: fold signatures + members per (atlasId, shaderId, layer) ----
         struct Accum {
-            std::uint64_t sig = 0;
+            std::uint64_t sig = BatchSignatureSeed;
             std::size_t count = 0;
             std::vector<entt::entity> members;
             Program* prog = nullptr;              // binding program (shared by group)
@@ -68,9 +68,11 @@ namespace gld::ecs {
             if (auto* fx = reg.try_get<TextEffects>(e)) mat_rev ^= (fx->rev * 2654435761u);
             const unsigned int shaderId = static_cast<unsigned int>(*prog);
 
-            std::uint64_t m = batch_mix(
-                static_cast<std::uint32_t>(entt::to_integral(e)), tl.src_rev, gt.version);
-            if (mat_rev) m ^= batch_mix(0xFFFFFFFFu, mat_rev, shaderId);
+            std::uint64_t m = batch_signature_append_source(
+                BatchSignatureSeed, static_cast<std::uint32_t>(entt::to_integral(e)),
+                tl.src_rev, gt.version);
+            if (mat_rev)
+                m = batch_signature_append_source(m, 0xFFFFFFFFu, mat_rev, shaderId);
 
             // Each distinct atlas this entity touches becomes/updates a group.
             std::vector<unsigned int> seen;
@@ -81,9 +83,13 @@ namespace gld::ecs {
                 if (have) continue;
                 seen.push_back(atlasId);
 
-                BatchKey key{ atlasId, shaderId, layerMask };
+                BatchKey key;
+                key.textures[0] = atlasId;
+                key.texture_count = 1;
+                key.shader = shaderId;
+                key.layers = layerMask;
                 Accum& acc = groups[key];
-                acc.sig += m;
+                acc.sig = batch_signature_append(acc.sig, m);
                 acc.count += 1;
                 acc.members.push_back(e);
                 acc.prog = prog;
@@ -107,7 +113,13 @@ namespace gld::ecs {
             bc.key = key;
             bc.layers = key.layers;
             bc.prog = acc.prog;
-            bc.atlas_ref = acc.atlas_ref;
+            clear_batch_textures(bc);
+            int diffuse_loc = acc.prog->uniform_id("diffuseTex");
+            if (diffuse_loc < 0) {
+                acc.prog->locat_uniforms("diffuseTex");
+                diffuse_loc = acc.prog->uniform_id("diffuseTex");
+            }
+            set_batch_texture(bc, 0, key.textures[0], acc.atlas_ref, diffuse_loc);
             bc.used = true;
 
             if (bc.sig != acc.sig || bc.count != acc.count) {
@@ -133,7 +145,7 @@ namespace gld::ecs {
 
                     for (const auto& q : tl.quads) {
                         const unsigned int atlasId = q.atlas ? q.atlas->get_id() : 0u;
-                        if (atlasId != key.atlas) continue;
+                        if (atlasId != key.textures[0]) continue;
                         InstanceData d;
                         d.rect = q.rect;
                         d.pad = q.pad;

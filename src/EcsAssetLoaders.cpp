@@ -16,13 +16,32 @@ namespace gld::ecs {
     namespace {
         struct CpuImage {
             unsigned char* data = nullptr; // owned (stbi), freed in dtor
+            std::vector<unsigned char> packed;
             int w = 0, h = 0, comp = 0;
             ~CpuImage() { if (data) stbi_image_free(data); }
+            const unsigned char* pixels() const {
+                return packed.empty() ? data : packed.data();
+            }
+            void release_decode() {
+                if (data) stbi_image_free(data);
+                data = nullptr;
+            }
         };
 
         GLenum gl_format_for(int comp) {
             switch (comp) {
             case 1:  return GL_RED;
+            case 2:  return GL_RG;
+            case 3:  return GL_RGB;
+            case 4:  return GL_RGBA;
+            default: return GL_RGB;
+            }
+        }
+
+        GLenum gl_internal_format_for(int comp) {
+            switch (comp) {
+            case 1:  return GL_R8;
+            case 2:  return GL_RG8;
             case 3:  return GL_RGB;
             case 4:  return GL_RGBA;
             default: return GL_RGB;
@@ -31,11 +50,17 @@ namespace gld::ecs {
     }
 
     std::shared_ptr<void> TextureLoader::load_cpu(const TextureDesc& desc, const IFileSystem& fs) {
+        if (!valid_channel_mapping(desc.channels(), desc.channel_mapping())) {
+            std::fprintf(stderr, "[TextureLoader] invalid channels/mapping for %s\n",
+                         desc.path().c_str());
+            return nullptr;
+        }
         auto bytes = fs.read_bytes(desc.path());
         if (!bytes) return nullptr;
 
         stbi_set_flip_vertically_on_load(desc.flip() ? 1 : 0);
-        int req = static_cast<int>(desc.channels()); // Auto=0 lets stb pick
+        const bool mapped = desc.channel_mapping() != TextureChannelMapping::Default;
+        int req = mapped ? 4 : static_cast<int>(desc.channels()); // Auto=0 lets stb pick
         auto img = std::make_shared<CpuImage>();
         img->data = stbi_load_from_memory(
             reinterpret_cast<const stbi_uc*>(bytes->data()),
@@ -43,24 +68,43 @@ namespace gld::ecs {
             &img->w, &img->h, &img->comp, req);
         if (!img->data) return nullptr;
         if (req != 0) img->comp = req; // channels forced
+        if (mapped) {
+            const auto pixel_count = static_cast<std::size_t>(img->w)
+                * static_cast<std::size_t>(img->h);
+            img->packed = detail::pack_texture_channels(
+                std::span<const unsigned char>(img->data, pixel_count * 4u),
+                pixel_count, desc.channel_mapping());
+            if (img->packed.empty()) return nullptr;
+            img->release_decode();
+            img->comp = static_cast<int>(texture_channel_count(desc.channels()));
+        }
         return img;
     }
 
     std::shared_ptr<Texture<TexType::D2>> TextureLoader::finalize(std::shared_ptr<void> cpu, const TextureDesc& desc) {
         auto img = std::static_pointer_cast<CpuImage>(cpu);
-        if (!img || !img->data) return nullptr;
+        if (!img || !img->pixels()) return nullptr;
 
         GLenum fmt = gl_format_for(img->comp);
+        GLenum internal_fmt = gl_internal_format_for(img->comp);
         auto tex = std::make_shared<Texture<TexType::D2>>();
         tex->create();
         tex->bind();
         glPixelStorei(GL_UNPACK_ALIGNMENT, (img->comp == 4) ? 4 : 1);
-        tex->tex_image(0, fmt, 0, fmt, img->data, img->w, img->h);
+        tex->tex_image(0, internal_fmt, 0, fmt, img->pixels(), img->w, img->h);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        tex->set_paramter<TexOption::WRAP_S, TexOpVal::REPEAT>();
-        tex->set_paramter<TexOption::WRAP_T, TexOpVal::REPEAT>();
-        tex->set_paramter<TexOption::MIN_FILTER, TexOpVal::LINEAR>();
-        tex->set_paramter<TexOption::MAG_FILTER, TexOpVal::LINEAR>();
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+            desc.wrap_s() == TextureWrap::ClampToEdge ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+            desc.wrap_t() == TextureWrap::ClampToEdge ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        const GLint min_filter = desc.min_filter() == TextureFilter::Nearest
+            ? (desc.mipmap() ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST)
+            : (desc.mipmap() ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        const GLint mag_filter = desc.mag_filter() == TextureFilter::Nearest ? GL_NEAREST : GL_LINEAR;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+        if (desc.channel_mapping() == TextureChannelMapping::RedAlpha)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_GREEN);
         if (desc.mipmap()) tex->generate_mipmap();
         tex->measure.width = img->w;
         tex->measure.height = img->h;

@@ -185,7 +185,10 @@ namespace {
         }
         batch.prog = prog;
         batch.key.shader = static_cast<unsigned int>(*prog);
-        batch.key.atlas = tex->get_id();
+        clear_batch_textures(batch);
+        int diffuse_loc = prog->uniform_id("diffuseTex");
+        if (diffuse_loc < 0) { prog->locat_uniforms("diffuseTex"); diffuse_loc = prog->uniform_id("diffuseTex"); }
+        set_batch_texture(batch, 0, tex->get_id(), state->nixie_texture.shared(), diffuse_loc);
         batch.layers = kSpectrumLayer;
         batch.key.layers = kSpectrumLayer;
 

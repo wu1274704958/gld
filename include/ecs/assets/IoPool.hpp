@@ -9,6 +9,7 @@
 #include <queue>
 #include <functional>
 #include <vector>
+#include <atomic>
 
 namespace gld::ecs {
 
@@ -39,6 +40,13 @@ namespace gld::ecs {
             for (auto& t : workers_) if (t.joinable()) t.join();
         }
 
+        std::size_t queued() const {
+            std::lock_guard<std::mutex> lk(m_);
+            return jobs_.size();
+        }
+        std::size_t active() const { return active_.load(std::memory_order_relaxed); }
+        std::uint64_t completed() const { return completed_.load(std::memory_order_relaxed); }
+
     private:
         void start(std::size_t n) {
             for (std::size_t i = 0; i < n; ++i) {
@@ -52,7 +60,10 @@ namespace gld::ecs {
                             job = std::move(jobs_.front());
                             jobs_.pop();
                         }
+                        active_.fetch_add(1, std::memory_order_relaxed);
                         job();
+                        active_.fetch_sub(1, std::memory_order_relaxed);
+                        completed_.fetch_add(1, std::memory_order_relaxed);
                     }
                 });
             }
@@ -60,9 +71,11 @@ namespace gld::ecs {
 
         std::vector<std::thread> workers_;
         std::queue<std::function<void()>> jobs_;
-        std::mutex m_;
+        mutable std::mutex m_;
         std::condition_variable cv_;
         bool stopping_ = false;
+        std::atomic<std::size_t> active_{0};
+        std::atomic<std::uint64_t> completed_{0};
     };
 
     // Main-thread completion queue: finalize closures pushed by workers, drained
@@ -80,8 +93,12 @@ namespace gld::ecs {
             std::lock_guard<std::mutex> lk(m_);
             items_.clear();
         }
+        std::size_t size() const {
+            std::lock_guard<std::mutex> lk(m_);
+            return items_.size();
+        }
     private:
         std::vector<std::function<void()>> items_;
-        std::mutex m_;
+        mutable std::mutex m_;
     };
 }

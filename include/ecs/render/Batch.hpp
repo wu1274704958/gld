@@ -2,8 +2,10 @@
 
 // Instanced-quad batching – data layer.
 //
-// A batch groups textured unit-quads that share the SAME (atlas texture, shader,
-// layers) into one instanced draw. Batches are ECS COMPONENTS (BatchComponent),
+// A batch groups textured unit-quads that share the SAME (texture set, shader,
+// layers) into one instanced draw. Up to four textures are bound per batch;
+// the original one-texture path remains allocation-free and has a draw fast path.
+// Batches are ECS COMPONENTS (BatchComponent),
 // produced by per-type collector systems (text_batch_system today; a future
 // sprite_batch_system plugs in the same way) and drawn generically by the
 // renderer via view<BatchComponent>.
@@ -13,15 +15,19 @@
 // instanced shader draws every batch.
 
 #include <cstdint>
+#include <array>
 #include <vector>
 #include <memory>
 #include <utility>
+#include <cassert>
 
 #include <glm/glm.hpp>
 
 namespace gld { class Program; }   // fwd: BatchComponent keeps a Program* for binding
 
 namespace gld::ecs {
+
+    inline constexpr std::size_t MaxBatchTextures = 4;
 
     struct InstanceData {
         glm::vec4 rect{ 0.f };  // glyph atlas uv rect (x,y,w,h) — fg sampling clamp
@@ -34,25 +40,34 @@ namespace gld::ecs {
         glm::vec4 mparam3{ 0.f };    // (shadow_off_x_px, shadow_off_y_px, 0, 0)
     };
 
-    // Grouping key: same texture + same shader + same layer mask => one batch.
-    // atlas / shader are GL object ids (not pointers): a GL id is the resource's
-    // true identity, immune to the pointer-reuse aliasing a freed+realloced
-    // object could cause.
+    // Grouping key: same texture slots + same shader + same layer mask => one batch.
+    // Texture / shader fields are GL object ids (not pointers): a GL id is the
+    // resource's true identity, immune to the pointer-reuse aliasing a
+    // freed+realloced object could cause.
     struct BatchKey {
-        unsigned int atlas = 0;             // texture GL id
+        std::array<unsigned int, MaxBatchTextures> textures{}; // GL ids, slots 0..texture_count-1
+        std::uint8_t texture_count = 0;
         unsigned int shader = 0;            // program GL id
         std::uint32_t layers = 0xFFFFFFFFu; // camera culling mask this batch belongs to
         bool operator==(const BatchKey& o) const {
-            return atlas == o.atlas && shader == o.shader && layers == o.layers;
+            if (texture_count != o.texture_count || shader != o.shader || layers != o.layers)
+                return false;
+            for (std::size_t i = 0; i < texture_count; ++i)
+                if (textures[i] != o.textures[i]) return false;
+            return true;
         }
     };
     struct BatchKeyHash {
         std::size_t operator()(const BatchKey& k) const {
-            std::size_t a = std::hash<unsigned int>{}(k.atlas);
-            std::size_t b = std::hash<unsigned int>{}(k.shader);
-            std::size_t c = std::hash<std::uint32_t>{}(k.layers);
-            std::size_t h = a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
-            return h ^ (c + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2));
+            std::size_t h = std::hash<std::uint8_t>{}(k.texture_count);
+            auto mix = [&h](std::size_t v) {
+                h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+            };
+            for (std::size_t i = 0; i < k.texture_count; ++i)
+                mix(std::hash<unsigned int>{}(k.textures[i]));
+            mix(std::hash<unsigned int>{}(k.shader));
+            mix(std::hash<std::uint32_t>{}(k.layers));
+            return h;
         }
     };
 
@@ -71,10 +86,12 @@ namespace gld::ecs {
         BatchKey key;
         std::uint32_t layers = 0xFFFFFFFFu;   // == key.layers (kept for fast filtering)
 
-        // Bind handles (key only holds GL ids). prog is used for use()+uniforms;
-        // atlas_ref keeps the atlas texture alive (its GL id is key.atlas).
+        // Bind handles (key only holds GL ids). Texture slots are fixed-size so
+        // the original one-texture path never allocates and InstanceData stays unchanged.
         gld::Program* prog = nullptr;
-        std::shared_ptr<void> atlas_ref;
+        std::array<std::shared_ptr<void>, MaxBatchTextures> texture_refs{};
+        std::array<int, MaxBatchTextures> sampler_locations{ -1, -1, -1, -1 };
+        int order = 0;                       // lower values draw first within the batch pass
 
         std::vector<InstanceData> instances;  // CPU side
 
@@ -88,13 +105,50 @@ namespace gld::ecs {
         bool used = false;                    // touched this frame (GC bookkeeping)
     };
 
-    // Fold one source into a batch signature. Order-independent (summed by the
-    // caller), integer-only — no output bytes touched.
+    inline void clear_batch_textures(BatchComponent& batch) {
+        batch.key.texture_count = 0;
+        batch.key.textures.fill(0);
+        batch.texture_refs.fill(nullptr);
+        batch.sampler_locations.fill(-1);
+    }
+
+    inline void set_batch_texture(BatchComponent& batch, std::size_t slot,
+                                  unsigned int texture_id, std::shared_ptr<void> keepalive,
+                                  int sampler_location) {
+        assert(slot < MaxBatchTextures && "BatchComponent supports at most four texture slots");
+        if (slot >= MaxBatchTextures) return;
+        batch.key.textures[slot] = texture_id;
+        batch.texture_refs[slot] = std::move(keepalive);
+        batch.sampler_locations[slot] = sampler_location;
+        if (batch.key.texture_count < slot + 1)
+            batch.key.texture_count = static_cast<std::uint8_t>(slot + 1);
+    }
+
+    inline constexpr std::uint64_t BatchSignatureSeed = 1469598103934665603ull;
+    inline constexpr std::uint64_t BatchSignaturePrime = 1099511628211ull;
+
+    // Append values in the same order in which instances will be emitted.
+    // A commutative sum of independently mixed sources is unsafe here: when a
+    // run of entities advances the same revision in lockstep, the individual
+    // hashes can cancel and leave the aggregate unchanged. A source-order
+    // change also changes the instance stream, so an order-sensitive signature
+    // is the correct dirty-gating semantic.
+    inline std::uint64_t batch_signature_append(std::uint64_t signature,
+                                                std::uint64_t value) {
+        return (signature ^ value) * BatchSignaturePrime;
+    }
+
+    inline std::uint64_t batch_signature_append_source(std::uint64_t signature,
+                                                       std::uint32_t entity_raw,
+                                                       std::uint64_t rev,
+                                                       std::uint32_t ver) {
+        signature = batch_signature_append(signature, entity_raw);
+        signature = batch_signature_append(signature, rev);
+        return batch_signature_append(signature, ver);
+    }
+
+    // One-source helper retained for callers that need a standalone value.
     inline std::uint64_t batch_mix(std::uint32_t entity_raw, std::uint64_t rev, std::uint32_t ver) {
-        std::uint64_t h = 1469598103934665603ull;
-        h = (h ^ entity_raw) * 1099511628211ull;
-        h = (h ^ rev)        * 1099511628211ull;
-        h = (h ^ ver)        * 1099511628211ull;
-        return h;
+        return batch_signature_append_source(BatchSignatureSeed, entity_raw, rev, ver);
     }
 }

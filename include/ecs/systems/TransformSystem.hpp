@@ -3,6 +3,7 @@
 // Transform / core systems + plugins.
 
 #include <functional>
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include "../App.hpp"
 #include "../BaseSystem.hpp"
@@ -59,15 +60,41 @@ namespace gld::ecs {
         }
     };
 
+    inline void update_time(Time& time, TimeClock& clock, const TimeSettings& settings,
+                            TimeClock::Clock::time_point now) {
+        if (!clock.initialized) {
+            clock.previous = now;
+            clock.initialized = true;
+            time.dt = 0.f;
+            time.raw_dt = 0.f;
+            ++time.frame;
+            return;
+        }
+        const float raw = std::max(0.f,
+            std::chrono::duration<float>(now - clock.previous).count());
+        clock.previous = now;
+        time.raw_dt = raw;
+        time.dt = std::clamp(raw, 0.f, std::max(0.f, settings.max_delta));
+        time.wall_elapsed += raw;
+        time.elapsed += time.dt;
+        ++time.frame;
+        if (raw > 0.f) {
+            const float instant = 1.f / raw;
+            time.fps = time.fps <= 0.f ? instant : time.fps + (instant - time.fps) * 0.08f;
+        }
+    }
     inline void time_system(EcsWorld& w) {
         auto& time = w.resource_or_add<Time>();
-        time.dt = 0.016f;
-        time.elapsed += time.dt;
+        auto& clock = w.resource_or_add<TimeClock>();
+        const auto& settings = w.resource_or_add<TimeSettings>();
+        update_time(time, clock, settings, TimeClock::Clock::now());
     }
 
     // ---- plugins ----
     inline void CorePlugin(App& app) {
         app.world.resource_or_add<Time>();
+        app.world.resource_or_add<TimeClock>();
+        app.world.resource_or_add<TimeSettings>();
         app.add_system(Stage::First, time_system);
     }
     inline void TransformPlugin(App& app) {

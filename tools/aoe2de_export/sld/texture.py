@@ -17,6 +17,8 @@ from PIL import Image
 class TextureImage:
     data: numpy.ndarray
     hotspot: tuple[int, int]
+    source_ordinal: int
+    source_frame_index: int
 
     @property
     def width(self) -> int:
@@ -34,11 +36,22 @@ class Texture:
     def __init__(self, sld: Any, layer: int = 0) -> None:
         self.frames: list[TextureImage] = []
         frames = sld.get_frames(layer)
-        if layer == 0 and len(frames) == 0:
-            frames = sld.get_frames(1)
+        layer_bit = 1 << layer
+        records = [record for record in sld.get_frame_records()
+                   if int(record["frame_type"]) & layer_bit]
+        if len(records) != len(frames):
+            raise ValueError(
+                f"SLD layer {layer} metadata count {len(records)} "
+                f"differs from decoded frame count {len(frames)}"
+            )
 
-        for frame in frames:
+        for frame, record in zip(frames, records):
             data = frame.get_picture_data()
             if not isinstance(data, numpy.ndarray):
                 data = numpy.array(data)
-            self.frames.append(TextureImage(data.astype(numpy.uint8, copy=False), frame.get_hotspot()))
+            self.frames.append(TextureImage(
+                data.astype(numpy.uint8, copy=False),
+                frame.get_hotspot(),
+                int(record["ordinal"]),
+                int(record["frame_index"]),
+            ))

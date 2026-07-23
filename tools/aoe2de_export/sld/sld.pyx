@@ -105,6 +105,7 @@ cdef class SLD:
     cdef public list outline_frames
     cdef public list dmg_mask_frames
     cdef public list playercolor_mask_frames
+    cdef public list frame_records
 
     cdef const uint8_t[::1] data
 
@@ -130,6 +131,7 @@ cdef class SLD:
         self.outline_frames = list()
         self.dmg_mask_frames = list()
         self.playercolor_mask_frames = list()
+        self.frame_records = list()
 
         # File bytes
         self.data = data
@@ -162,7 +164,7 @@ cdef class SLD:
         # SLD files have no offsets, we have to calculate them
         # from length fields
         current_offset = SLD.sld_header.size
-        for _ in range(frame_count):
+        for ordinal in range(frame_count):
 
             canvas_width, canvas_height, canvas_hotspot_x, canvas_hotspot_y,\
                 frame_type , _, frame_index = SLD.sld_frame_header.unpack_from(
@@ -176,6 +178,12 @@ cdef class SLD:
                 frame_type,
                 frame_index
             )
+
+            self.frame_records.append({
+                "ordinal": ordinal,
+                "frame_index": frame_index,
+                "frame_type": frame_type,
+            })
 
             current_offset += SLD.sld_frame_header.size
 
@@ -392,6 +400,10 @@ cdef class SLD:
             )
 
         return frames
+
+    cpdef get_frame_records(self):
+        """Return physical SLD frame metadata in source order."""
+        return self.frame_records
 
     def __str__(self):
         ret = list()
@@ -1002,8 +1014,6 @@ cdef numpy.ndarray determine_rgba_matrix(vector[vector[pixel]] &block_matrix,
             img_y += 4
 
     return array_data
-
-
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef numpy.ndarray determine_greyscale_matrix(vector[vector[pixel]] &block_matrix,

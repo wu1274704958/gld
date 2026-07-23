@@ -10,6 +10,9 @@
 #include <vector>
 #include <typeindex>
 #include <memory>
+#include <atomic>
+#include <chrono>
+#include <type_traits>
 
 #include "../EcsWorld.hpp"
 #include "../App.hpp"
@@ -23,12 +26,36 @@
 
 namespace gld::ecs {
 
+    struct AssetServerDiagnostics {
+        std::uint32_t io_queued = 0;
+        std::uint32_t io_active = 0;
+        std::uint32_t finalize_queued = 0;
+        std::uint32_t cpu_jobs_completed = 0;
+        double cpu_load_ms = 0.0;
+        std::uint32_t finalized_this_frame = 0;
+        double finalize_ms_this_frame = 0.0;
+        std::uint32_t texture_uploads_this_frame = 0;
+        std::uint64_t texture_upload_bytes_this_frame = 0;
+        double texture_upload_ms_this_frame = 0.0;
+    };
+
+    struct AssetServerCounters {
+        std::atomic<std::uint64_t> cpu_jobs{0};
+        std::atomic<std::uint64_t> cpu_ns{0};
+        std::atomic<std::uint64_t> finalized{0};
+        std::atomic<std::uint64_t> finalize_ns{0};
+        std::atomic<std::uint64_t> texture_uploads{0};
+        std::atomic<std::uint64_t> texture_upload_bytes{0};
+        std::atomic<std::uint64_t> texture_upload_ns{0};
+    };
+
     struct AssetServer {
         EcsWorld* world = nullptr;
         std::shared_ptr<IFileSystem> fs;
         LoaderRegistry registry;
         IoPool pool{ 2 };
         CompletionQueue completion;
+        AssetServerCounters counters;
 
         ~AssetServer() { shutdown(); }
 
@@ -67,11 +94,45 @@ namespace gld::ecs {
             D d = desc;
             auto fsptr = fs;
             CompletionQueue* comp = &completion;
+            AssetServerCounters* metrics = &counters;
             AssetStore<T>* store = &assets;
-            pool.enqueue([loader, d, fsptr, comp, store, id] {
+            pool.enqueue([loader, d, fsptr, comp, metrics, store, id] {
+                const auto cpu_start = std::chrono::steady_clock::now();
                 std::shared_ptr<void> cpu = loader->load_cpu(d, *fsptr);   // worker
-                comp->push([loader, d, cpu, store, id] {
-                    store->set_loaded(id, loader->finalize(cpu, d));       // main/GL
+                const auto cpu_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - cpu_start).count();
+                metrics->cpu_jobs.fetch_add(1, std::memory_order_relaxed);
+                metrics->cpu_ns.fetch_add(static_cast<std::uint64_t>(cpu_ns), std::memory_order_relaxed);
+                comp->push([loader, d, cpu, metrics, store, id] {
+                    const auto finalize_start = std::chrono::steady_clock::now();
+                    bool loaded = false;
+                    if (!cpu) {
+                        store->set_failed(id);
+                    } else {
+                        auto asset = loader->finalize(cpu, d);             // main/GL
+                        loaded = static_cast<bool>(asset);
+                        if (asset) store->set_loaded(id, std::move(asset));
+                        else store->set_failed(id);
+                    }
+                    const auto elapsed = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - finalize_start).count());
+                    metrics->finalized.fetch_add(1, std::memory_order_relaxed);
+                    metrics->finalize_ns.fetch_add(elapsed, std::memory_order_relaxed);
+                    if constexpr (std::is_same_v<T, Texture<TexType::D2>>) {
+                        if (loaded) {
+                            metrics->texture_uploads.fetch_add(1, std::memory_order_relaxed);
+                            metrics->texture_upload_ns.fetch_add(elapsed, std::memory_order_relaxed);
+                        }
+                        if (loaded) {
+                            auto* texture = store->find(id);
+                            if (!texture || !texture->data) return;
+                            const auto channels = texture_channel_count(d.channels());
+                            const auto bytes = static_cast<std::uint64_t>(texture->data->measure.width)
+                                * static_cast<std::uint64_t>(texture->data->measure.height) * channels;
+                            metrics->texture_upload_bytes.fetch_add(bytes, std::memory_order_relaxed);
+                        }
+                    }
                 });
             });
             return handle;
@@ -94,7 +155,10 @@ namespace gld::ecs {
             if (!loader) { assets.set_failed(id); return handle; }
 
             auto cpu = loader->load_cpu(desc, *fs);
-            assets.set_loaded(id, loader->finalize(cpu, desc));
+            if (!cpu) { assets.set_failed(id); return handle; }
+            auto asset = loader->finalize(cpu, desc);
+            if (asset) assets.set_loaded(id, std::move(asset));
+            else assets.set_failed(id);
             return handle;
         }
 
@@ -109,6 +173,13 @@ namespace gld::ecs {
             Channels ch = Channels::RGBA, bool flip = false, bool srgb = false) {
             return load(TextureDesc(path, ch, flip, srgb, true));
         }
+        Handle<Texture<TexType::D2>> load_texture(const std::string& path, Channels ch,
+            bool flip, bool srgb, bool mipmap, TextureFilter min_filter,
+            TextureFilter mag_filter, TextureWrap wrap_s, TextureWrap wrap_t,
+            TextureChannelMapping mapping = TextureChannelMapping::Default) {
+            return load(TextureDesc(path, ch, flip, srgb, mipmap,
+                                    min_filter, mag_filter, wrap_s, wrap_t, mapping));
+        }
 
     private:
         template<class T>
@@ -120,7 +191,27 @@ namespace gld::ecs {
     // PreUpdate (main thread): finalize completed loads (GL) into the caches.
     inline void asset_update_system(EcsWorld& w) {
         auto& srv = w.resource<AssetServer>();
+        auto& diag = w.resource_or_add<AssetServerDiagnostics>();
         for (auto& fn : srv.completion.drain()) fn();
+        // Workers may enqueue more work while the drained set is finalized.
+        // Report the queue that remains, rather than the number already drained.
+        diag.finalize_queued = static_cast<std::uint32_t>(srv.completion.size());
+        diag.io_queued = static_cast<std::uint32_t>(srv.pool.queued());
+        diag.io_active = static_cast<std::uint32_t>(srv.pool.active());
+        diag.cpu_jobs_completed = static_cast<std::uint32_t>(
+            srv.counters.cpu_jobs.exchange(0, std::memory_order_relaxed));
+        diag.cpu_load_ms = static_cast<double>(
+            srv.counters.cpu_ns.exchange(0, std::memory_order_relaxed)) / 1'000'000.0;
+        diag.finalized_this_frame = static_cast<std::uint32_t>(
+            srv.counters.finalized.exchange(0, std::memory_order_relaxed));
+        diag.finalize_ms_this_frame = static_cast<double>(
+            srv.counters.finalize_ns.exchange(0, std::memory_order_relaxed)) / 1'000'000.0;
+        diag.texture_uploads_this_frame = static_cast<std::uint32_t>(
+            srv.counters.texture_uploads.exchange(0, std::memory_order_relaxed));
+        diag.texture_upload_bytes_this_frame =
+            srv.counters.texture_upload_bytes.exchange(0, std::memory_order_relaxed);
+        diag.texture_upload_ms_this_frame = static_cast<double>(
+            srv.counters.texture_upload_ns.exchange(0, std::memory_order_relaxed)) / 1'000'000.0;
     }
 
     // Last (main thread): enforce unload policies for every Assets<T>.
@@ -148,6 +239,7 @@ namespace gld::ecs {
         srv.register_loader<ProgramDesc>(std::make_shared<ProgramLoader>());
 
         app.world.resource_or_add<Time>();
+        app.world.resource_or_add<AssetServerDiagnostics>();
         app.add_system(Stage::PreUpdate, asset_update_system);
         app.add_system(Stage::Last, asset_gc_system);
         app.add_system(Stage::Shutdown, [](EcsWorld& w) {

@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>
+#include <chrono>
 
 namespace gld::ecs {
 
@@ -35,6 +36,20 @@ namespace gld::ecs {
     // ---- resources ----
     struct Time {
         float dt = 0.f;
+        float raw_dt = 0.f;
         double elapsed = 0.0;
+        double wall_elapsed = 0.0;
+        std::uint64_t frame = 0;
+        float fps = 0.f;
+    };
+
+    struct TimeSettings {
+        float max_delta = 0.1f;
+    };
+
+    struct TimeClock {
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point previous{};
+        bool initialized = false;
     };
 }

@@ -78,7 +78,23 @@ namespace gld::ecs {
     };
 
     // ---- concrete descriptors (tiny) ----
-    enum class Channels { Auto = 0, Gray = 1, RGB = 3, RGBA = 4 };
+    enum class Channels { Auto = 0, Gray = 1, RG = 2, RGB = 3, RGBA = 4 };
+    enum class TextureChannelMapping { Default, Red, RedAlpha };
+    enum class TextureFilter { Nearest, Linear };
+    enum class TextureWrap { Repeat, ClampToEdge };
+
+    inline constexpr unsigned int texture_channel_count(Channels channels,
+                                                        unsigned int auto_fallback = 4u) {
+        return channels == Channels::Auto ? auto_fallback
+            : static_cast<unsigned int>(channels);
+    }
+
+    inline constexpr bool valid_channel_mapping(Channels channels,
+                                                TextureChannelMapping mapping) {
+        return mapping == TextureChannelMapping::Default ||
+            (mapping == TextureChannelMapping::Red && channels == Channels::Gray) ||
+            (mapping == TextureChannelMapping::RedAlpha && channels == Channels::RG);
+    }
 
     struct ProgramDesc
         : BaseAssetDesc<ProgramDesc, std::string, std::string, std::string, std::string, std::string> {
@@ -92,13 +108,34 @@ namespace gld::ecs {
     };
 
     struct TextureDesc
-        : BaseAssetDesc<TextureDesc, std::string, Channels, bool, bool, bool> {
-        using Asset = Texture<TexType::D2>;          // (path, channels, flip, srgb, mipmap)
-        using BaseAssetDesc::BaseAssetDesc;
+        : BaseAssetDesc<TextureDesc, std::string, Channels, bool, bool, bool,
+                        TextureFilter, TextureFilter, TextureWrap, TextureWrap,
+                        TextureChannelMapping> {
+        using Asset = Texture<TexType::D2>;
+        using Base = BaseAssetDesc<TextureDesc, std::string, Channels, bool, bool, bool,
+                                   TextureFilter, TextureFilter, TextureWrap, TextureWrap,
+                                   TextureChannelMapping>;
+        TextureDesc() = default;
+        TextureDesc(std::string path, Channels channels, bool flip, bool srgb, bool mipmap,
+                    TextureChannelMapping mapping = TextureChannelMapping::Default)
+            : Base(std::move(path), channels, flip, srgb, mipmap,
+                   TextureFilter::Linear, TextureFilter::Linear,
+                   TextureWrap::Repeat, TextureWrap::Repeat, mapping) {}
+        TextureDesc(std::string path, Channels channels, bool flip, bool srgb, bool mipmap,
+                    TextureFilter min_filter, TextureFilter mag_filter,
+                    TextureWrap wrap_s, TextureWrap wrap_t,
+                    TextureChannelMapping mapping = TextureChannelMapping::Default)
+            : Base(std::move(path), channels, flip, srgb, mipmap,
+                   min_filter, mag_filter, wrap_s, wrap_t, mapping) {}
         const std::string& path() const { return get<0>(); }
         Channels channels()       const { return get<1>(); }
         bool flip()   const { return get<2>(); }
         bool srgb()   const { return get<3>(); }
         bool mipmap() const { return get<4>(); }
+        TextureFilter min_filter() const { return get<5>(); }
+        TextureFilter mag_filter() const { return get<6>(); }
+        TextureWrap wrap_s() const { return get<7>(); }
+        TextureWrap wrap_t() const { return get<8>(); }
+        TextureChannelMapping channel_mapping() const { return get<9>(); }
     };
 }

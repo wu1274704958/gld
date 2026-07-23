@@ -5,13 +5,35 @@
 // and finalize (main thread, GL). Loaders are registered by descriptor type.
 
 #include <memory>
+#include <span>
 #include <typeindex>
 #include <unordered_map>
+#include <vector>
 
 #include "Desc.hpp"
 #include "FileSystem.hpp"
 
 namespace gld::ecs {
+
+    namespace detail {
+        // Extract semantic source channels from an RGBA8 decode. The mapped
+        // result is what remains resident while waiting for main-thread upload.
+        inline std::vector<unsigned char> pack_texture_channels(
+            std::span<const unsigned char> rgba, std::size_t pixel_count,
+            TextureChannelMapping mapping) {
+            if (mapping == TextureChannelMapping::Default ||
+                rgba.size() < pixel_count * 4u) return {};
+            const std::size_t output_channels =
+                mapping == TextureChannelMapping::Red ? 1u : 2u;
+            std::vector<unsigned char> packed(pixel_count * output_channels);
+            for (std::size_t i = 0; i < pixel_count; ++i) {
+                packed[i * output_channels] = rgba[i * 4u];
+                if (mapping == TextureChannelMapping::RedAlpha)
+                    packed[i * 2u + 1u] = rgba[i * 4u + 3u];
+            }
+            return packed;
+        }
+    }
 
     template<class D>
     struct IAssetLoader {

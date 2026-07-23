@@ -3,7 +3,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <utility>
+#include <vector>
 
 #include <program.hpp>
 #include <texture.hpp>
@@ -44,7 +46,9 @@ namespace gld::ecs {
         key = other.key;
         layers = other.layers;
         prog = other.prog;
-        atlas_ref = std::move(other.atlas_ref);
+        texture_refs = std::move(other.texture_refs);
+        sampler_locations = other.sampler_locations;
+        order = other.order;
         instances = std::move(other.instances);
         vao = other.vao;
         instance_vbo = other.instance_vbo;
@@ -58,6 +62,9 @@ namespace gld::ecs {
         other.instance_vbo = 0;
         other.gpu_cap = 0;
         other.prog = nullptr;
+        other.texture_refs.fill(nullptr);
+        other.sampler_locations.fill(-1);
+        other.order = 0;
         return *this;
     }
 
@@ -161,9 +168,18 @@ namespace gld::ecs {
         ensure_quad(res);
 
         auto view = reg.view<BatchComponent>();
-        std::uint32_t groups = 0;
+        std::vector<entt::entity> ordered;
         for (auto e : view) {
-            ++groups;
+            ordered.push_back(e);
+        }
+        std::sort(ordered.begin(), ordered.end(), [&](entt::entity lhs, entt::entity rhs) {
+            const auto& a = view.get<BatchComponent>(lhs);
+            const auto& b = view.get<BatchComponent>(rhs);
+            if (a.order != b.order) return a.order < b.order;
+            return static_cast<std::uint32_t>(lhs) < static_cast<std::uint32_t>(rhs);
+        });
+
+        for (auto e : ordered) {
             auto& b = view.get<BatchComponent>(e);
             if (b.instances.empty()) continue;
             if ((cam.layers & b.layers) == 0) continue;   // camera layer filtering
@@ -179,13 +195,26 @@ namespace gld::ecs {
             if (view_proj_loc >= 0)
                 glUniformMatrix4fv(view_proj_loc, 1, GL_FALSE, glm::value_ptr(view_proj));
 
-            // Bind the glyph atlas by its GL id (the batch key's identity).
-            if (b.key.atlas) {
+            // Preserve the original one-texture hot path. Multi-texture batches
+            // use fixed slots and never depend on bindings left by a prior draw.
+            if (b.key.texture_count == 1 && b.key.textures[0]) {
                 glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, b.key.atlas);
-                const int tex_loc = prog->uniform_id("diffuseTex");
+                glBindTexture(GL_TEXTURE_2D, b.key.textures[0]);
+                int tex_loc = b.sampler_locations[0];
+                if (tex_loc < 0) {
+                    if (prog->uniform_id("diffuseTex") == -1) prog->locat_uniforms("diffuseTex");
+                    tex_loc = prog->uniform_id("diffuseTex");
+                }
                 if (tex_loc >= 0)
                     glUniform1i(tex_loc, 0);
+            } else {
+                for (std::size_t slot = 0; slot < b.key.texture_count; ++slot) {
+                    glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + slot));
+                    glBindTexture(GL_TEXTURE_2D, b.key.textures[slot]);
+                    if (b.sampler_locations[slot] >= 0)
+                        glUniform1i(b.sampler_locations[slot], static_cast<int>(slot));
+                }
+                glActiveTexture(GL_TEXTURE0);
             }
 
             if (b.vao == 0) setup_batch_vao(res, b);
@@ -201,7 +230,7 @@ namespace gld::ecs {
             ++diag.batch_draws;
             diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
         }
-        if (groups > diag.batch_groups) diag.batch_groups = groups;
+        if (ordered.size() > diag.batch_groups) diag.batch_groups = static_cast<std::uint32_t>(ordered.size());
     }
 
     void render_batch_pass(RenderPassContext& ctx, const BatchPass&) {

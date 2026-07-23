@@ -1,5 +1,6 @@
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.14)
 project("OpenGL demo" VERSION 0.1.0)
+include(CTest)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -37,6 +38,16 @@ find_package(FREE_TYPE)
 find_package(SPY)
 find_package(BASS24)
 find_package(EnTT CONFIG REQUIRED)
+
+find_package(nlohmann_json CONFIG QUIET)
+if(NOT nlohmann_json_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(nlohmann_json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+        URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 set(GLD_PLATFORM_LIBS "")
 if(WIN32)
@@ -77,6 +88,21 @@ if(GLM_FOUND AND GLFW3_FOUND)
     )
 
     aux_source_directory("src" ALL_SOURCE_FILES)
+
+    add_library(gld_aoe2 STATIC
+        aoe2/src/Aoe2Assets.cpp
+        aoe2/src/Aoe2ResourceManager.cpp
+        aoe2/src/Aoe2Systems.cpp
+        aoe2/src/Aoe2Batch.cpp
+        aoe2/src/Aoe2Plugin.cpp)
+    target_include_directories(gld_aoe2 PUBLIC ${CMAKE_SOURCE_DIR}/aoe2/include)
+    target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+    if(BUILD_TESTING)
+        add_executable(aoe2_runtime_tests aoe2/tests/Aoe2RuntimeTests.cpp)
+        target_include_directories(aoe2_runtime_tests PRIVATE ${CMAKE_SOURCE_DIR}/aoe2/include)
+        target_link_libraries(aoe2_runtime_tests PRIVATE EnTT::EnTT)
+        add_test(NAME aoe2_runtime_tests COMMAND aoe2_runtime_tests)
+    endif()
 
     message(${ALL_SOURCE_FILES})
 
@@ -141,7 +167,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR ecs_postprocess FILES main.cpp)
     CreateExample(DIR ecs_lighting FILES main.cpp)
     CreateExample(DIR ecs_audio_fft FILES main.cpp)
-    CreateExample(DIR aoe2de_spearman FILES main.cpp)
+    CreateExample(DIR aoe2_unit_preview FILES main.cpp)
+    target_link_libraries(aoe2_unit_preview gld_aoe2)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
