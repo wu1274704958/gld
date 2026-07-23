@@ -11,8 +11,12 @@ openage copyright/license notice in copied files.
 ```powershell
 python -m pip install cython numpy pillow
 cmake -S tools\aoe2de_export -B tools\aoe2de_export\build
-cmake --build tools\aoe2de_export\build --target aoe2de_export_sld
+cmake --build tools\aoe2de_export\build --config Release --target aoe2de_export_sld
 ```
+
+`Release` is recommended for normal use. On Windows, the CMake target also
+keeps the regular CPython `/MD` runtime when built as `Debug`, because standard
+Python installations do not provide the debug-only `pythonXY_d.lib`.
 
 Verify the local module:
 
