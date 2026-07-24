@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 #include <nlohmann/json.hpp>
 
 namespace gld::ecs::aoe2 {
@@ -98,14 +99,79 @@ const Frame* Animation::get(const Layer& layer, int direction, int frame) const 
     return index < layer.frames.size() ? &layer.frames[index] : nullptr;
 }
 
+void Aoe2UnitAppearance::build_animation_slots() {
+    std::sort(animations.begin(), animations.end(), [](const Animation& lhs, const Animation& rhs) {
+        return lhs.name < rhs.name;
+    });
+    animation_names.clear();
+    animation_slots_by_name.clear();
+    extension_animation_names_storage.clear();
+
+    std::vector<std::size_t> extension_indices;
+    animation_names.reserve(animations.size());
+    animation_slots_by_name.reserve(animations.size());
+    for (std::size_t index = 0; index < animations.size(); ++index) {
+        const auto& name = animations[index].name;
+        if (!animation_names.empty() && animation_names.back() == name)
+            throw std::runtime_error("duplicate animation name: " + name);
+        animation_names.push_back(name);
+        const auto core_slot = DefaultAoe2AnimationAbi::find(name);
+        if (core_slot == AnimationSlot::Invalid) extension_indices.push_back(index);
+        else animation_slots_by_name.emplace(name, core_slot);
+    }
+
+    const auto extension_begin = static_cast<std::size_t>(
+        animation_slot_value(AnimationSlot::ExtensionBegin));
+    const auto max_slot_count = static_cast<std::size_t>(
+        std::numeric_limits<std::uint16_t>::max()) + 1u;
+    if (extension_indices.size() > max_slot_count - extension_begin)
+        throw std::runtime_error("too many extension animations");
+
+    slot_to_animation_index.assign(extension_begin + extension_indices.size(), InvalidAnimationIndex);
+    for (std::size_t index = 0; index < animations.size(); ++index) {
+        const auto slot = DefaultAoe2AnimationAbi::find(animations[index].name);
+        if (slot != AnimationSlot::Invalid)
+            slot_to_animation_index[animation_slot_value(slot)] = index;
+    }
+    extension_animation_names_storage.reserve(extension_indices.size());
+    for (std::size_t extension = 0; extension < extension_indices.size(); ++extension) {
+        const auto animation_index = extension_indices[extension];
+        const auto raw_slot = static_cast<std::uint16_t>(extension_begin + extension);
+        const auto slot = static_cast<AnimationSlot>(raw_slot);
+        const auto& name = animations[animation_index].name;
+        slot_to_animation_index[raw_slot] = animation_index;
+        animation_slots_by_name.emplace(name, slot);
+        extension_animation_names_storage.push_back(name);
+    }
+}
+
+AnimationSlot Aoe2UnitAppearance::find_animation_slot(const std::string& name) const {
+    const auto it = animation_slots_by_name.find(name);
+    return it == animation_slots_by_name.end() ? AnimationSlot::Invalid : it->second;
+}
+
+const Animation* Aoe2UnitAppearance::animation_at(AnimationSlot slot) const {
+    const auto raw = static_cast<std::size_t>(animation_slot_value(slot));
+    if (slot == AnimationSlot::Invalid || raw >= slot_to_animation_index.size()) return nullptr;
+    const auto index = slot_to_animation_index[raw];
+    return index < animations.size() ? &animations[index] : nullptr;
+}
+
+Animation* Aoe2UnitAppearance::animation_at(AnimationSlot slot) {
+    return const_cast<Animation*>(std::as_const(*this).animation_at(slot));
+}
+
+std::string_view Aoe2UnitAppearance::animation_name(AnimationSlot slot) const {
+    const auto* animation = animation_at(slot);
+    return animation ? std::string_view(animation->name) : std::string_view{};
+}
+
 const Animation* Aoe2UnitAppearance::find_animation(const std::string& name) const {
-    const auto it = animations.find(name);
-    return it == animations.end() ? nullptr : &it->second;
+    return animation_at(find_animation_slot(name));
 }
 
 Animation* Aoe2UnitAppearance::find_animation(const std::string& name) {
-    const auto it = animations.find(name);
-    return it == animations.end() ? nullptr : &it->second;
+    return animation_at(find_animation_slot(name));
 }
 
 std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
@@ -120,10 +186,11 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
         auto appearance = std::make_shared<Aoe2UnitAppearance>();
         appearance->schema_version = 2;
         appearance->id = manifest.at("id").get<std::string>();
-        appearance->player_color_format = manifest.at("export_settings")
+        const auto player_color_format = manifest.at("export_settings")
             .at("player_color").at("format").get<std::string>();
-        if (appearance->player_color_format != "r8_subcolor_alpha_binary")
-            throw std::runtime_error("unsupported player-color format: " + appearance->player_color_format);
+        if (player_color_format != "r8_subcolor_alpha_binary")
+            throw std::runtime_error("unsupported player-color format: " + player_color_format);
+        appearance->player_color_format = PlayerColorFormat::R8SubcolorAlphaBinary;
         if (manifest.contains("missing_animations"))
             appearance->missing_animations = manifest.at("missing_animations").get<std::vector<std::string>>();
 
@@ -158,11 +225,10 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
                 for (const auto& warning : config.at("warnings"))
                     animation.warnings.push_back(warning.value("message", std::string{}));
             }
-            appearance->animation_names.push_back(name);
-            appearance->animations.emplace(name, std::move(animation));
+            appearance->animations.push_back(std::move(animation));
         }
-        std::sort(appearance->animation_names.begin(), appearance->animation_names.end());
         if (appearance->animations.empty()) return nullptr;
+        appearance->build_animation_slots();
         return appearance;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[aoe2] failed to parse %s: %s\n",

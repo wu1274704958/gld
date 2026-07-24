@@ -4,6 +4,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,7 @@ namespace gld::ecs {
         sampler_locations = other.sampler_locations;
         order = other.order;
         instances = std::move(other.instances);
+        dirty_ranges = std::move(other.dirty_ranges);
         vao = other.vao;
         instance_vbo = other.instance_vbo;
         gpu_cap = other.gpu_cap;
@@ -65,6 +67,7 @@ namespace gld::ecs {
         other.texture_refs.fill(nullptr);
         other.sampler_locations.fill(-1);
         other.order = 0;
+        other.dirty_ranges.clear();
         return *this;
     }
 
@@ -145,22 +148,48 @@ namespace gld::ecs {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    static std::size_t upload_batch(BatchComponent& b) {
+    struct BatchUploadResult {
+        std::size_t bytes = 0;
+        std::uint32_t calls = 0;
+        bool full = false;
+    };
+
+    static BatchUploadResult upload_batch(BatchComponent& b) {
+        BatchUploadResult result;
         glBindBuffer(GL_ARRAY_BUFFER, b.instance_vbo);
         const std::size_t bytes = b.instances.size() * sizeof(InstanceData);
-        if (b.instances.size() > b.gpu_cap) {
-            glBufferData(GL_ARRAY_BUFFER, bytes, b.instances.data(), GL_DYNAMIC_DRAW);
-            b.gpu_cap = b.instances.size();
-        } else {
+        const bool grow = b.instances.size() > b.gpu_cap;
+        auto plan = plan_batch_upload(b.dirty_ranges, b.instances.size(), b.dirty || grow);
+        if (grow) {
+            b.gpu_cap = next_batch_gpu_capacity(b.instances.size());
+            glBufferData(GL_ARRAY_BUFFER, b.gpu_cap * sizeof(InstanceData), nullptr, GL_DYNAMIC_DRAW);
+        }
+        if (plan.full) {
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, b.instances.data());
+            result.bytes = bytes;
+            result.calls = 1;
+            result.full = true;
+        } else {
+            for (const auto& range : plan.ranges) {
+                const std::size_t offset =
+                    static_cast<std::size_t>(range.first_instance) * sizeof(InstanceData);
+                const std::size_t range_bytes =
+                    static_cast<std::size_t>(range.instance_count) * sizeof(InstanceData);
+                glBufferSubData(GL_ARRAY_BUFFER, offset, range_bytes,
+                                b.instances.data() + range.first_instance);
+                result.bytes += range_bytes;
+                ++result.calls;
+            }
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         b.dirty = false;
-        return bytes;
+        b.dirty_ranges.clear();
+        return result;
     }
 
     void draw_batches(EcsWorld& w, const Camera& cam, RenderStateCache& state_cache,
                       const ResolvedRenderPassState& pass_state) {
+        const auto prepare_started = std::chrono::steady_clock::now();
         auto& res = w.resource_or_add<BatchResources>();
         auto& diag = w.resource_or_add<RenderDiagnostics>();
         auto& reg = w.reg();
@@ -179,6 +208,10 @@ namespace gld::ecs {
             if (a.order != b.order) return a.order < b.order;
             return static_cast<std::uint32_t>(lhs) < static_cast<std::uint32_t>(rhs);
         });
+        diag.batch_prepare_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - prepare_started).count();
+        const auto submit_started = std::chrono::steady_clock::now();
+        double upload_ms = 0.0;
 
         for (auto e : ordered) {
             auto& b = view.get<BatchComponent>(e);
@@ -222,8 +255,22 @@ namespace gld::ecs {
             }
 
             if (b.vao == 0) setup_batch_vao(res, b);
-            if (b.dirty || b.instances.size() > b.gpu_cap) {
-                diag.batch_upload_bytes += upload_batch(b);
+            if (b.dirty || !b.dirty_ranges.empty() || b.instances.size() > b.gpu_cap) {
+                const auto upload_started = std::chrono::steady_clock::now();
+                const auto upload = upload_batch(b);
+                diag.batch_upload_bytes += upload.bytes;
+                diag.batch_upload_ranges += upload.calls;
+                if (upload.full) {
+                    ++diag.batch_full_uploads;
+                    diag.batch_full_upload_bytes += upload.bytes;
+                } else {
+                    ++diag.batch_partial_uploads;
+                    diag.batch_partial_upload_bytes += upload.bytes;
+                }
+                const auto elapsed = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - upload_started).count();
+                upload_ms += elapsed;
+                diag.batch_upload_ms += elapsed;
                 ++diag.batch_uploads;
             }
 
@@ -234,6 +281,9 @@ namespace gld::ecs {
             ++diag.batch_draws;
             diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
         }
+        const auto submit_total = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - submit_started).count();
+        diag.batch_submit_ms += std::max(0.0, submit_total - upload_ms);
         if (ordered.size() > diag.batch_groups) diag.batch_groups = static_cast<std::uint32_t>(ordered.size());
     }
 

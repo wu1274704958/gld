@@ -100,7 +100,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     if(BUILD_TESTING)
         add_executable(aoe2_runtime_tests aoe2/tests/Aoe2RuntimeTests.cpp)
         target_include_directories(aoe2_runtime_tests PRIVATE ${CMAKE_SOURCE_DIR}/aoe2/include)
-        target_link_libraries(aoe2_runtime_tests PRIVATE EnTT::EnTT)
+        target_link_libraries(aoe2_runtime_tests PRIVATE gld_aoe2 EnTT::EnTT)
         add_test(NAME aoe2_runtime_tests COMMAND aoe2_runtime_tests)
     endif()
 

@@ -31,6 +31,32 @@ Appearance loading parses all animation metadata but texture residency is lazy.
 Only the initial/current animation is requested; animations already visited stay
 resident for instant switching back.
 
+Animation hot paths use a stable `AnimationSlot` enum. The default ABI reserves
+1..3 for `WalkA/B/C`, 4..6 for `IdleA/B/C`, 7..9 for `AttackA/B/C`, 10 for
+`DeathA`, and 11 for `DecayA`. The name mapping is declared by the compile-time
+`DefaultAoe2AnimationAbi` template table. Other exported animation names remain
+supported: each appearance sorts them by name and assigns local extension slots
+starting at `0x100`. Use `extension_animation_count()` and
+`extension_animation_names()` to inspect that local extension set; an extension
+slot must always be interpreted together with its appearance.
+
+AoE2 batching keeps persistent main/shadow membership. Each unit stores compact
+`group_id + instance_index` reverse slots; a stable group owns a parallel member
+list and generic `BatchComponent::instances` vector. Texture/shader/layer changes
+move only the affected source, while entity/component destruction uses
+swap-remove and repairs the moved member's reverse slot. Steady animation frame
+changes therefore do not rebuild batch keys or group member vectors.
+
+Instance invalidation is split into frame, transform and material state. Frame
+changes update UV plus the frame-derived quad transform, transform-only changes
+update only the matrix, and player colour/debug/tint changes update only
+material fields. The generic batch uploader accepts optional dirty instance
+ranges, merges adjacent ranges and uses partial `glBufferSubData` calls for
+sparse edits. Dense (at least 50%) or fragmented (more than eight ranges) edits
+fall back to one full upload. Existing generic collectors continue to use
+`dirty=true`; they allocate no per-instance dirty metadata and retain the
+original full-upload path.
+
 The `aoe2_unit_preview` example displays sixteen direction slots. Controls:
 
 - Left/Right: unit

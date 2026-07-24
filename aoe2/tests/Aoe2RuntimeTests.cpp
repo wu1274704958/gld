@@ -6,10 +6,71 @@
 #include <ecs/systems/TransformSystem.hpp>
 #include <ecs/render/Batch.hpp>
 #include <ecs/assets/Loader.hpp>
+#include <aoe2/Aoe2Assets.hpp>
 
 using namespace gld::ecs;
+using namespace gld::ecs::aoe2;
 
 int main() {
+    static_assert(animation_slot_value(AnimationSlot::Invalid) == 0);
+    static_assert(animation_slot_value(AnimationSlot::WalkA) == 1);
+    static_assert(animation_slot_value(AnimationSlot::WalkB) == 2);
+    static_assert(animation_slot_value(AnimationSlot::WalkC) == 3);
+    static_assert(animation_slot_value(AnimationSlot::IdleA) == 4);
+    static_assert(animation_slot_value(AnimationSlot::IdleB) == 5);
+    static_assert(animation_slot_value(AnimationSlot::IdleC) == 6);
+    static_assert(animation_slot_value(AnimationSlot::AttackA) == 7);
+    static_assert(animation_slot_value(AnimationSlot::AttackB) == 8);
+    static_assert(animation_slot_value(AnimationSlot::AttackC) == 9);
+    static_assert(animation_slot_value(AnimationSlot::DeathA) == 10);
+    static_assert(animation_slot_value(AnimationSlot::DecayA) == 11);
+    static_assert(animation_slot_value(AnimationSlot::ExtensionBegin) == 0x100);
+    static_assert(DefaultAoe2AnimationAbi::find("walkA") == AnimationSlot::WalkA);
+    static_assert(DefaultAoe2AnimationAbi::find("idleB") == AnimationSlot::IdleB);
+    static_assert(DefaultAoe2AnimationAbi::find("runA") == AnimationSlot::Invalid);
+    static_assert(DefaultAoe2AnimationAbi::name(AnimationSlot::AttackA) == "attackA");
+
+    Aoe2UnitAppearance appearance;
+    auto add_animation = [&](std::string name) {
+        Animation animation;
+        animation.name = std::move(name);
+        appearance.animations.push_back(std::move(animation));
+    };
+    add_animation("taskA");
+    add_animation("idleB");
+    add_animation("carryidleA");
+    add_animation("walkA");
+    add_animation("runA");
+    appearance.build_animation_slots();
+    assert(appearance.find_animation_slot("walkA") == AnimationSlot::WalkA);
+    assert(appearance.find_animation_slot("idleB") == AnimationSlot::IdleB);
+    assert(appearance.extension_animation_count() == 3);
+    assert(appearance.extension_animation_names()[0] == "carryidleA");
+    assert(appearance.extension_animation_names()[1] == "runA");
+    assert(appearance.extension_animation_names()[2] == "taskA");
+    const auto carry_slot = appearance.find_animation_slot("carryidleA");
+    const auto run_slot = appearance.find_animation_slot("runA");
+    const auto task_slot = appearance.find_animation_slot("taskA");
+    assert(animation_slot_value(carry_slot) == 0x100);
+    assert(animation_slot_value(run_slot) == 0x101);
+    assert(animation_slot_value(task_slot) == 0x102);
+    assert(appearance.is_extension_animation(run_slot));
+    assert(appearance.animation_name(run_slot) == "runA");
+    assert(appearance.animation_at(AnimationSlot::WalkA)->name == "walkA");
+    assert(appearance.animation_at(static_cast<AnimationSlot>(12)) == nullptr);
+    assert(appearance.find_animation("taskA") == appearance.animation_at(task_slot));
+
+    Aoe2UnitAppearance reordered;
+    for (const auto* name : {"runA", "walkA", "taskA", "carryidleA", "idleB"}) {
+        Animation animation;
+        animation.name = name;
+        reordered.animations.push_back(std::move(animation));
+    }
+    reordered.build_animation_slots();
+    assert(reordered.find_animation_slot("carryidleA") == carry_slot);
+    assert(reordered.find_animation_slot("runA") == run_slot);
+    assert(reordered.find_animation_slot("taskA") == task_slot);
+
     Time time;
     TimeClock clock;
     TimeSettings settings;
@@ -49,6 +110,40 @@ int main() {
     assert(!resolve_batch_state(BatchStateOverride::Inherit, false));
     assert(resolve_batch_state(BatchStateOverride::Enabled, false));
     assert(!resolve_batch_state(BatchStateOverride::Disabled, true));
+
+    assert(next_batch_gpu_capacity(0) == 0);
+    assert(next_batch_gpu_capacity(1) == 64);
+    assert(next_batch_gpu_capacity(64) == 64);
+    assert(next_batch_gpu_capacity(65) == 128);
+
+    const std::array<BatchUploadRange, 4> merge_ranges{{
+        {2, 2}, {4, 3}, {10, 2}, {11, 3}
+    }};
+    auto merged_upload = plan_batch_upload(merge_ranges, 32);
+    assert(!merged_upload.full);
+    assert(merged_upload.dirty_instances == 9);
+    assert(merged_upload.ranges.size() == 2);
+    assert(merged_upload.ranges[0].first_instance == 2);
+    assert(merged_upload.ranges[0].instance_count == 5);
+    assert(merged_upload.ranges[1].first_instance == 10);
+    assert(merged_upload.ranges[1].instance_count == 4);
+
+    const std::array<BatchUploadRange, 2> dense_ranges{{{0, 4}, {8, 4}}};
+    const auto dense_upload = plan_batch_upload(dense_ranges, 16);
+    assert(dense_upload.full);
+    assert(dense_upload.dirty_instances == 16);
+
+    std::array<BatchUploadRange, 9> fragmented_ranges{};
+    for (std::uint32_t i = 0; i < fragmented_ranges.size(); ++i)
+        fragmented_ranges[i] = {i * 3, 1};
+    const auto fragmented_upload = plan_batch_upload(fragmented_ranges, 64);
+    assert(fragmented_upload.full);
+    assert(fragmented_upload.ranges.empty());
+
+    const auto forced_upload = plan_batch_upload(
+        std::span<const BatchUploadRange>{}, 17, true);
+    assert(forced_upload.full);
+    assert(forced_upload.dirty_instances == 17);
 
     auto synchronized_unit_signature = [](std::uint64_t revision) {
         std::uint64_t signature = BatchSignatureSeed;

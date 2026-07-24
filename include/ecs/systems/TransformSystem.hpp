@@ -2,6 +2,7 @@
 
 // Transform / core systems + plugins.
 
+#include <chrono>
 #include <functional>
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,6 +11,12 @@
 #include "../Components.hpp"
 
 namespace gld::ecs {
+
+    struct TransformDiagnostics {
+        double cpu_ms = 0.0;
+        std::uint32_t visited = 0;
+        std::uint32_t changed = 0;
+    };
 
     inline glm::mat4 local_matrix(const Transform& t) {
         glm::mat4 m(1.f);
@@ -25,18 +32,28 @@ namespace gld::ecs {
     // inherently ordered (parent before child) so it is a plain system rather
     // than a per-entity BaseSystem.
     inline void transform_propagate_system(EcsWorld& w) {
+        const auto started = std::chrono::steady_clock::now();
+        auto& diagnostics = w.resource_or_add<TransformDiagnostics>();
+        diagnostics.visited = 0;
+        diagnostics.changed = 0;
         auto& reg = w.reg();
 
         std::function<void(entt::entity, const glm::mat4&)> visit =
             [&](entt::entity e, const glm::mat4& parent_world) {
+                ++diagnostics.visited;
                 glm::mat4 local(1.f);
                 if (auto* t = reg.try_get<Transform>(e)) local = local_matrix(*t);
                 glm::mat4 world = parent_world * local;
 
                 if (auto* g = reg.try_get<GlobalTransform>(e)) {
-                    if (g->world != world) { g->world = world; ++g->version; }
+                    if (g->world != world) {
+                        g->world = world;
+                        ++g->version;
+                        ++diagnostics.changed;
+                    }
                 } else {
                     reg.emplace<GlobalTransform>(e, GlobalTransform{world, 1});
+                    ++diagnostics.changed;
                 }
 
                 if (auto* ch = reg.try_get<Children>(e))
@@ -48,6 +65,8 @@ namespace gld::ecs {
             if (!p || p->value == entt::null)
                 visit(e, glm::mat4(1.f));
         }
+        diagnostics.cpu_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
     }
 
     // BaseSystem demonstration: computes a local-only world matrix. Validates

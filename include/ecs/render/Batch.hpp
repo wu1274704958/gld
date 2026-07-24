@@ -20,6 +20,9 @@
 #include <memory>
 #include <utility>
 #include <cassert>
+#include <algorithm>
+#include <limits>
+#include <span>
 
 #include <glm/glm.hpp>
 
@@ -54,6 +57,84 @@ namespace gld::ecs {
         glm::vec4 mparam2{ 0.f };    // shadow colour rgba
         glm::vec4 mparam3{ 0.f };    // (shadow_off_x_px, shadow_off_y_px, 0, 0)
     };
+
+    struct BatchUploadRange {
+        std::uint32_t first_instance = 0;
+        std::uint32_t instance_count = 0;
+    };
+
+    struct BatchUploadPlan {
+        bool full = false;
+        std::size_t dirty_instances = 0;
+        std::vector<BatchUploadRange> ranges;
+    };
+
+    inline constexpr std::size_t MaxPartialBatchUploadRanges = 8;
+
+    // Pure upload planner shared by the renderer and runtime tests. Sparse,
+    // compact edits remain partial; dense or fragmented edits deliberately
+    // collapse to one full upload to avoid excessive driver calls.
+    inline BatchUploadPlan plan_batch_upload(std::span<const BatchUploadRange> input,
+                                             std::size_t instance_count,
+                                             bool force_full = false) {
+        BatchUploadPlan plan;
+        if (instance_count == 0) return plan;
+        if (force_full) {
+            plan.full = true;
+            plan.dirty_instances = instance_count;
+            return plan;
+        }
+
+        plan.ranges.reserve(input.size());
+        for (const auto& range : input) {
+            if (range.instance_count == 0 || range.first_instance >= instance_count) continue;
+            const auto available = instance_count - range.first_instance;
+            plan.ranges.push_back({
+                range.first_instance,
+                static_cast<std::uint32_t>(std::min<std::size_t>(range.instance_count, available))
+            });
+        }
+        if (plan.ranges.empty()) return plan;
+
+        std::sort(plan.ranges.begin(), plan.ranges.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.first_instance < rhs.first_instance;
+        });
+        std::size_t output = 0;
+        for (const auto& range : plan.ranges) {
+            if (output == 0) {
+                plan.ranges[output++] = range;
+                continue;
+            }
+            auto& previous = plan.ranges[output - 1];
+            const std::uint64_t previous_end =
+                static_cast<std::uint64_t>(previous.first_instance) + previous.instance_count;
+            const std::uint64_t range_end =
+                static_cast<std::uint64_t>(range.first_instance) + range.instance_count;
+            if (range.first_instance <= previous_end) {
+                previous.instance_count = static_cast<std::uint32_t>(
+                    std::max(previous_end, range_end) - previous.first_instance);
+            } else {
+                plan.ranges[output++] = range;
+            }
+        }
+        plan.ranges.resize(output);
+        for (const auto& range : plan.ranges) plan.dirty_instances += range.instance_count;
+        if (plan.dirty_instances * 2 >= instance_count ||
+            plan.ranges.size() > MaxPartialBatchUploadRanges) {
+            plan.full = true;
+            plan.dirty_instances = instance_count;
+            plan.ranges.clear();
+        }
+        return plan;
+    }
+
+    inline std::size_t next_batch_gpu_capacity(std::size_t required) {
+        if (required == 0) return 0;
+        std::size_t capacity = 64;
+        while (capacity < required && capacity <= std::numeric_limits<std::size_t>::max() / 2)
+            capacity *= 2;
+        return std::max(capacity, required);
+    }
 
     // Grouping key: same texture slots + same shader + same layer mask => one batch.
     // Texture / shader fields are GL object ids (not pointers): a GL id is the
@@ -92,9 +173,9 @@ namespace gld::ecs {
     };
 
     // One batch = one instanced draw. Lives on a batch entity, maintained by a
-    // collector system. Dirty/upload is decided by a cheap integer signature
-    // (sig,count) over the contributing sources — never by hashing the output
-    // instance bytes.
+    // collector system. Existing collectors can gate full rebuilds with the
+    // integer signature; persistent collectors can instead mark sparse ranges.
+    // Neither path hashes the output instance bytes.
     struct BatchComponent {
         BatchComponent() = default;
         ~BatchComponent();
@@ -114,6 +195,9 @@ namespace gld::ecs {
         int order = 0;                       // lower values draw first within the batch pass
 
         std::vector<InstanceData> instances;  // CPU side
+        // Optional sparse updates. Existing collectors leave this empty and
+        // retain the original full-upload behaviour through dirty=true.
+        std::vector<BatchUploadRange> dirty_ranges;
 
         unsigned int vao = 0;                 // GL: created lazily at render
         unsigned int instance_vbo = 0;
@@ -124,6 +208,35 @@ namespace gld::ecs {
         bool dirty = true;                    // needs GPU re-upload
         bool used = false;                    // touched this frame (GC bookkeeping)
     };
+
+    inline void mark_batch_full_dirty(BatchComponent& batch) {
+        batch.dirty = true;
+        batch.dirty_ranges.clear();
+    }
+
+    inline void mark_batch_instances_dirty(BatchComponent& batch,
+                                           std::uint32_t first,
+                                           std::uint32_t count) {
+        if (batch.dirty || count == 0) return;
+        if (!batch.dirty_ranges.empty()) {
+            auto& last = batch.dirty_ranges.back();
+            const std::uint64_t last_end =
+                static_cast<std::uint64_t>(last.first_instance) + last.instance_count;
+            const std::uint64_t new_end = static_cast<std::uint64_t>(first) + count;
+            // AoE2 visits persistent slots in their insertion order, so the
+            // overwhelmingly common path coalesces online to one range/group.
+            if (first >= last.first_instance && first <= last_end) {
+                last.instance_count = static_cast<std::uint32_t>(
+                    std::max(last_end, new_end) - last.first_instance);
+                return;
+            }
+        }
+        batch.dirty_ranges.push_back({first, count});
+    }
+
+    inline void mark_batch_instance_dirty(BatchComponent& batch, std::uint32_t index) {
+        mark_batch_instances_dirty(batch, index, 1);
+    }
 
     inline void clear_batch_textures(BatchComponent& batch) {
         batch.key.texture_count = 0;

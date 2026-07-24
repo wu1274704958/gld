@@ -1,6 +1,7 @@
 #include <aoe2/Aoe2Systems.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -43,7 +44,12 @@ void poll_residency(Animation& animation) {
 
 void request_animation_residency(AssetServer& server, Aoe2UnitAppearance& appearance,
                                  const std::string& animation_name) {
-    auto* animation = appearance.find_animation(animation_name);
+    request_animation_residency(server, appearance, appearance.find_animation_slot(animation_name));
+}
+
+void request_animation_residency(AssetServer& server, Aoe2UnitAppearance& appearance,
+                                 AnimationSlot animation_slot) {
+    auto* animation = appearance.animation_at(animation_slot);
     if (!animation || animation->residency != AnimationResidencyState::Unloaded) return;
     if (!animation->main.usable()) {
         animation->residency = AnimationResidencyState::Failed;
@@ -71,14 +77,23 @@ void request_animation_residency(AssetServer& server, Aoe2UnitAppearance& appear
 
 bool request_aoe2_animation(Aoe2UnitRender& unit, const std::string& animation_name) {
     auto* appearance = unit.appearance.get();
-    if (!appearance || !appearance->find_animation(animation_name)) return false;
-    if (animation_name == unit.animation) {
+    if (!appearance) return false;
+    return request_aoe2_animation(unit, appearance->find_animation_slot(animation_name));
+}
+
+bool request_aoe2_animation(Aoe2UnitRender& unit, AnimationSlot animation_slot) {
+    auto* appearance = unit.appearance.get();
+    const auto* animation = appearance ? appearance->animation_at(animation_slot) : nullptr;
+    if (!animation) return false;
+    if (animation_slot == unit.animation_slot) {
         unit.pending_animation.clear();
+        unit.pending_animation_slot = AnimationSlot::Invalid;
         unit.transition = AnimationTransitionState::None;
         unit.transition_error.clear();
         return true;
     }
-    unit.pending_animation = animation_name;
+    unit.pending_animation = animation->name;
+    unit.pending_animation_slot = animation_slot;
     unit.transition = AnimationTransitionState::Waiting;
     unit.transition_error.clear();
     return true;
@@ -124,10 +139,14 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
 
         Aoe2UnitRender render;
         render.appearance = request.appearance;
-        std::string initial_animation = request.options.animation;
-        if (!appearance->find_animation(initial_animation)) {
-            initial_animation = appearance->find_animation("idleA") ? "idleA"
-                : appearance->animation_names.front();
+        AnimationSlot initial_animation_slot = request.options.animation_slot;
+        if (!appearance->animation_at(initial_animation_slot))
+            initial_animation_slot = appearance->find_animation_slot(request.options.animation);
+        if (!appearance->animation_at(initial_animation_slot)) {
+            initial_animation_slot = appearance->find_animation_slot("idleA");
+            if (!appearance->animation_at(initial_animation_slot))
+                initial_animation_slot = appearance->find_animation_slot(
+                    appearance->animation_names.front());
         }
         render.direction_slot = request.options.direction;
         render.direction_slot_count = request.options.direction_slot_count;
@@ -137,7 +156,8 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
         render.playback_speed = request.options.playback_speed;
         render.playing = request.options.playing;
         render.loop = request.options.loop;
-        render.pending_animation = std::move(initial_animation);
+        render.pending_animation_slot = initial_animation_slot;
+        render.pending_animation = std::string(appearance->animation_name(initial_animation_slot));
         render.transition = AnimationTransitionState::Waiting;
         reg.emplace_or_replace<Aoe2UnitRender>(entity, std::move(render));
         completed.push_back(entity);
@@ -176,17 +196,24 @@ static void resolve_frame(Aoe2UnitRender& render, const Animation& animation, in
 }
 
 void aoe2_unit_animation_system(EcsWorld& world) {
+    const auto started = std::chrono::steady_clock::now();
+    auto& diagnostics = world.resource_or_add<Aoe2PerformanceDiagnostics>();
+    diagnostics.animation_units = 0;
+    diagnostics.animation_frame_changes = 0;
+    diagnostics.animation_pending = 0;
     const float dt = world.resource_or_add<Time>().dt;
     auto& server = world.resource<AssetServer>();
     auto& reg = world.reg();
     for (auto entity : reg.view<Aoe2UnitRender>()) {
+        ++diagnostics.animation_units;
         auto& render = reg.get<Aoe2UnitRender>(entity);
         auto* appearance = render.appearance.get();
         if (!appearance) continue;
 
-        if (!render.pending_animation.empty()) {
-            request_animation_residency(server, *appearance, render.pending_animation);
-            auto* pending = appearance->find_animation(render.pending_animation);
+        if (render.pending_animation_slot != AnimationSlot::Invalid) {
+            ++diagnostics.animation_pending;
+            request_animation_residency(server, *appearance, render.pending_animation_slot);
+            auto* pending = appearance->animation_at(render.pending_animation_slot);
             if (!pending) {
                 render.transition = AnimationTransitionState::Failed;
                 render.transition_error = "animation metadata is missing";
@@ -203,8 +230,10 @@ void aoe2_unit_animation_system(EcsWorld& world) {
                 continue;
             }
 
-            render.animation = render.pending_animation;
+            render.animation_slot = render.pending_animation_slot;
+            render.animation = pending->name;
             render.pending_animation.clear();
+            render.pending_animation_slot = AnimationSlot::Invalid;
             render.transition = AnimationTransitionState::None;
             render.transition_error.clear();
             render.playback_time = 0.f;
@@ -216,6 +245,7 @@ void aoe2_unit_animation_system(EcsWorld& world) {
                 % pending->direction_count;
             resolve_frame(render, *pending, 0);
             ++render.revision;
+            ++diagnostics.animation_frame_changes;
             continue;
         }
 
@@ -225,13 +255,14 @@ void aoe2_unit_animation_system(EcsWorld& world) {
         if (render.restart_requested) {
             render.restart_requested = false;
             render.playback_time = 0.f;
-            if (const auto* active = appearance->find_animation(render.animation)) {
+            if (const auto* active = appearance->animation_at(render.animation_slot)) {
                 resolve_frame(render, *active, 0);
                 ++render.revision;
+                ++diagnostics.animation_frame_changes;
             }
         }
 
-        const auto* animation = appearance->find_animation(render.animation);
+        const auto* animation = appearance->animation_at(render.animation_slot);
         if (!animation) continue;
         render.direction = ((render.direction % animation->direction_count) + animation->direction_count)
             % animation->direction_count;
@@ -244,8 +275,11 @@ void aoe2_unit_animation_system(EcsWorld& world) {
         if (frame != render.current_frame) {
             resolve_frame(render, *animation, frame);
             ++render.revision;
+            ++diagnostics.animation_frame_changes;
         }
     }
+    diagnostics.animation_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
 }
 
 } // namespace gld::ecs::aoe2

@@ -5,6 +5,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 #include <set>
 #include <climits>
@@ -334,7 +335,10 @@ namespace gld::ecs {
                 wp.fence = nullptr;
             }
             if (handle && !presented) {
+                const auto present_started = std::chrono::steady_clock::now();
                 glfwSwapBuffers(handle);
+                diag.present_ms += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - present_started).count();
                 presented = true;
                 ++diag.present_swaps;
             }

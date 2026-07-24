@@ -322,7 +322,7 @@ void preview_diagnostics_system(EcsWorld& world) {
     std::size_t resident_animations = 0;
     std::uint64_t resident_bytes = 0;
     if (appearance) {
-        for (const auto& [_, animation] : appearance->animations) {
+        for (const auto& animation : appearance->animations) {
             if (animation.residency != AnimationResidencyState::Ready) continue;
             ++resident_animations;
             auto add_layer = [&](const Layer& layer, std::uint64_t bytes_per_pixel) {

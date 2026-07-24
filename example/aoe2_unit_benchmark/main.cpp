@@ -42,7 +42,7 @@ namespace {
 
 // All benchmark knobs intentionally live in one place. Recompile after editing.
 struct BenchmarkConfig {
-    static constexpr std::size_t UnitCount = 2000;
+    static constexpr std::size_t UnitCount = 30000;
     static constexpr float MovingRatio = 0.50f;
     static constexpr float MinSpeed = 20.f;
     static constexpr float MaxSpeed = 80.f;
@@ -64,12 +64,43 @@ struct Motion {
     glm::vec2 velocity{0.f};
 };
 
+struct TimingSample {
+    double sum = 0.0;
+    double maximum = 0.0;
+    void add(double value) {
+        sum += value;
+        maximum = std::max(maximum, value);
+    }
+    double average(std::uint64_t samples) const {
+        return samples ? sum / static_cast<double>(samples) : 0.0;
+    }
+};
+
+struct BenchmarkTimingWindow {
+    std::uint64_t frames = 0;
+    TimingSample animation;
+    TimingSample movement;
+    TimingSample transform;
+    TimingSample aoe_total;
+    TimingSample aoe_group;
+    TimingSample aoe_rebuild;
+    TimingSample batch_prepare;
+    TimingSample batch_upload;
+    TimingSample batch_submit;
+    TimingSample present;
+
+    void reset() { *this = {}; }
+};
+
 struct BenchmarkState {
     std::vector<entt::entity> units;
     entt::entity hud_text = entt::null;
     std::size_t moving_count = 0;
     double spawn_ms = 0.0;
     double hud_seconds = 0.0;
+    double movement_ms = 0.0;
+    std::uint32_t movement_units = 0;
+    BenchmarkTimingWindow timing;
     std::string fatal_error;
 };
 
@@ -213,6 +244,9 @@ void benchmark_input_system(EcsWorld& world) {
 }
 
 void movement_system(EcsWorld& world) {
+    const auto started = std::chrono::steady_clock::now();
+    auto& state = world.resource<BenchmarkState>();
+    state.movement_units = 0;
     const float dt = world.resource<Time>().dt;
     const auto& window = world.resource<Window>();
     const float half_width = std::max(1.f, window.width * 0.5f);
@@ -220,6 +254,7 @@ void movement_system(EcsWorld& world) {
 
     auto& reg = world.reg();
     for (auto entity : reg.view<Motion, Transform>()) {
+        ++state.movement_units;
         const auto& motion = reg.get<Motion>(entity);
         auto& transform = reg.get<Transform>(entity);
         transform.translation.x += motion.velocity.x * dt;
@@ -233,11 +268,27 @@ void movement_system(EcsWorld& world) {
         // In this 2.5D ortho view, lower feet are closer to the camera.
         transform.translation.z = -transform.translation.y;
     }
+    state.movement_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
 }
 
 void benchmark_hud_system(EcsWorld& world) {
     auto& state = world.resource<BenchmarkState>();
     const auto& time = world.resource<Time>();
+    const auto& aoe_perf = world.resource_or_add<Aoe2PerformanceDiagnostics>();
+    const auto& transform_perf = world.resource_or_add<TransformDiagnostics>();
+    const auto& render = world.resource_or_add<RenderDiagnostics>();
+    ++state.timing.frames;
+    state.timing.animation.add(aoe_perf.animation_ms);
+    state.timing.movement.add(state.movement_ms);
+    state.timing.transform.add(transform_perf.cpu_ms);
+    state.timing.aoe_total.add(aoe_perf.batch_total_ms);
+    state.timing.aoe_group.add(aoe_perf.batch_group_ms);
+    state.timing.aoe_rebuild.add(aoe_perf.batch_rebuild_ms);
+    state.timing.batch_prepare.add(render.batch_prepare_ms);
+    state.timing.batch_upload.add(render.batch_upload_ms);
+    state.timing.batch_submit.add(render.batch_submit_ms);
+    state.timing.present.add(render.present_ms);
     state.hud_seconds += time.raw_dt;
     if (state.hud_seconds < BenchmarkConfig::HudRefreshSeconds) return;
     state.hud_seconds = 0.0;
@@ -263,17 +314,23 @@ void benchmark_hud_system(EcsWorld& world) {
     std::size_t aoe_batches = 0;
     std::size_t aoe_instances = 0;
     if (const auto* index = world.try_resource<Aoe2BatchIndex>()) {
-        for (const auto& [_, entity] : index->map) {
-            if (!reg.valid(entity)) continue;
-            const auto& batch = reg.get<BatchComponent>(entity);
+        for (const auto& group : index->groups) {
+            if (!group.active || !reg.valid(group.batch_entity)) continue;
+            const auto& batch = reg.get<BatchComponent>(group.batch_entity);
             if (!batch.used || (batch.layers & UnitLayer) == 0) continue;
             ++aoe_batches;
             aoe_instances += batch.instances.size();
         }
     }
 
-    const auto& render = world.resource_or_add<RenderDiagnostics>();
     const auto& assets = world.resource<AssetServerDiagnostics>();
+    const auto timing_frames = state.timing.frames;
+    auto timing = [&](const TimingSample& sample) {
+        std::ostringstream value;
+        value << std::fixed << std::setprecision(2)
+              << sample.average(timing_frames) << "/" << sample.maximum;
+        return value.str();
+    };
     std::ostringstream out;
     out << std::fixed << std::setprecision(1)
         << "AOE2 UNIT BENCHMARK\n"
@@ -288,6 +345,38 @@ void benchmark_hud_system(EcsWorld& world) {
         << "AOE batches/draws: " << aoe_batches << "   render instances: " << aoe_instances << "\n"
         << "GPU batch uploads: " << render.batch_uploads << "   "
         << render.batch_upload_bytes / (1024.0 * 1024.0) << " MiB/frame\n"
+        << "Upload mode: full " << render.batch_full_uploads << " ("
+        << render.batch_full_upload_bytes / (1024.0 * 1024.0) << " MiB)   partial "
+        << render.batch_partial_uploads << " ("
+        << render.batch_partial_upload_bytes / (1024.0 * 1024.0)
+        << " MiB)   ranges " << render.batch_upload_ranges << "\n"
+        << "CPU avg/max ms: anim " << timing(state.timing.animation)
+        << "   move " << timing(state.timing.movement)
+        << "   xform " << timing(state.timing.transform) << "\n"
+        << "AoE batch ms: total " << timing(state.timing.aoe_total)
+        << "   group " << timing(state.timing.aoe_group)
+        << "   rebuild " << timing(state.timing.aoe_rebuild) << "\n"
+        << "Batch CPU ms: prep " << timing(state.timing.batch_prepare)
+        << "   upload " << timing(state.timing.batch_upload)
+        << "   submit " << timing(state.timing.batch_submit)
+        << "   present " << timing(state.timing.present) << "\n"
+        << "AoE work: units " << aoe_perf.batch_units << "   sources "
+        << aoe_perf.batch_sources << "   groups " << aoe_perf.batch_groups
+        << "   dirty/steady " << aoe_perf.batch_dirty_groups << "/"
+        << aoe_perf.batch_unchanged_groups << "   rebuilt "
+        << aoe_perf.batch_rebuilt_instances << "\n"
+        << "Membership: attach/detach/move " << aoe_perf.membership_attaches << "/"
+        << aoe_perf.membership_detaches << "/" << aoe_perf.membership_migrations
+        << "   group +/- " << aoe_perf.group_creates << "/"
+        << aoe_perf.group_destroys << "\n"
+        << "Instance dirty: frame " << aoe_perf.frame_dirty_instances
+        << "   xform " << aoe_perf.transform_dirty_instances
+        << "   material " << aoe_perf.material_dirty_instances
+        << "   full " << aoe_perf.full_initialized_instances
+        << "   steady " << aoe_perf.unchanged_instances << "\n"
+        << "Animation work: units " << aoe_perf.animation_units << "   changed "
+        << aoe_perf.animation_frame_changes << "   pending "
+        << aoe_perf.animation_pending << "   movement " << state.movement_units << "\n"
         << "Assets queued: " << assets.io_queued << "   active: " << assets.io_active
         << "   finalize: " << assets.finalize_queued << "\n"
         << "Depth: test+write, foot Z=-Y   shadows: no depth write\n"
@@ -303,6 +392,7 @@ void benchmark_hud_system(EcsWorld& world) {
          world.resource<Window>().height * 0.5f - 14.f,
          0.f
     };
+    state.timing.reset();
 }
 
 } // namespace

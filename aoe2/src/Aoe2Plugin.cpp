@@ -44,6 +44,7 @@ void Aoe2Plugin::operator()(App& app) const {
     auto& manager = app.world.add_resource<Aoe2ResourceManager>(server, cache_root);
     manager.refresh();
     app.world.resource_or_add<Aoe2BatchIndex>();
+    register_aoe2_batch_lifecycle(app.world);
     auto& render = app.world.resource_or_add<Aoe2RenderResources>();
     render.sprite_shader = server.load_program("ecs/text_vs.glsl", "ecs/aoe2_unit_fg.glsl");
     render.player_color_shader = server.load_program(
