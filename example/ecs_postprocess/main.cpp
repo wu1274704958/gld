@@ -29,11 +29,14 @@
 using namespace gld::ecs;
 namespace fs = std::filesystem;
 
-struct SpinSystem : BaseSystem<SpinSystem, Transform, AutoRotate> {
-    void Update(entt::entity, Transform& t, AutoRotate& r) {
-        t.rotation += r.speed * res<Time>().dt;
+static void spin_system(EcsWorld& w) {
+    const float dt = w.resource<Time>().dt;
+    auto& reg = w.reg();
+    for (auto entity : reg.view<Transform, AutoRotate>()) {
+        const auto delta = reg.get<AutoRotate>(entity).speed * dt;
+        patch_transform(w, entity, [&](TransformEditor& transform) { transform.rotate(delta); });
     }
-};
+}
 
 struct PostHandles {
     entt::entity camera = entt::null;
@@ -75,7 +78,7 @@ int main()
     app.add_plugin(InputPlugin);
     app.add_plugin(PostProcessPlugin);
     app.add_plugin(RenderPlugin);
-    app.add_system<SpinSystem>(Stage::Update);
+    app.add_system(Stage::Update, spin_system);
     app.add_system(Stage::Update, toggle_post_system);
 
     app.add_system(Stage::Startup, [](EcsWorld& w) {
@@ -107,9 +110,7 @@ int main()
 
         auto make_box = [&](glm::vec3 pos, glm::vec3 scale, glm::vec4 color, bool textured, glm::vec3 spin) {
             entt::entity e = w.spawn();
-            Transform tr;
-            tr.translation = pos;
-            tr.scale = scale;
+            Transform tr = Transform::from_trs(pos, glm::vec3(0.f), scale);
             reg.emplace<Transform>(e, tr);
             reg.emplace<GlobalTransform>(e);
             reg.emplace<MeshHandle>(e, cube);

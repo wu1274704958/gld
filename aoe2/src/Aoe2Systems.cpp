@@ -1,4 +1,5 @@
 #include <aoe2/Aoe2Systems.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -11,6 +12,13 @@
 #include <ecs/render/RenderComponents.hpp>
 
 namespace gld::ecs::aoe2 {
+
+void mark_aoe2_render_dirty(EcsWorld& world, entt::entity entity,
+                            Aoe2RenderDirty dirty) {
+    if (entity == entt::null || dirty == Aoe2RenderDirty::None) return;
+    auto& queue = world.resource_or_add<Aoe2DirtyQueue>();
+    queue.enqueue(entity, dirty);
+}
 
 namespace {
 void poll_layer(const Layer& layer, const char* name, bool& ready, std::string& error) {
@@ -101,6 +109,81 @@ bool request_aoe2_animation(Aoe2UnitRender& unit, AnimationSlot animation_slot) 
 
 void restart_aoe2_animation(Aoe2UnitRender& unit) {
     unit.restart_requested = true;
+}
+
+bool request_aoe2_animation(EcsWorld& world, entt::entity entity,
+                            AnimationSlot animation_slot) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || !request_aoe2_animation(*unit, animation_slot)) return false;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Topology);
+    return true;
+}
+
+bool request_aoe2_animation(EcsWorld& world, entt::entity entity,
+                            const std::string& animation_name) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || !request_aoe2_animation(*unit, animation_name)) return false;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Topology);
+    return true;
+}
+
+void restart_aoe2_animation(EcsWorld& world, entt::entity entity) {
+    if (auto* unit = world.reg().try_get<Aoe2UnitRender>(entity)) {
+        restart_aoe2_animation(*unit);
+        mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
+    }
+}
+
+void set_aoe2_player_color(EcsWorld& world, entt::entity entity,
+                           int player_color, int debug_mode) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit) return;
+    const int resolved_player = std::clamp(player_color, 1, 8);
+    const int resolved_debug = std::clamp(debug_mode, 0, 2);
+    if (unit->player_color == resolved_player &&
+        unit->player_color_debug == resolved_debug) return;
+    unit->player_color = resolved_player;
+    unit->player_color_debug = resolved_debug;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Material);
+}
+
+void set_aoe2_tint(EcsWorld& world, entt::entity entity, glm::vec4 tint) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || unit->tint == tint) return;
+    unit->tint = tint;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Material);
+}
+
+void set_aoe2_visible(EcsWorld& world, entt::entity entity, bool visible) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || unit->visible == visible) return;
+    unit->visible = visible;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Topology);
+}
+
+void set_aoe2_playing(EcsWorld& world, entt::entity entity, bool playing) {
+    if (auto* unit = world.reg().try_get<Aoe2UnitRender>(entity))
+        unit->playing = playing;
+}
+
+void set_aoe2_direction(EcsWorld& world, entt::entity entity,
+                        int direction_slot, int direction_slot_count) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || (unit->direction_slot == direction_slot &&
+                  unit->direction_slot_count == direction_slot_count)) return;
+    unit->direction_slot = direction_slot;
+    unit->direction_slot_count = direction_slot_count;
+    if (const auto* appearance = unit->appearance.get()) {
+        if (const auto* animation = appearance->animation_at(unit->animation_slot)) {
+            unit->direction = direction_slot_count > 0
+                ? direction_slot * animation->direction_count / direction_slot_count
+                : direction_slot;
+            unit->direction = ((unit->direction % animation->direction_count) +
+                               animation->direction_count) % animation->direction_count;
+            unit->current_frame = -1;
+        }
+    }
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
 }
 
 entt::entity spawn_aoe2_unit(EcsWorld& world, const SpawnOptions& options, const Transform& transform) {
@@ -196,22 +279,24 @@ static void resolve_frame(Aoe2UnitRender& render, const Animation& animation, in
 }
 
 void aoe2_unit_animation_system(EcsWorld& world) {
-    const auto started = std::chrono::steady_clock::now();
+    GLD_PERF_TIME_POINT(started);
     auto& diagnostics = world.resource_or_add<Aoe2PerformanceDiagnostics>();
-    diagnostics.animation_units = 0;
-    diagnostics.animation_frame_changes = 0;
-    diagnostics.animation_pending = 0;
+    GLD_PERF_MONITOR(
+        diagnostics.animation_units = 0;
+        diagnostics.animation_frame_changes = 0;
+        diagnostics.animation_pending = 0;
+    );
     const float dt = world.resource_or_add<Time>().dt;
     auto& server = world.resource<AssetServer>();
     auto& reg = world.reg();
     for (auto entity : reg.view<Aoe2UnitRender>()) {
-        ++diagnostics.animation_units;
+        GLD_PERF_MONITOR(++diagnostics.animation_units);
         auto& render = reg.get<Aoe2UnitRender>(entity);
         auto* appearance = render.appearance.get();
         if (!appearance) continue;
 
         if (render.pending_animation_slot != AnimationSlot::Invalid) {
-            ++diagnostics.animation_pending;
+            GLD_PERF_MONITOR(++diagnostics.animation_pending);
             request_animation_residency(server, *appearance, render.pending_animation_slot);
             auto* pending = appearance->animation_at(render.pending_animation_slot);
             if (!pending) {
@@ -245,7 +330,9 @@ void aoe2_unit_animation_system(EcsWorld& world) {
                 % pending->direction_count;
             resolve_frame(render, *pending, 0);
             ++render.revision;
-            ++diagnostics.animation_frame_changes;
+            GLD_PERF_MONITOR(++diagnostics.animation_frame_changes);
+            mark_aoe2_render_dirty(world, entity,
+                Aoe2RenderDirty::Topology | Aoe2RenderDirty::Frame);
             continue;
         }
 
@@ -258,7 +345,8 @@ void aoe2_unit_animation_system(EcsWorld& world) {
             if (const auto* active = appearance->animation_at(render.animation_slot)) {
                 resolve_frame(render, *active, 0);
                 ++render.revision;
-                ++diagnostics.animation_frame_changes;
+                GLD_PERF_MONITOR(++diagnostics.animation_frame_changes);
+                mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
             }
         }
 
@@ -275,11 +363,14 @@ void aoe2_unit_animation_system(EcsWorld& world) {
         if (frame != render.current_frame) {
             resolve_frame(render, *animation, frame);
             ++render.revision;
-            ++diagnostics.animation_frame_changes;
+            GLD_PERF_MONITOR(++diagnostics.animation_frame_changes);
+            mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
         }
     }
-    diagnostics.animation_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - started).count();
+    GLD_PERF_MONITOR(
+        diagnostics.animation_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 } // namespace gld::ecs::aoe2

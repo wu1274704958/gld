@@ -71,7 +71,7 @@ int main()
             t.text = s; t.font = font; t.size = 56; t.color = color;
             t.align = TextAlign::Left; t.anchor = glm::vec2(0.f, 0.5f); t.rev = 1;
             reg.emplace<Text>(e, std::move(t));
-            Transform tr; tr.translation = glm::vec3(-560.f, y, 0.f);
+            Transform tr = Transform::from_trs(glm::vec3(-560.f, y, 0.f));
             reg.emplace<Transform>(e, tr);
             reg.emplace<GlobalTransform>(e);
             if (fx) reg.emplace<TextEffects>(e, *fx);

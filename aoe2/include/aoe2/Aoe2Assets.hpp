@@ -133,6 +133,24 @@ struct Layer {
     bool usable() const { return status == LayerStatus::Complete || status == LayerStatus::Partial; }
 };
 
+struct Aoe2ResolvedFrameRecord {
+    glm::vec4 uv{0.f};
+    glm::vec4 size_and_foot{0.f};
+};
+
+struct Aoe2ResolvedFrameTable {
+    std::vector<Aoe2ResolvedFrameRecord> records;
+    std::vector<std::uint8_t> present;
+    std::uint32_t layer_stride = 0;
+
+    std::uint32_t record_index(bool shadow, int direction, int frame,
+                               int frames_per_direction) const {
+        const auto logical = static_cast<std::uint32_t>(
+            direction * frames_per_direction + frame);
+        return (shadow ? layer_stride : 0u) + logical;
+    }
+};
+
 struct Animation {
     std::string name;
     float fps = 30.f;
@@ -145,9 +163,12 @@ struct Animation {
     AnimationResidencyState residency = AnimationResidencyState::Unloaded;
     std::string residency_error;
     std::uint64_t residency_revision = 0;
+    Aoe2ResolvedFrameTable resolved_frames;
 
     const Frame* get(const Layer& layer, int direction, int frame) const;
 };
+
+Aoe2ResolvedFrameTable build_resolved_frame_table(const Animation& animation);
 
 struct Aoe2UnitAppearance {
     static constexpr std::size_t InvalidAnimationIndex = std::numeric_limits<std::size_t>::max();

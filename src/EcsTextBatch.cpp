@@ -21,6 +21,7 @@
 #include <ecs/text/TextComponents.hpp>       // TextLayout, TextMaterial
 #include <ecs/Components.hpp>                 // GlobalTransform
 #include <ecs/EcsWorld.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 namespace gld::ecs {
 
@@ -176,7 +177,7 @@ namespace gld::ecs {
                 destroy_batch_gpu(bc);
                 reg.destroy(e);
                 dead.push_back(k);
-                ++diag.batch_groups_destroyed;
+                GLD_PERF_MONITOR(++diag.batch_groups_destroyed);
             }
         }
         for (const auto& k : dead) index.map.erase(k);

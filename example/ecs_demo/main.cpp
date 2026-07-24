@@ -33,11 +33,14 @@ namespace fs = std::filesystem;
 struct OrbitControl { float yaw = 0.6f, pitch = 0.4f, dist = 7.f; glm::vec3 target{ 0.f }; };
 
 // BaseSystem demo: spin entities by their AutoRotate speed (reads Time resource).
-struct AutoRotateSystem : BaseSystem<AutoRotateSystem, Transform, AutoRotate> {
-    void Update(entt::entity, Transform& t, AutoRotate& r) {
-        t.rotation += r.speed * res<Time>().dt;
+static void auto_rotate_system(EcsWorld& w) {
+    const float dt = w.resource<Time>().dt;
+    auto& reg = w.reg();
+    for (auto entity : reg.view<Transform, AutoRotate>()) {
+        const auto delta = reg.get<AutoRotate>(entity).speed * dt;
+        patch_transform(w, entity, [&](TransformEditor& transform) { transform.rotate(delta); });
     }
-};
+}
 
 // Left-drag orbits every camera that has an OrbitControl; R resets. Writes the
 // camera's view matrix directly.
@@ -81,7 +84,7 @@ int main()
     app.add_plugin(LightingPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(RenderPlugin);     // multi-camera + present
-    app.add_system<AutoRotateSystem>(Stage::Update);
+    app.add_system(Stage::Update, auto_rotate_system);
     app.add_system(Stage::Update, camera_orbit_system);
 
     app.add_system(Stage::Startup, [](EcsWorld& w) {
@@ -122,16 +125,15 @@ int main()
         for (int i = 0; i < N; ++i) {
             float a = (float)i / N * glm::two_pi<float>();
             entt::entity c = w.spawn();
-            Transform ct;
-            ct.translation = glm::vec3(std::cos(a) * 2.4f, 0.f, std::sin(a) * 2.4f);
-            ct.scale = glm::vec3(0.5f);
+            Transform ct = Transform::from_trs(
+                glm::vec3(std::cos(a) * 2.4f, 0.f, std::sin(a) * 2.4f),
+                glm::vec3(0.f), glm::vec3(0.5f));
             reg.emplace<Transform>(c, ct);
             reg.emplace<GlobalTransform>(c);
-            reg.emplace<Parent>(c, Parent{ parent });
             reg.emplace<MeshHandle>(c, mesh);
             reg.emplace<Material>(c, Material{ shader, tex, tints[i] });
             reg.emplace<AutoRotate>(c, AutoRotate{ glm::vec3(0.6f, 0.6f, 0.f) });
-            reg.get<Children>(parent).value.push_back(c);
+            set_parent(w, c, parent);
         }
         std::printf("[ECS_DEMO] scene spawned: 1 camera + 1 parent + %d children\n", N);
         std::fflush(stdout);

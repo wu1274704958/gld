@@ -1,4 +1,5 @@
 #include <ecs/render/RenderPassExec.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -88,18 +89,18 @@ namespace gld::ecs {
 
         const auto* pass = w.reg().try_get<FullscreenPass>(ctx.camera_entity);
         if (!pass) {
-            ++diag.graph_skipped_invalid;
+            GLD_PERF_MONITOR(++diag.graph_skipped_invalid);
             return;
         }
 
         if (pass->shader.state() != LoadState::Loaded) {
-            ++diag.mesh_skipped_unloaded;
+            GLD_PERF_MONITOR(++diag.mesh_skipped_unloaded);
             return;
         }
 
         Program* prog = pass->shader.get();
         if (!prog) {
-            ++diag.mesh_skipped_invalid;
+            GLD_PERF_MONITOR(++diag.mesh_skipped_invalid);
             return;
         }
 
@@ -107,7 +108,7 @@ namespace gld::ecs {
         for (std::size_t i = 0; i < pass->textures.size(); ++i) {
             const auto& slot = pass->textures[i];
             if (!slot.texture) {
-                ++diag.graph_skipped_invalid;
+                GLD_PERF_MONITOR(++diag.graph_skipped_invalid);
                 return;
             }
             if (prog->uniform_id(slot.uniform) == -1)
@@ -124,7 +125,7 @@ namespace gld::ecs {
         glBindVertexArray(res.vao);
         glDrawElements(GL_TRIANGLES, res.index_count, GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
-        ++diag.batch_draws;
+        GLD_PERF_MONITOR(++diag.batch_draws);
     }
 
     void cleanup_fullscreen_pass(EcsWorld& w) {

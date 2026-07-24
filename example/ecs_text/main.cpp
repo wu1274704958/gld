@@ -65,7 +65,7 @@ int main()
             Text t;
             t.text = s; t.font = font; t.size = size; t.color = color;
             t.align = align; t.anchor = glm::vec2(0.5f, 0.5f); t.rev = 1;
-            Transform tr; tr.translation = pos;
+            Transform tr = Transform::from_trs(pos);
             reg.emplace<Text>(e, std::move(t));
             reg.emplace<Transform>(e, tr);
             reg.emplace<GlobalTransform>(e);

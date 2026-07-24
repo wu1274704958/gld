@@ -17,6 +17,7 @@
 #include "../EcsWorld.hpp"
 #include "../App.hpp"
 #include "../Components.hpp"          // Time resource
+#include "../PerformanceMonitoring.hpp"
 #include "Desc.hpp"
 #include "Handle.hpp"
 #include "Assets.hpp"
@@ -97,14 +98,17 @@ namespace gld::ecs {
             AssetServerCounters* metrics = &counters;
             AssetStore<T>* store = &assets;
             pool.enqueue([loader, d, fsptr, comp, metrics, store, id] {
-                const auto cpu_start = std::chrono::steady_clock::now();
+                GLD_PERF_TIME_POINT(cpu_start);
                 std::shared_ptr<void> cpu = loader->load_cpu(d, *fsptr);   // worker
-                const auto cpu_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - cpu_start).count();
-                metrics->cpu_jobs.fetch_add(1, std::memory_order_relaxed);
-                metrics->cpu_ns.fetch_add(static_cast<std::uint64_t>(cpu_ns), std::memory_order_relaxed);
+                GLD_PERF_MONITOR(
+                    const auto cpu_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - cpu_start).count();
+                    metrics->cpu_jobs.fetch_add(1, std::memory_order_relaxed);
+                    metrics->cpu_ns.fetch_add(
+                        static_cast<std::uint64_t>(cpu_ns), std::memory_order_relaxed);
+                );
                 comp->push([loader, d, cpu, metrics, store, id] {
-                    const auto finalize_start = std::chrono::steady_clock::now();
+                    GLD_PERF_TIME_POINT(finalize_start);
                     bool loaded = false;
                     if (!cpu) {
                         store->set_failed(id);
@@ -114,25 +118,32 @@ namespace gld::ecs {
                         if (asset) store->set_loaded(id, std::move(asset));
                         else store->set_failed(id);
                     }
-                    const auto elapsed = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now() - finalize_start).count());
-                    metrics->finalized.fetch_add(1, std::memory_order_relaxed);
-                    metrics->finalize_ns.fetch_add(elapsed, std::memory_order_relaxed);
-                    if constexpr (std::is_same_v<T, Texture<TexType::D2>>) {
-                        if (loaded) {
-                            metrics->texture_uploads.fetch_add(1, std::memory_order_relaxed);
-                            metrics->texture_upload_ns.fetch_add(elapsed, std::memory_order_relaxed);
+                    GLD_PERF_MONITOR(
+                        const auto elapsed = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - finalize_start).count());
+                        metrics->finalized.fetch_add(1, std::memory_order_relaxed);
+                        metrics->finalize_ns.fetch_add(elapsed, std::memory_order_relaxed);
+                        if constexpr (std::is_same_v<T, Texture<TexType::D2>>) {
+                            if (loaded) {
+                                metrics->texture_uploads.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                metrics->texture_upload_ns.fetch_add(
+                                    elapsed, std::memory_order_relaxed);
+                            }
+                            if (loaded) {
+                                auto* texture = store->find(id);
+                                if (!texture || !texture->data) return;
+                                const auto channels = texture_channel_count(d.channels());
+                                const auto bytes = static_cast<std::uint64_t>(
+                                    texture->data->measure.width)
+                                    * static_cast<std::uint64_t>(
+                                        texture->data->measure.height) * channels;
+                                metrics->texture_upload_bytes.fetch_add(
+                                    bytes, std::memory_order_relaxed);
+                            }
                         }
-                        if (loaded) {
-                            auto* texture = store->find(id);
-                            if (!texture || !texture->data) return;
-                            const auto channels = texture_channel_count(d.channels());
-                            const auto bytes = static_cast<std::uint64_t>(texture->data->measure.width)
-                                * static_cast<std::uint64_t>(texture->data->measure.height) * channels;
-                            metrics->texture_upload_bytes.fetch_add(bytes, std::memory_order_relaxed);
-                        }
-                    }
+                    );
                 });
             });
             return handle;
@@ -193,6 +204,7 @@ namespace gld::ecs {
         auto& srv = w.resource<AssetServer>();
         auto& diag = w.resource_or_add<AssetServerDiagnostics>();
         for (auto& fn : srv.completion.drain()) fn();
+        GLD_PERF_MONITOR(
         // Workers may enqueue more work while the drained set is finalized.
         // Report the queue that remains, rather than the number already drained.
         diag.finalize_queued = static_cast<std::uint32_t>(srv.completion.size());
@@ -212,6 +224,7 @@ namespace gld::ecs {
             srv.counters.texture_upload_bytes.exchange(0, std::memory_order_relaxed);
         diag.texture_upload_ms_this_frame = static_cast<double>(
             srv.counters.texture_upload_ns.exchange(0, std::memory_order_relaxed)) / 1'000'000.0;
+        );
     }
 
     // Last (main thread): enforce unload policies for every Assets<T>.

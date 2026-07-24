@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -12,6 +14,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <FindPath.hpp>
@@ -64,6 +67,7 @@ struct Motion {
     glm::vec2 velocity{0.f};
 };
 
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
 struct TimingSample {
     double sum = 0.0;
     double maximum = 0.0;
@@ -87,22 +91,44 @@ struct BenchmarkTimingWindow {
     TimingSample batch_prepare;
     TimingSample batch_upload;
     TimingSample batch_submit;
+    TimingSample aoe_gpu;
     TimingSample present;
 
     void reset() { *this = {}; }
 };
+#endif
 
 struct BenchmarkState {
     std::vector<entt::entity> units;
     entt::entity hud_text = entt::null;
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     std::size_t moving_count = 0;
     double spawn_ms = 0.0;
-    double hud_seconds = 0.0;
     double movement_ms = 0.0;
     std::uint32_t movement_units = 0;
     BenchmarkTimingWindow timing;
+#endif
+    double hud_seconds = 0.0;
     std::string fatal_error;
+    std::string last_report;
+    double duration_seconds = 0.0;
+    bool report_printed = false;
+    std::chrono::steady_clock::time_point process_started =
+        std::chrono::steady_clock::now();
 };
+
+double benchmark_duration_from_args(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) != "--duration") continue;
+        if (++i >= argc) return -1.0;
+        char* end = nullptr;
+        const double value = std::strtod(argv[i], &end);
+        if (!end || *end != '\0' || !std::isfinite(value) || value <= 0.0)
+            return -1.0;
+        return value;
+    }
+    return 0.0;
+}
 
 std::u32string ascii_to_u32(const std::string& text) {
     std::u32string result;
@@ -134,13 +160,12 @@ void create_hud(EcsWorld& world, AssetServer& server, BenchmarkState& state) {
     hud.anchor = {0.f, 0.f};
     world.reg().emplace<Text>(state.hud_text, std::move(hud));
 
-    Transform transform;
     const auto& window = world.resource<Window>();
-    transform.translation = {
+    Transform transform = Transform::from_trs({
         -window.width * 0.5f + 14.f,
          window.height * 0.5f - 14.f,
          0.f
-    };
+    });
     world.reg().emplace<Transform>(state.hud_text, transform);
     world.reg().emplace<RenderLayer>(state.hud_text, RenderLayer{HudLayer});
 }
@@ -176,7 +201,6 @@ void spawn_benchmark_units(EcsWorld& world, BenchmarkState& state) {
         BenchmarkConfig::UnitCount,
         static_cast<std::size_t>(std::llround(
             static_cast<double>(BenchmarkConfig::UnitCount) * BenchmarkConfig::MovingRatio)));
-    state.moving_count = target_moving;
     state.units.reserve(BenchmarkConfig::UnitCount);
 
     std::mt19937 random(BenchmarkConfig::RandomSeed);
@@ -191,7 +215,9 @@ void spawn_benchmark_units(EcsWorld& world, BenchmarkState& state) {
     std::uniform_real_distribution<float> speed(BenchmarkConfig::MinSpeed, BenchmarkConfig::MaxSpeed);
     std::uniform_real_distribution<float> angle(0.f, glm::two_pi<float>());
 
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto started = std::chrono::steady_clock::now();
+#endif
     for (std::size_t index = 0; index < BenchmarkConfig::UnitCount; ++index) {
         const bool moving = index < target_moving;
         const std::size_t unit_index = moving
@@ -217,9 +243,8 @@ void spawn_benchmark_units(EcsWorld& world, BenchmarkState& state) {
 
         const float x = x_position(random);
         const float y = y_position(random);
-        Transform transform;
-        transform.translation = {x, y, -y};
-        transform.scale = glm::vec3(BenchmarkConfig::UnitScale);
+        Transform transform = Transform::from_trs(
+            {x, y, -y}, glm::vec3(0.f), glm::vec3(BenchmarkConfig::UnitScale));
 
         SpawnOptions options;
         options.unit_id = unit.id;
@@ -233,8 +258,11 @@ void spawn_benchmark_units(EcsWorld& world, BenchmarkState& state) {
         if (moving) world.reg().emplace<Motion>(entity, Motion{velocity});
         state.units.push_back(entity);
     }
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    state.moving_count = target_moving;
     state.spawn_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started).count();
+#endif
 }
 
 void benchmark_input_system(EcsWorld& world) {
@@ -244,9 +272,13 @@ void benchmark_input_system(EcsWorld& world) {
 }
 
 void movement_system(EcsWorld& world) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto started = std::chrono::steady_clock::now();
+#endif
     auto& state = world.resource<BenchmarkState>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     state.movement_units = 0;
+#endif
     const float dt = world.resource<Time>().dt;
     const auto& window = world.resource<Window>();
     const float half_width = std::max(1.f, window.width * 0.5f);
@@ -254,27 +286,32 @@ void movement_system(EcsWorld& world) {
 
     auto& reg = world.reg();
     for (auto entity : reg.view<Motion, Transform>()) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         ++state.movement_units;
+#endif
         const auto& motion = reg.get<Motion>(entity);
-        auto& transform = reg.get<Transform>(entity);
-        transform.translation.x += motion.velocity.x * dt;
-        transform.translation.y += motion.velocity.y * dt;
-
-        if (transform.translation.x > half_width) transform.translation.x = -half_width;
-        else if (transform.translation.x < -half_width) transform.translation.x = half_width;
-        if (transform.translation.y > half_height) transform.translation.y = -half_height;
-        else if (transform.translation.y < -half_height) transform.translation.y = half_height;
-
+        glm::vec3 next = reg.get<Transform>(entity).translation() +
+            glm::vec3(motion.velocity * dt, 0.f);
+        if (next.x > half_width) next.x = -half_width;
+        else if (next.x < -half_width) next.x = half_width;
+        if (next.y > half_height) next.y = -half_height;
+        else if (next.y < -half_height) next.y = half_height;
         // In this 2.5D ortho view, lower feet are closer to the camera.
-        transform.translation.z = -transform.translation.y;
+        next.z = -next.y;
+        patch_transform(world, entity, [&](TransformEditor& transform) {
+            transform.set_translation(next);
+        });
     }
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     state.movement_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started).count();
+#endif
 }
 
 void benchmark_hud_system(EcsWorld& world) {
     auto& state = world.resource<BenchmarkState>();
     const auto& time = world.resource<Time>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto& aoe_perf = world.resource_or_add<Aoe2PerformanceDiagnostics>();
     const auto& transform_perf = world.resource_or_add<TransformDiagnostics>();
     const auto& render = world.resource_or_add<RenderDiagnostics>();
@@ -288,7 +325,9 @@ void benchmark_hud_system(EcsWorld& world) {
     state.timing.batch_prepare.add(render.batch_prepare_ms);
     state.timing.batch_upload.add(render.batch_upload_ms);
     state.timing.batch_submit.add(render.batch_submit_ms);
+    state.timing.aoe_gpu.add(aoe_perf.render_gpu_ms);
     state.timing.present.add(render.present_ms);
+#endif
     state.hud_seconds += time.raw_dt;
     if (state.hud_seconds < BenchmarkConfig::HudRefreshSeconds) return;
     state.hud_seconds = 0.0;
@@ -296,6 +335,7 @@ void benchmark_hud_system(EcsWorld& world) {
     if (state.hud_text == entt::null || !world.reg().valid(state.hud_text)) return;
 
     auto& reg = world.reg();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     std::size_t created = 0;
     std::size_t drawable = 0;
     std::size_t waiting = 0;
@@ -316,10 +356,10 @@ void benchmark_hud_system(EcsWorld& world) {
     if (const auto* index = world.try_resource<Aoe2BatchIndex>()) {
         for (const auto& group : index->groups) {
             if (!group.active || !reg.valid(group.batch_entity)) continue;
-            const auto& batch = reg.get<BatchComponent>(group.batch_entity);
-            if (!batch.used || (batch.layers & UnitLayer) == 0) continue;
+            const auto& batch = reg.get<Aoe2BatchComponent>(group.batch_entity);
+            if ((batch.layers & UnitLayer) == 0) continue;
             ++aoe_batches;
-            aoe_instances += batch.instances.size();
+            aoe_instances += batch.world_instances.size();
         }
     }
 
@@ -350,6 +390,10 @@ void benchmark_hud_system(EcsWorld& world) {
         << render.batch_partial_uploads << " ("
         << render.batch_partial_upload_bytes / (1024.0 * 1024.0)
         << " MiB)   ranges " << render.batch_upload_ranges << "\n"
+        << "AoE streams: world " << aoe_perf.world_upload_bytes / (1024.0 * 1024.0)
+        << " MiB/" << aoe_perf.world_uploads << "   visual "
+        << aoe_perf.visual_upload_bytes / (1024.0 * 1024.0) << " MiB/"
+        << aoe_perf.visual_uploads << "   ranges " << aoe_perf.upload_ranges << "\n"
         << "CPU avg/max ms: anim " << timing(state.timing.animation)
         << "   move " << timing(state.timing.movement)
         << "   xform " << timing(state.timing.transform) << "\n"
@@ -360,7 +404,9 @@ void benchmark_hud_system(EcsWorld& world) {
         << "   upload " << timing(state.timing.batch_upload)
         << "   submit " << timing(state.timing.batch_submit)
         << "   present " << timing(state.timing.present) << "\n"
-        << "AoE work: units " << aoe_perf.batch_units << "   sources "
+        << "AoE GPU ms: " << timing(state.timing.aoe_gpu)
+        << "   query skips " << aoe_perf.render_gpu_query_skips << "\n"
+        << "AoE dirty work: entities " << aoe_perf.batch_units << "   slots "
         << aoe_perf.batch_sources << "   groups " << aoe_perf.batch_groups
         << "   dirty/steady " << aoe_perf.batch_dirty_groups << "/"
         << aoe_perf.batch_unchanged_groups << "   rebuilt "
@@ -374,6 +420,12 @@ void benchmark_hud_system(EcsWorld& world) {
         << "   material " << aoe_perf.material_dirty_instances
         << "   full " << aoe_perf.full_initialized_instances
         << "   steady " << aoe_perf.unchanged_instances << "\n"
+        << "Dirty queue: enqueued " << aoe_perf.dirty_enqueued << "   dedup "
+        << aoe_perf.dirty_deduplicated << "   mode "
+        << (aoe_perf.dirty_dense_mode ? "dense" : "sparse") << "   audit "
+        << aoe_perf.dirty_audit_violations << "   transform q/root/visit "
+        << transform_perf.queued << "/" << transform_perf.roots << "/"
+        << transform_perf.visited << "\n"
         << "Animation work: units " << aoe_perf.animation_units << "   changed "
         << aoe_perf.animation_frame_changes << "   pending "
         << aoe_perf.animation_pending << "   movement " << state.movement_units << "\n"
@@ -382,22 +434,49 @@ void benchmark_hud_system(EcsWorld& world) {
         << "Depth: test+write, foot Z=-Y   shadows: no depth write\n"
         << "Spawn CPU: " << state.spawn_ms << " ms   seed: " << BenchmarkConfig::RandomSeed;
     if (!state.fatal_error.empty()) out << "\nERROR: " << state.fatal_error;
+#else
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1) << "FPS: " << time.fps;
+#endif
 
+    state.last_report = out.str();
     auto& text = reg.get<Text>(state.hud_text);
-    text.text = ascii_to_u32(out.str());
+    text.text = ascii_to_u32(state.last_report);
     ++text.rev;
-    auto& transform = reg.get<Transform>(state.hud_text);
-    transform.translation = {
-        -world.resource<Window>().width * 0.5f + 14.f,
-         world.resource<Window>().height * 0.5f - 14.f,
-         0.f
-    };
+    patch_transform(world, state.hud_text, [&](TransformEditor& transform) {
+        transform.set_translation({
+            -world.resource<Window>().width * 0.5f + 14.f,
+             world.resource<Window>().height * 0.5f - 14.f,
+             0.f
+        });
+    });
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     state.timing.reset();
+#endif
+}
+
+void benchmark_auto_close_system(EcsWorld& world) {
+    auto& state = world.resource<BenchmarkState>();
+    const double process_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - state.process_started).count();
+    if (state.duration_seconds <= 0.0 || process_seconds < state.duration_seconds) return;
+    if (!state.report_printed) {
+        if (!state.last_report.empty())
+            std::fprintf(stdout, "%s\n", state.last_report.c_str());
+        std::fflush(stdout);
+        state.report_printed = true;
+    }
+    world.resource<Window>().should_close = true;
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const double duration_seconds = benchmark_duration_from_args(argc, argv);
+    if (duration_seconds < 0.0) {
+        std::fprintf(stderr, "usage: aoe2_unit_benchmark [--duration seconds]\n");
+        return 2;
+    }
     const fs::path root = wws::find_path(3, "res", true);
     if (root.empty()) return 1;
     gld::ResMgrWithGlslPreProcess::create_instance(root);
@@ -418,7 +497,8 @@ int main() {
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(RenderPlugin);
-    app.world.add_resource<BenchmarkState>();
+    auto& benchmark_state = app.world.add_resource<BenchmarkState>();
+    benchmark_state.duration_seconds = duration_seconds;
 
     app.add_system(Stage::Startup, [](EcsWorld& world) {
         auto camera_entity = world.spawn();
@@ -427,10 +507,10 @@ int main() {
         camera.layers = UnitLayer;
         camera.clear_color = {0.12f, 0.14f, 0.17f, 1.f};
         world.reg().emplace<Camera>(camera_entity, camera);
-        auto& passes = emplace_render_passes<BatchPass>(world, camera_entity);
-        auto* batch_pass = passes.get<BatchPass>();
-        batch_pass->state.depth_test = RenderStateValue::Enabled;
-        batch_pass->state.depth_write = RenderStateValue::Enabled;
+        auto& passes = emplace_registered_render_passes(world, camera_entity);
+        auto& aoe2_pass = passes.add(Aoe2UnitPassId);
+        aoe2_pass.state.depth_test = RenderStateValue::Enabled;
+        aoe2_pass.state.depth_write = RenderStateValue::Enabled;
 
         auto hud_camera_entity = world.spawn();
         Camera hud_camera;
@@ -449,6 +529,7 @@ int main() {
     app.add_system(Stage::Update, benchmark_input_system);
     app.add_system(Stage::Update, movement_system);
     app.add_system(Stage::Last, benchmark_hud_system);
+    app.add_system(Stage::Last, benchmark_auto_close_system);
 
     run_app(app);
     return 0;

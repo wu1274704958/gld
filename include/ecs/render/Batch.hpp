@@ -71,12 +71,18 @@ namespace gld::ecs {
 
     inline constexpr std::size_t MaxPartialBatchUploadRanges = 8;
 
+    struct BatchUploadPolicy {
+        std::size_t max_partial_ranges = MaxPartialBatchUploadRanges;
+        std::uint32_t dense_percent = 50;
+    };
+
     // Pure upload planner shared by the renderer and runtime tests. Sparse,
     // compact edits remain partial; dense or fragmented edits deliberately
     // collapse to one full upload to avoid excessive driver calls.
     inline BatchUploadPlan plan_batch_upload(std::span<const BatchUploadRange> input,
                                              std::size_t instance_count,
-                                             bool force_full = false) {
+                                             bool force_full = false,
+                                             BatchUploadPolicy policy = {}) {
         BatchUploadPlan plan;
         if (instance_count == 0) return plan;
         if (force_full) {
@@ -119,8 +125,10 @@ namespace gld::ecs {
         }
         plan.ranges.resize(output);
         for (const auto& range : plan.ranges) plan.dirty_instances += range.instance_count;
-        if (plan.dirty_instances * 2 >= instance_count ||
-            plan.ranges.size() > MaxPartialBatchUploadRanges) {
+        const auto dense_percent = std::clamp<std::uint32_t>(policy.dense_percent, 1u, 100u);
+        const bool dense = static_cast<long double>(plan.dirty_instances) * 100.0L >=
+            static_cast<long double>(instance_count) * dense_percent;
+        if (dense || plan.ranges.size() > policy.max_partial_ranges) {
             plan.full = true;
             plan.dirty_instances = instance_count;
             plan.ranges.clear();

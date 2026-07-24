@@ -25,11 +25,14 @@
 using namespace gld::ecs;
 namespace fs = std::filesystem;
 
-struct SpinSystem : BaseSystem<SpinSystem, Transform, AutoRotate> {
-    void Update(entt::entity, Transform& t, AutoRotate& r) {
-        t.rotation += r.speed * res<Time>().dt;
+static void spin_system(EcsWorld& w) {
+    const float dt = w.resource<Time>().dt;
+    auto& reg = w.reg();
+    for (auto entity : reg.view<Transform, AutoRotate>()) {
+        const auto delta = reg.get<AutoRotate>(entity).speed * dt;
+        patch_transform(w, entity, [&](TransformEditor& transform) { transform.rotate(delta); });
     }
-};
+}
 
 int main()
 {
@@ -46,7 +49,7 @@ int main()
     app.add_plugin(LightingPlugin);
     app.add_plugin(InputPlugin);
     app.add_plugin(RenderPlugin);
-    app.add_system<SpinSystem>(Stage::Update);
+    app.add_system(Stage::Update, spin_system);
 
     app.add_system(Stage::Startup, [](EcsWorld& w) {
         auto& srv = w.resource<AssetServer>();
@@ -73,9 +76,10 @@ int main()
         for (int z = -2; z <= 2; ++z) {
             for (int x = -3; x <= 3; ++x) {
                 entt::entity e = w.spawn();
-                Transform tr;
-                tr.translation = glm::vec3(static_cast<float>(x) * 1.45f, 0.f, static_cast<float>(z) * 1.35f);
-                tr.scale = glm::vec3(0.55f);
+                Transform tr = Transform::from_trs(
+                    glm::vec3(static_cast<float>(x) * 1.45f, 0.f,
+                              static_cast<float>(z) * 1.35f),
+                    glm::vec3(0.f), glm::vec3(0.55f));
                 reg.emplace<Transform>(e, tr);
                 reg.emplace<GlobalTransform>(e);
                 reg.emplace<MeshHandle>(e, cube);
@@ -92,7 +96,7 @@ int main()
 
         auto make_point = [&](glm::vec3 pos, glm::vec3 color) {
             entt::entity e = w.spawn();
-            Transform tr; tr.translation = pos;
+            Transform tr = Transform::from_trs(pos);
             reg.emplace<Transform>(e, tr);
             reg.emplace<GlobalTransform>(e);
             reg.emplace<PointLight>(e, PointLight{ color, 2.4f, 6.0f });
@@ -102,9 +106,8 @@ int main()
         make_point({  3.5f, 2.1f,  1.0f }, { 0.35f, 1.0f, 0.35f });
 
         entt::entity spot = w.spawn();
-        Transform st;
-        st.translation = glm::vec3(0.f, 5.f, 5.f);
-        st.rotation.x = -0.75f;
+        Transform st = Transform::from_trs(
+            glm::vec3(0.f, 5.f, 5.f), glm::vec3(-0.75f, 0.f, 0.f));
         reg.emplace<Transform>(spot, st);
         reg.emplace<GlobalTransform>(spot);
         reg.emplace<SpotLight>(spot, SpotLight{

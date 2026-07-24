@@ -14,6 +14,7 @@
 #include <ecs/render/BatchSystem.hpp>
 #include <ecs/render/Batch.hpp>
 #include <ecs/render/RenderComponents.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 #include <ecs/render/RenderPassExec.hpp>
 #include <ecs/Window.hpp>
 
@@ -189,7 +190,7 @@ namespace gld::ecs {
 
     void draw_batches(EcsWorld& w, const Camera& cam, RenderStateCache& state_cache,
                       const ResolvedRenderPassState& pass_state) {
-        const auto prepare_started = std::chrono::steady_clock::now();
+        GLD_PERF_TIME_POINT(prepare_started);
         auto& res = w.resource_or_add<BatchResources>();
         auto& diag = w.resource_or_add<RenderDiagnostics>();
         auto& reg = w.reg();
@@ -208,9 +209,11 @@ namespace gld::ecs {
             if (a.order != b.order) return a.order < b.order;
             return static_cast<std::uint32_t>(lhs) < static_cast<std::uint32_t>(rhs);
         });
-        diag.batch_prepare_ms += std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - prepare_started).count();
-        const auto submit_started = std::chrono::steady_clock::now();
+        GLD_PERF_MONITOR(
+            diag.batch_prepare_ms += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - prepare_started).count();
+        );
+        GLD_PERF_TIME_POINT(submit_started);
         double upload_ms = 0.0;
 
         for (auto e : ordered) {
@@ -256,35 +259,42 @@ namespace gld::ecs {
 
             if (b.vao == 0) setup_batch_vao(res, b);
             if (b.dirty || !b.dirty_ranges.empty() || b.instances.size() > b.gpu_cap) {
-                const auto upload_started = std::chrono::steady_clock::now();
+                GLD_PERF_TIME_POINT(upload_started);
                 const auto upload = upload_batch(b);
-                diag.batch_upload_bytes += upload.bytes;
-                diag.batch_upload_ranges += upload.calls;
-                if (upload.full) {
-                    ++diag.batch_full_uploads;
-                    diag.batch_full_upload_bytes += upload.bytes;
-                } else {
-                    ++diag.batch_partial_uploads;
-                    diag.batch_partial_upload_bytes += upload.bytes;
-                }
-                const auto elapsed = std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - upload_started).count();
-                upload_ms += elapsed;
-                diag.batch_upload_ms += elapsed;
-                ++diag.batch_uploads;
+                GLD_PERF_MONITOR(
+                    diag.batch_upload_bytes += upload.bytes;
+                    diag.batch_upload_ranges += upload.calls;
+                    if (upload.full) {
+                        ++diag.batch_full_uploads;
+                        diag.batch_full_upload_bytes += upload.bytes;
+                    } else {
+                        ++diag.batch_partial_uploads;
+                        diag.batch_partial_upload_bytes += upload.bytes;
+                    }
+                    const auto elapsed = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - upload_started).count();
+                    upload_ms += elapsed;
+                    diag.batch_upload_ms += elapsed;
+                    ++diag.batch_uploads;
+                );
             }
 
             glBindVertexArray(b.vao);
             glDrawElementsInstanced(GL_TRIANGLES, res.index_count, GL_UNSIGNED_INT, nullptr,
                                     static_cast<GLsizei>(b.instances.size()));
             glBindVertexArray(0);
-            ++diag.batch_draws;
-            diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
+            GLD_PERF_MONITOR(
+                ++diag.batch_draws;
+                diag.batch_instances += static_cast<std::uint32_t>(b.instances.size());
+            );
         }
-        const auto submit_total = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - submit_started).count();
-        diag.batch_submit_ms += std::max(0.0, submit_total - upload_ms);
-        if (ordered.size() > diag.batch_groups) diag.batch_groups = static_cast<std::uint32_t>(ordered.size());
+        GLD_PERF_MONITOR(
+            const auto submit_total = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - submit_started).count();
+            diag.batch_submit_ms += std::max(0.0, submit_total - upload_ms);
+            if (ordered.size() > diag.batch_groups)
+                diag.batch_groups = static_cast<std::uint32_t>(ordered.size());
+        );
     }
 
     void render_batch_pass(RenderPassContext& ctx, const BatchPass& pass) {

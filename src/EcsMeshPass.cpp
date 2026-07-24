@@ -1,4 +1,5 @@
 #include <ecs/render/RenderPassExec.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -44,18 +45,18 @@ namespace gld::ecs {
 
             auto& mat = view.get<Material>(e);
             if (mat.shader.state() != LoadState::Loaded) {
-                ++diag.mesh_skipped_unloaded;
+                GLD_PERF_MONITOR(++diag.mesh_skipped_unloaded);
                 continue;
             }
             Program* prog = mat.shader.get();
             if (!prog) {
-                ++diag.mesh_skipped_invalid;
+                GLD_PERF_MONITOR(++diag.mesh_skipped_invalid);
                 continue;
             }
 
             auto& mesh = view.get<MeshHandle>(e);
             if (!mesh.vao || mesh.index_count <= 0) {
-                ++diag.mesh_skipped_invalid;
+                GLD_PERF_MONITOR(++diag.mesh_skipped_invalid);
                 continue;
             }
 
@@ -112,7 +113,7 @@ namespace gld::ecs {
             mesh.vao->bind();
             glDrawElements(mesh.mode, mesh.index_count, GL_UNSIGNED_INT, nullptr);
             mesh.vao->unbind();
-            ++diag.mesh_draws;
+            GLD_PERF_MONITOR(++diag.mesh_draws);
         }
     }
 }

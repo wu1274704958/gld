@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include <ecs/render/RenderSystem.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 #include <ecs/render/BatchSystem.hpp>   // draw_batches
 #include <ecs/render/RenderTarget.hpp>
 #include <ecs/render/PostProcess.hpp>
@@ -21,6 +22,19 @@
 #include <ecs/Window.hpp>
 
 namespace gld::ecs {
+
+    bool register_render_pass(EcsWorld& world, RegisteredRenderPassId id,
+                              RegisteredRenderPassHandler handler) {
+        if (id == 0 || !handler.render) return false;
+        auto& registry = world.resource_or_add<RegisteredRenderPassRegistry>();
+        registry.handlers.insert_or_assign(id, std::move(handler));
+        return true;
+    }
+
+    void unregister_render_pass(EcsWorld& world, RegisteredRenderPassId id) {
+        if (auto* registry = world.try_resource<RegisteredRenderPassRegistry>())
+            registry->handlers.erase(id);
+    }
 
     // Allocate contiguous, gap-filling ids to any camera with id < 0. Ids of
     // destroyed cameras disappear from the live set, so the next spawn reuses
@@ -224,6 +238,36 @@ namespace gld::ecs {
         return (try_render_pass_component<PassComponents>(w, e, cam, state, target_width, target_height) || ...);
     }
 
+    template<class... PassComponents>
+    static bool has_compile_time_passes(RenderPassComponentRegistry<PassComponents...>,
+                                        EcsWorld& w, entt::entity e) {
+        return (w.reg().template any_of<PassComponents>(e) || ...);
+    }
+
+    static bool try_render_runtime_passes(EcsWorld& w, entt::entity e,
+                                          const Camera& cam, RenderStateCache& state,
+                                          int target_width, int target_height) {
+        const auto* passes = w.reg().try_get<RegisteredRenderPasses>(e);
+        if (!passes) return false;
+        auto& diagnostics = w.resource_or_add<RenderDiagnostics>();
+        auto* registry = w.try_resource<RegisteredRenderPassRegistry>();
+        RenderPassContext context{w, e, cam, state, target_width, target_height};
+        for (const auto& pass : passes->passes) {
+            const auto found = registry ? registry->handlers.find(pass.type)
+                                        : decltype(registry->handlers.find(pass.type)){};
+            if (!registry || found == registry->handlers.end() || !found->second.render) {
+                GLD_PERF_MONITOR(++diagnostics.registered_pass_missing_handlers);
+                continue;
+            }
+            const auto resolved = resolve_render_pass_state(
+                found->second.default_state_pass_id, pass.state);
+            state.apply(resolved);
+            found->second.render(context, pass, resolved);
+            GLD_PERF_MONITOR(++diagnostics.registered_passes);
+        }
+        return true;
+    }
+
     template<class Registry>
     static void render_system_t(EcsWorld& w) {
         auto& reg = w.reg();
@@ -236,28 +280,30 @@ namespace gld::ecs {
         int ww = 1, wh = 1;
         if (auto* win = w.try_resource<Window>()) { ww = win->width; wh = win->height; }
 
-        diag.cameras = graph.diagnostics.nodes;
-        diag.graph_nodes = graph.diagnostics.nodes;
-        diag.graph_edges = graph.diagnostics.edges;
-        diag.graph_cycles = graph.diagnostics.cycles;
-        diag.graph_skipped_invalid = graph.diagnostics.skipped_invalid;
+        GLD_PERF_MONITOR(
+            diag.cameras = graph.diagnostics.nodes;
+            diag.graph_nodes = graph.diagnostics.nodes;
+            diag.graph_edges = graph.diagnostics.edges;
+            diag.graph_cycles = graph.diagnostics.cycles;
+            diag.graph_skipped_invalid = graph.diagnostics.skipped_invalid;
+        );
         RenderStateCache state;
 
         for (RenderGraphNodeId node_id : graph.execution_order) {
             const RenderGraphNode* node = graph.find(node_id);
             if (!node || !node->enabled || node->kind != RenderGraphNodeKind::Camera) {
-                ++diag.graph_skipped_invalid;
+                GLD_PERF_MONITOR(++diag.graph_skipped_invalid);
                 continue;
             }
 
             entt::entity e = node->entity;
             if (e == entt::null || !reg.valid(e)) {
-                ++diag.graph_missing_cameras;
+                GLD_PERF_MONITOR(++diag.graph_missing_cameras);
                 continue;
             }
             const Camera* cam_ptr = reg.try_get<Camera>(e);
             if (!cam_ptr) {
-                ++diag.graph_missing_cameras;
+                GLD_PERF_MONITOR(++diag.graph_missing_cameras);
                 continue;
             }
             const Camera& cam = *cam_ptr;
@@ -275,9 +321,14 @@ namespace gld::ecs {
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             }
 
-            if (!try_render_registered_passes(Registry{}, w, e, cam, state, tw, th))
-                ++diag.graph_skipped_invalid;
-            ++diag.graph_executed;
+            if (w.reg().any_of<RegisteredRenderPasses>(e)) {
+                if (has_compile_time_passes(Registry{}, w, e))
+                    GLD_PERF_MONITOR(++diag.registered_pass_component_conflicts);
+                try_render_runtime_passes(w, e, cam, state, tw, th);
+            } else if (!try_render_registered_passes(Registry{}, w, e, cam, state, tw, th)) {
+                GLD_PERF_MONITOR(++diag.graph_skipped_invalid);
+            }
+            GLD_PERF_MONITOR(++diag.graph_executed);
         }
         state.bind_framebuffer(0);
 
@@ -329,18 +380,20 @@ namespace gld::ecs {
             if (wp.fence) {
                 if (settings.wait_for_present_fence) {
                     glClientWaitSync(static_cast<GLsync>(wp.fence), GL_SYNC_FLUSH_COMMANDS_BIT, 50000000ull);
-                    ++diag.present_fence_waits;
+                    GLD_PERF_MONITOR(++diag.present_fence_waits);
                 }
                 glDeleteSync(static_cast<GLsync>(wp.fence));
                 wp.fence = nullptr;
             }
             if (handle && !presented) {
-                const auto present_started = std::chrono::steady_clock::now();
+                GLD_PERF_TIME_POINT(present_started);
                 glfwSwapBuffers(handle);
-                diag.present_ms += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - present_started).count();
+                GLD_PERF_MONITOR(
+                    diag.present_ms += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - present_started).count();
+                );
                 presented = true;
-                ++diag.present_swaps;
+                GLD_PERF_MONITOR(++diag.present_swaps);
             }
             reg.remove<WaitPresent>(e);
         }
@@ -377,6 +430,13 @@ namespace gld::ecs {
     }
 
     void cleanup_render_resources(EcsWorld& w) {
+        if (auto* registry = w.try_resource<RegisteredRenderPassRegistry>()) {
+            std::vector<std::function<void(EcsWorld&)>> cleanup_callbacks;
+            cleanup_callbacks.reserve(registry->handlers.size());
+            for (auto& [id, handler] : registry->handlers)
+                if (handler.cleanup) cleanup_callbacks.push_back(handler.cleanup);
+            for (auto& cleanup : cleanup_callbacks) cleanup(w);
+        }
         cleanup_render_resources_t<DefaultRenderPassRegistry>(w);
     }
 
@@ -384,8 +444,11 @@ namespace gld::ecs {
         app.world.resource_or_add<RenderSettings>();
         app.world.resource_or_add<RenderDiagnostics>();
         app.world.resource_or_add<RenderGraphResource>();
+        app.world.resource_or_add<RegisteredRenderPassRegistry>();
         app.world.resource_or_add<FullscreenResources>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         app.add_system(Stage::First, render_diagnostics_begin_frame_system);
+#endif
         app.add_system(Stage::First, spawn_camera_system);
         app.add_system(Stage::First, render_graph_sync_system);
         app.add_system(Stage::First, render_graph_sort_system);

@@ -7,6 +7,7 @@
 #include <ecs/render/Batch.hpp>
 #include <ecs/assets/Loader.hpp>
 #include <aoe2/Aoe2Assets.hpp>
+#include <aoe2/Aoe2Systems.hpp>
 
 using namespace gld::ecs;
 using namespace gld::ecs::aoe2;
@@ -144,6 +145,113 @@ int main() {
         std::span<const BatchUploadRange>{}, 17, true);
     assert(forced_upload.full);
     assert(forced_upload.dirty_instances == 17);
+
+    Aoe2DirtyQueue dirty_queue;
+    constexpr std::uint32_t dirty_entity_count = 30'000;
+    for (std::uint32_t raw = 0; raw < dirty_entity_count; ++raw) {
+        const auto entity = static_cast<entt::entity>(raw);
+        dirty_queue.enqueue(entity, Aoe2RenderDirty::Frame);
+        dirty_queue.enqueue(entity, Aoe2RenderDirty::Transform);
+    }
+    assert(dirty_queue.pending.size() == dirty_entity_count);
+    assert(dirty_queue.enqueued == dirty_entity_count * 2u);
+    assert(dirty_queue.deduplicated == dirty_entity_count);
+    dirty_queue.begin_processing();
+    assert(dirty_queue.pending.empty());
+    assert(dirty_queue.processing.size() == dirty_entity_count);
+    for (const auto& entry : dirty_queue.processing) {
+        const auto mask = static_cast<std::uint8_t>(
+            dirty_queue.processing_dirty(entry.entity));
+        assert((mask & static_cast<std::uint8_t>(Aoe2RenderDirty::Frame)) != 0u);
+        assert((mask & static_cast<std::uint8_t>(Aoe2RenderDirty::Transform)) != 0u);
+    }
+    dirty_queue.end_processing();
+    assert(dirty_queue.processing.empty());
+
+    const auto reused_entity = static_cast<entt::entity>(17u);
+    dirty_queue.enqueue(reused_entity, Aoe2RenderDirty::Material);
+    assert(dirty_queue.contains(reused_entity));
+    dirty_queue.begin_processing();
+    assert(dirty_queue.processing_dirty(reused_entity) == Aoe2RenderDirty::Material);
+    dirty_queue.end_processing();
+
+    // An entity index may be recycled with a newer version before the queue is
+    // drained. Only the new entity may inherit the indexed mask.
+    entt::registry recycled_registry;
+    const auto old_version = recycled_registry.create();
+    recycled_registry.destroy(old_version);
+    const auto new_version = recycled_registry.create();
+    assert(entt::to_entity(old_version) == entt::to_entity(new_version));
+    assert(old_version != new_version);
+    dirty_queue.enqueue(old_version, Aoe2RenderDirty::Frame);
+    dirty_queue.enqueue(new_version, Aoe2RenderDirty::Transform);
+    assert(!dirty_queue.contains(old_version));
+    assert(dirty_queue.contains(new_version));
+    dirty_queue.begin_processing();
+    assert(dirty_queue.processing_dirty(old_version) == Aoe2RenderDirty::None);
+    assert(dirty_queue.processing_dirty(new_version) == Aoe2RenderDirty::Transform);
+    dirty_queue.end_processing();
+
+    const std::array<BatchUploadRange, 1> sixty_percent{{{0, 6}}};
+    const auto aoe_sparse = plan_batch_upload(
+        sixty_percent, 10, false, BatchUploadPolicy{8, 75});
+    assert(!aoe_sparse.full);
+    assert(aoe_sparse.dirty_instances == 6);
+
+    Animation resolved_animation;
+    resolved_animation.direction_count = 1;
+    resolved_animation.frames_per_direction = 3;
+    resolved_animation.main.status = LayerStatus::Partial;
+    resolved_animation.shadow.status = LayerStatus::Partial;
+    for (int frame = 0; frame < 3; ++frame) {
+        Frame value;
+        value.direction = 0;
+        value.frame = frame;
+        value.present = frame != 1;
+        value.width = 10 + frame;
+        value.height = 20 + frame;
+        value.foot = {3.f + frame, 7.f + frame};
+        value.uv = {frame * 0.1f, 0.f, 0.1f, 0.2f};
+        resolved_animation.main.frames.push_back(value);
+        value.width += 5;
+        resolved_animation.shadow.frames.push_back(value);
+    }
+    const auto resolved_table = build_resolved_frame_table(resolved_animation);
+    assert(resolved_table.layer_stride == 3);
+    assert(resolved_table.records.size() == 6);
+    // Equal-distance missing frames resolve to the previous frame, matching
+    // the runtime nearest-present rule.
+    assert(resolved_table.records[1].size_and_foot.x == 10.f);
+    assert(resolved_table.records[4].size_and_foot.x == 15.f);
+
+    EcsWorld transform_world;
+    register_transform_lifecycle(transform_world);
+    const auto parent = transform_world.spawn();
+    transform_world.reg().emplace<Transform>(parent,
+        Transform::from_trs({2.f, 0.f, 0.f}));
+    const auto child = transform_world.spawn();
+    transform_world.reg().emplace<Transform>(child,
+        Transform::from_trs({1.f, 0.f, 0.f}));
+    assert(set_parent(transform_world, child, parent));
+    assert(!set_parent(transform_world, parent, child));
+    transform_propagate_system(transform_world);
+    assert(transform_world.resource<TransformDiagnostics>().visited == 2);
+    assert(std::abs(transform_world.reg().get<GlobalTransform>(child).world[3].x - 3.f) < 0.0001f);
+    transform_propagate_system(transform_world);
+    assert(transform_world.resource<TransformDiagnostics>().visited == 0);
+    assert(patch_transform(transform_world, parent, [](TransformEditor& transform) {
+        transform.set_translation({4.f, 0.f, 0.f});
+    }));
+    transform_propagate_system(transform_world);
+    assert(transform_world.resource<TransformDiagnostics>().roots == 1);
+    assert(transform_world.resource<TransformDiagnostics>().visited == 2);
+    assert(std::abs(transform_world.reg().get<GlobalTransform>(child).world[3].x - 5.f) < 0.0001f);
+    transform_world.despawn(parent);
+    assert(!transform_world.reg().all_of<Parent>(child));
+    transform_propagate_system(transform_world);
+    assert(transform_world.resource<TransformDiagnostics>().visited == 1);
+    assert(std::abs(transform_world.reg().get<GlobalTransform>(child).world[3].x - 1.f) < 0.0001f);
+    disconnect_transform_lifecycle(transform_world);
 
     auto synchronized_unit_signature = [](std::uint64_t revision) {
         std::uint64_t signature = BatchSignatureSeed;

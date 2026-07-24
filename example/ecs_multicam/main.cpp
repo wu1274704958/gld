@@ -40,11 +40,14 @@
 using namespace gld::ecs;
 namespace fs = std::filesystem;
 
-struct AutoRotateSystem : BaseSystem<AutoRotateSystem, Transform, AutoRotate> {
-    void Update(entt::entity, Transform& t, AutoRotate& r) {
-        t.rotation += r.speed * res<Time>().dt;
+static void auto_rotate_system(EcsWorld& w) {
+    const float dt = w.resource<Time>().dt;
+    auto& reg = w.reg();
+    for (auto entity : reg.view<Transform, AutoRotate>()) {
+        const auto delta = reg.get<AutoRotate>(entity).speed * dt;
+        patch_transform(w, entity, [&](TransformEditor& transform) { transform.rotate(delta); });
     }
-};
+}
 
 int main()
 {
@@ -63,7 +66,7 @@ int main()
     app.add_plugin(TextPlugin);
     TextBatchPlugin(app);
     app.add_plugin(RenderPlugin);
-    app.add_system<AutoRotateSystem>(Stage::Update);
+    app.add_system(Stage::Update, auto_rotate_system);
 
     app.add_system(Stage::Startup, [](EcsWorld& w) {
         auto& srv = w.resource<AssetServer>();
@@ -148,7 +151,7 @@ int main()
             t.font = font; t.size = 40; t.color = glm::vec4(0.98f, 0.92f, 0.7f, 1.f);
             t.align = TextAlign::Center; t.anchor = glm::vec2(0.5f, 0.5f); t.rev = 1;
             reg.emplace<Text>(e, std::move(t));
-            Transform tr; tr.translation = glm::vec3(0.f, 330.f, 0.f);
+            Transform tr = Transform::from_trs(glm::vec3(0.f, 330.f, 0.f));
             reg.emplace<Transform>(e, tr);
             reg.emplace<GlobalTransform>(e);
             reg.emplace<RenderLayer>(e, RenderLayer{ 0x4u });

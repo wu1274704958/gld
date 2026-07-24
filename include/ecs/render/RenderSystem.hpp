@@ -45,6 +45,20 @@ namespace gld::ecs {
         return emplace_render_passes<Passes...>(app.world, e);
     }
 
+    inline RegisteredRenderPasses& emplace_registered_render_passes(EcsWorld& w,
+                                                                     entt::entity e) {
+        if (auto* existing = w.reg().try_get<RegisteredRenderPasses>(e)) {
+            existing->passes.clear();
+            return *existing;
+        }
+        return w.reg().emplace<RegisteredRenderPasses>(e);
+    }
+
+    inline RegisteredRenderPasses& emplace_registered_render_passes(App& app,
+                                                                     entt::entity e) {
+        return emplace_registered_render_passes(app.world, e);
+    }
+
     void spawn_camera_system(EcsWorld& w);
     void camera_matrices_system(EcsWorld& w);
     void render_graph_sync_system(EcsWorld& w);

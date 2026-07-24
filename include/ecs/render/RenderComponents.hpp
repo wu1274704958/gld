@@ -136,6 +136,31 @@ namespace gld::ecs {
     using BatchPass = RenderPassT<RenderPassBatch>;
     using FullscreenRenderPass = RenderPassT<RenderPassFullscreen>;
 
+    using RegisteredRenderPassId = std::uint32_t;
+
+    struct RegisteredRenderPass {
+        RegisteredRenderPassId type = 0;
+        RenderPassState state;
+    };
+
+    // Runtime extension path for render modules that cannot participate in the
+    // core compile-time pass registry (for example the optional AoE2 module).
+    // Entry order is draw order. A camera must use either this component or one
+    // of the legacy RenderPasses<> components, never both.
+    struct RegisteredRenderPasses {
+        std::vector<RegisteredRenderPass> passes;
+
+        RegisteredRenderPass& add(RegisteredRenderPassId type) {
+            passes.push_back({type, {}});
+            return passes.back();
+        }
+
+        RegisteredRenderPass* find(RegisteredRenderPassId type) {
+            for (auto& pass : passes) if (pass.type == type) return &pass;
+            return nullptr;
+        }
+    };
+
     template<class T>
     concept IRenderPass = requires(T pass) {
         { T::id } -> std::convertible_to<std::uint32_t>;
@@ -315,7 +340,10 @@ namespace gld::ecs {
         std::uint32_t graph_executed = 0;
         std::uint32_t graph_cycles = 0;
         std::uint32_t graph_missing_cameras = 0;
-        std::uint32_t graph_skipped_invalid = 0;
+          std::uint32_t graph_skipped_invalid = 0;
+          std::uint32_t registered_passes = 0;
+          std::uint32_t registered_pass_missing_handlers = 0;
+          std::uint32_t registered_pass_component_conflicts = 0;
 
         void begin_frame() {
             ++frame;
@@ -346,7 +374,10 @@ namespace gld::ecs {
             graph_executed = 0;
             graph_cycles = 0;
             graph_missing_cameras = 0;
-            graph_skipped_invalid = 0;
+              graph_skipped_invalid = 0;
+              registered_passes = 0;
+              registered_pass_missing_handlers = 0;
+              registered_pass_component_conflicts = 0;
         }
     };
 }

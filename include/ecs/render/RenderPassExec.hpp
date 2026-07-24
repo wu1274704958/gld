@@ -2,6 +2,8 @@
 
 #include <tuple>
 #include <type_traits>
+#include <functional>
+#include <unordered_map>
 
 #include "RenderComponents.hpp"
 #include "RenderStateCache.hpp"
@@ -17,6 +19,23 @@ namespace gld::ecs {
         int target_width = 0;
         int target_height = 0;
     };
+
+    struct RegisteredRenderPassHandler {
+        // Reuse the established default render-state policy of a built-in pass
+        // (AoE2 units intentionally use BatchPass defaults).
+        std::uint32_t default_state_pass_id = RenderPassBatch;
+        std::function<void(RenderPassContext&, const RegisteredRenderPass&,
+                           const ResolvedRenderPassState&)> render;
+        std::function<void(EcsWorld&)> cleanup;
+    };
+
+    struct RegisteredRenderPassRegistry {
+        std::unordered_map<RegisteredRenderPassId, RegisteredRenderPassHandler> handlers;
+    };
+
+    bool register_render_pass(EcsWorld& world, RegisteredRenderPassId id,
+                              RegisteredRenderPassHandler handler);
+    void unregister_render_pass(EcsWorld& world, RegisteredRenderPassId id);
 
     template<class Pass>
     struct RenderPassExecutor {

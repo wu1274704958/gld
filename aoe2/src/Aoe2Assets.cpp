@@ -99,6 +99,57 @@ const Frame* Animation::get(const Layer& layer, int direction, int frame) const 
     return index < layer.frames.size() ? &layer.frames[index] : nullptr;
 }
 
+namespace {
+const Frame* nearest_present_frame(const Animation& animation, const Layer& layer,
+                                   int direction, int wanted) {
+    const Frame* exact = animation.get(layer, direction, wanted);
+    if (exact && exact->present) return exact;
+    for (int distance = 1; distance < animation.frames_per_direction; ++distance) {
+        const int before = wanted - distance;
+        const int after = wanted + distance;
+        if (before >= 0) {
+            const Frame* candidate = animation.get(layer, direction, before);
+            if (candidate && candidate->present) return candidate;
+        }
+        if (after < animation.frames_per_direction) {
+            const Frame* candidate = animation.get(layer, direction, after);
+            if (candidate && candidate->present) return candidate;
+        }
+    }
+    return nullptr;
+}
+}
+
+Aoe2ResolvedFrameTable build_resolved_frame_table(const Animation& animation) {
+    Aoe2ResolvedFrameTable table;
+    const auto logical_count = static_cast<std::uint32_t>(
+        animation.direction_count * animation.frames_per_direction);
+    table.layer_stride = logical_count;
+    table.records.resize(static_cast<std::size_t>(logical_count) * 2u);
+    table.present.resize(table.records.size(), 0u);
+    auto fill_layer = [&](const Layer& layer, bool shadow) {
+        for (int direction = 0; direction < animation.direction_count; ++direction) {
+            for (int frame = 0; frame < animation.frames_per_direction; ++frame) {
+                const auto index = table.record_index(
+                    shadow, direction, frame, animation.frames_per_direction);
+                const Frame* resolved = nearest_present_frame(
+                    animation, layer, direction, frame);
+                if (!resolved) continue;
+                table.records[index] = {
+                    resolved->uv,
+                    glm::vec4(static_cast<float>(resolved->width),
+                              static_cast<float>(resolved->height),
+                              resolved->foot.x, resolved->foot.y)
+                };
+                table.present[index] = 1u;
+            }
+        }
+    };
+    fill_layer(animation.main, false);
+    fill_layer(animation.shadow, true);
+    return table;
+}
+
 void Aoe2UnitAppearance::build_animation_slots() {
     std::sort(animations.begin(), animations.end(), [](const Animation& lhs, const Animation& rhs) {
         return lhs.name < rhs.name;
@@ -221,6 +272,7 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
             validate_layer_frames(animation.shadow, animation, "shadow");
             validate_layer_frames(animation.player_color, animation, "player_color");
             validate_player_layout(animation.main, animation.player_color);
+            animation.resolved_frames = build_resolved_frame_table(animation);
             if (config.contains("warnings")) {
                 for (const auto& warning : config.at("warnings"))
                     animation.warnings.push_back(warning.value("message", std::string{}));

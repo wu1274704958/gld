@@ -110,13 +110,11 @@ void respawn_preview(EcsWorld& world, PreviewState& state) {
     for (int direction = 0; direction < 16; ++direction) {
         const int row = direction / 4;
         const int column = direction % 4;
-        Transform transform;
-        transform.translation = {
+        Transform transform = Transform::from_trs({
             -420.f + static_cast<float>(column) * 280.f,
              245.f - static_cast<float>(row) * 165.f,
              0.f
-        };
-        transform.scale = {0.58f, 0.58f, 1.f};
+        }, glm::vec3(0.f), {0.58f, 0.58f, 1.f});
         SpawnOptions options;
         options.unit_id = unit->id;
         options.animation = animation;
@@ -141,12 +139,10 @@ void update_existing(EcsWorld& world, PreviewState& state, bool reset_time) {
         if (auto* render = reg.try_get<Aoe2UnitRender>(entity)) {
             if ((render->animation != animation && render->pending_animation != animation) ||
                 (render->animation == animation && !render->pending_animation.empty()))
-                request_aoe2_animation(*render, animation);
-            render->player_color = state.player_color;
-            render->player_color_debug = state.mask_debug;
-            render->playing = state.playing;
-            if (reset_time) restart_aoe2_animation(*render);
-            ++render->revision;
+                request_aoe2_animation(world, entity, animation);
+            set_aoe2_player_color(world, entity, state.player_color, state.mask_debug);
+            set_aoe2_playing(world, entity, state.playing);
+            if (reset_time) restart_aoe2_animation(world, entity);
         } else if (auto* request = reg.try_get<Aoe2SpawnRequest>(entity)) {
             request->options.animation = animation;
             request->options.player_color = state.player_color;
@@ -236,6 +232,7 @@ void preview_diagnostics_system(EcsWorld& world) {
     const auto& time = world.resource<Time>();
     const auto& asset_diag = world.resource<AssetServerDiagnostics>();
     const auto& render_diag = world.resource_or_add<RenderDiagnostics>();
+    const auto& aoe_diag = world.resource_or_add<Aoe2PerformanceDiagnostics>();
     state.metric_seconds += time.raw_dt;
     state.hud_refresh_seconds += time.raw_dt;
     state.cpu_decode_ms += asset_diag.cpu_load_ms;
@@ -249,9 +246,9 @@ void preview_diagnostics_system(EcsWorld& world) {
     for ([[maybe_unused]] auto entity : world.reg().view<Aoe2UnitRender>()) ++rendered;
     std::size_t instances = 0;
     bool has_player_batch = false;
-    for (auto entity : world.reg().view<BatchComponent>()) {
-        const auto& batch = world.reg().get<BatchComponent>(entity);
-        instances += batch.instances.size();
+    for (auto entity : world.reg().view<Aoe2BatchComponent>()) {
+        const auto& batch = world.reg().get<Aoe2BatchComponent>(entity);
+        instances += batch.world_instances.size();
         has_player_batch = has_player_batch || batch.key.texture_count == 3;
     }
     if (rendered == 16 && instances >= 16 && has_player_batch) {
@@ -376,6 +373,8 @@ void preview_diagnostics_system(EcsWorld& world) {
             << state.last_texture_upload_ms << " ms\n"
             << "Batches: " << render_diag.batch_groups << "   draws: " << render_diag.batch_draws
             << "   instances: " << render_diag.batch_instances << "\n"
+            << "AoE GPU: " << aoe_diag.render_gpu_ms << " ms   query skips: "
+            << aoe_diag.render_gpu_query_skips << "\n"
             << "Batch upload rate: " << state.last_batch_uploads_per_sec << "/s   "
             << state.last_batch_upload_kib_per_sec << " KiB/s\n"
             << "Resident animations: " << resident_animations << "   textures: "
@@ -385,9 +384,11 @@ void preview_diagnostics_system(EcsWorld& world) {
         auto& text = world.reg().get<Text>(state.hud_text);
         text.text = ascii_to_u32(out.str());
         ++text.rev;
-        auto& transform = world.reg().get<Transform>(state.hud_text);
         const auto& window = world.resource<Window>();
-        transform.translation = {-window.width * .5f + 14.f, window.height * .5f - 14.f, 0.f};
+        patch_transform(world, state.hud_text, [&](TransformEditor& transform) {
+            transform.set_translation(
+                {-window.width * .5f + 14.f, window.height * .5f - 14.f, 0.f});
+        });
     }
 }
 } // namespace
@@ -422,7 +423,7 @@ int main() {
         camera.layers = PreviewLayer;
         camera.clear_color = {0.16f, 0.18f, 0.21f, 1.f};
         world.reg().emplace<Camera>(camera_entity, camera);
-        emplace_render_passes<BatchPass>(world, camera_entity);
+        emplace_registered_render_passes(world, camera_entity).add(Aoe2UnitPassId);
 
         auto hud_camera_entity = world.spawn();
         Camera hud_camera;
@@ -443,9 +444,9 @@ int main() {
         hud.align = TextAlign::Left;
         hud.anchor = {0.f, 0.f};
         world.reg().emplace<Text>(state.hud_text, std::move(hud));
-        Transform hud_transform;
         const auto& window = world.resource<Window>();
-        hud_transform.translation = {-window.width * .5f + 14.f, window.height * .5f - 14.f, 0.f};
+        Transform hud_transform = Transform::from_trs(
+            {-window.width * .5f + 14.f, window.height * .5f - 14.f, 0.f});
         world.reg().emplace<Transform>(state.hud_text, hud_transform);
         world.reg().emplace<RenderLayer>(state.hud_text, RenderLayer{HudLayer});
         const auto& units = world.resource<Aoe2ResourceManager>().list_units();

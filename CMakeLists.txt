@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.14)
 project("OpenGL demo" VERSION 0.1.0)
 include(CTest)
 
+option(GLD_ENABLE_PERFORMANCE_MONITORING
+    "Compile detailed CPU/GPU performance diagnostics (FPS is always enabled)"
+    OFF)
+if(GLD_ENABLE_PERFORMANCE_MONITORING)
+    add_compile_definitions(GLD_ENABLE_PERFORMANCE_MONITORING=1)
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -99,6 +106,10 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
     if(BUILD_TESTING)
         add_executable(aoe2_runtime_tests aoe2/tests/Aoe2RuntimeTests.cpp)
+        # The tests assert diagnostic traversal counts. Keep those assertions
+        # active without forcing monitoring overhead into normal executables.
+        target_compile_definitions(aoe2_runtime_tests PRIVATE
+            GLD_ENABLE_PERFORMANCE_MONITORING=1)
         target_include_directories(aoe2_runtime_tests PRIVATE ${CMAKE_SOURCE_DIR}/aoe2/include)
         target_link_libraries(aoe2_runtime_tests PRIVATE gld_aoe2 EnTT::EnTT)
         add_test(NAME aoe2_runtime_tests COMMAND aoe2_runtime_tests)

@@ -46,10 +46,16 @@ void Aoe2Plugin::operator()(App& app) const {
     app.world.resource_or_add<Aoe2BatchIndex>();
     register_aoe2_batch_lifecycle(app.world);
     auto& render = app.world.resource_or_add<Aoe2RenderResources>();
-    render.sprite_shader = server.load_program("ecs/text_vs.glsl", "ecs/aoe2_unit_fg.glsl");
+    render.sprite_shader = server.load_program("ecs/aoe2_unit_vs.glsl", "ecs/aoe2_unit_fg.glsl");
     render.player_color_shader = server.load_program(
-        "ecs/text_vs.glsl", "ecs/aoe2_unit_playercolor_fg.glsl");
-    render.shadow_shader = server.load_program("ecs/text_vs.glsl", "ecs/aoe2_unit_shadow_fg.glsl");
+        "ecs/aoe2_unit_vs.glsl", "ecs/aoe2_unit_playercolor_fg.glsl");
+    render.shadow_shader = server.load_program(
+        "ecs/aoe2_unit_vs.glsl", "ecs/aoe2_unit_shadow_fg.glsl");
+    register_render_pass(app.world, Aoe2UnitPassId, RegisteredRenderPassHandler{
+        RenderPassBatch,
+        render_aoe2_unit_pass,
+        [](EcsWorld& world) { destroy_aoe2_batches(world); }
+    });
 
     app.add_system(Stage::Startup, [](EcsWorld& world) {
         auto& resources = world.resource<Aoe2RenderResources>();
