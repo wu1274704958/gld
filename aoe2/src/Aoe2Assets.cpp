@@ -347,15 +347,20 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
         if (!manifest_text) return nullptr;
         const json manifest = json::parse(*manifest_text);
         const int schema_version = manifest.at("schema_version").get<int>();
-        if ((schema_version != 2 && schema_version != 3) ||
-            manifest.at("kind").get<std::string>() != "aoe2de_unit") return nullptr;
-        if (schema_version == 3 && !manifest.contains("dat"))
+        const std::string kind = manifest.at("kind").get<std::string>();
+        const bool unit = kind == "aoe2de_unit";
+        const bool graphic = kind == "aoe2de_graphics";
+        if ((!unit && !graphic) ||
+            (unit && schema_version != 2 && schema_version != 3) ||
+            (graphic && schema_version != 2)) return nullptr;
+        if (unit && schema_version == 3 && !manifest.contains("dat"))
             throw std::runtime_error("schema 3 unit manifest is missing dat metadata");
 
         auto appearance = std::make_shared<Aoe2UnitAppearance>();
         appearance->schema_version = schema_version;
         appearance->id = manifest.at("id").get<std::string>();
-        if (schema_version == 3)
+        appearance->manifest_kind = kind;
+        if (unit && schema_version == 3)
             appearance->dat_metadata = parse_dat_metadata(manifest.at("dat"));
         const auto player_color_format = manifest.at("export_settings")
             .at("player_color").at("format").get<std::string>();

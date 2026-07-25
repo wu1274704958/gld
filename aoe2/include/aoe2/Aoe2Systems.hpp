@@ -228,6 +228,8 @@ struct Aoe2PerformanceDiagnostics {
 
 entt::entity spawn_aoe2_unit(EcsWorld& world, const SpawnOptions& options,
                              const Transform& transform = {});
+entt::entity spawn_aoe2_graphic(EcsWorld& world, const SpawnOptions& options,
+                                const Transform& transform = {});
 bool request_aoe2_animation(Aoe2UnitRender& unit, const std::string& animation_name);
 bool request_aoe2_animation(Aoe2UnitRender& unit, AnimationSlot animation_slot);
 void restart_aoe2_animation(Aoe2UnitRender& unit);
@@ -241,6 +243,10 @@ void set_aoe2_player_color(EcsWorld& world, entt::entity entity,
 void set_aoe2_tint(EcsWorld& world, entt::entity entity, glm::vec4 tint);
 void set_aoe2_visible(EcsWorld& world, entt::entity entity, bool visible);
 void set_aoe2_playing(EcsWorld& world, entt::entity entity, bool playing);
+void set_aoe2_looping(EcsWorld& world, entt::entity entity, bool loop);
+void set_aoe2_playback_mode(EcsWorld& world, entt::entity entity,
+                            Aoe2PlaybackMode mode);
+void set_aoe2_playback_time(EcsWorld& world, entt::entity entity, float seconds);
 void set_aoe2_direction(EcsWorld& world, entt::entity entity,
                         int direction_slot, int direction_slot_count = 0);
 void mark_aoe2_render_dirty(EcsWorld& world, entt::entity entity,

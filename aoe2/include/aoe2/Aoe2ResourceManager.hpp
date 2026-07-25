@@ -19,6 +19,15 @@ struct UnitRecord {
     std::string mapping_source;
 };
 
+struct GraphicRecord {
+    std::string id;
+    std::string manifest_path;
+    std::vector<std::string> animations;
+    bool complete = false;
+    int warning_count = 0;
+    int schema_version = 0;
+};
+
 class Aoe2ResourceManager {
 public:
     Aoe2ResourceManager() = default;
@@ -27,15 +36,21 @@ public:
 
     void refresh();
     const std::vector<UnitRecord>& list_units() const { return units_; }
+    const std::vector<GraphicRecord>& list_graphics() const { return graphics_; }
     const UnitRecord* find(const std::string& id) const;
+    const UnitRecord* find_unit(const std::string& id) const { return find(id); }
+    const GraphicRecord* find_graphic(const std::string& id) const;
     bool contains(const std::string& id) const { return find(id) != nullptr; }
     Handle<Aoe2UnitAppearance> load(const std::string& id);
+    Handle<Aoe2UnitAppearance> load_unit(const std::string& id) { return load(id); }
+    Handle<Aoe2UnitAppearance> load_graphic(const std::string& id);
     const std::string& root() const { return root_; }
 
 private:
     AssetServer* server_ = nullptr;
     std::string root_ = "aoe2de_cache";
     std::vector<UnitRecord> units_;
+    std::vector<GraphicRecord> graphics_;
 };
 
 } // namespace gld::ecs::aoe2

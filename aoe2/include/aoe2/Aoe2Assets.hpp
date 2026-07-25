@@ -207,6 +207,7 @@ struct Aoe2UnitAppearance {
     static constexpr std::size_t InvalidAnimationIndex = std::numeric_limits<std::size_t>::max();
 
     std::string id;
+    std::string manifest_kind;
     int schema_version = 0;
     PlayerColorFormat player_color_format = PlayerColorFormat::None;
     std::vector<std::string> animation_names;

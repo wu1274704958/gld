@@ -6,8 +6,12 @@
 
 namespace gld::ecs::aoe2 {
 
+enum class Aoe2PlaybackMode { Internal, External };
+enum class Aoe2ResourceKind { Unit, Graphic };
+
 struct SpawnOptions {
     std::string unit_id;
+    Aoe2ResourceKind resource_kind = Aoe2ResourceKind::Unit;
     std::string animation;
     AnimationSlot animation_slot = AnimationSlot::Invalid;
     int direction = 0;
@@ -15,6 +19,8 @@ struct SpawnOptions {
     int player_color = 1;
     int player_color_debug = 0;
     float playback_speed = 1.f;
+    Aoe2PlaybackMode playback_mode = Aoe2PlaybackMode::Internal;
+    float playback_time = 0.f;
     bool playing = true;
     bool loop = true;
     std::uint32_t layers = 0x1u;
@@ -45,6 +51,7 @@ struct Aoe2UnitRender {
     int player_color_debug = 0; // 0 normal, 1 mask coverage, 2 subcolor indices
     float playback_time = 0.f;
     float playback_speed = 1.f;
+    Aoe2PlaybackMode playback_mode = Aoe2PlaybackMode::Internal;
     bool playing = true;
     bool loop = true;
     bool visible = true;

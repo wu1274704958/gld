@@ -41,7 +41,7 @@ python tools\aoe2de_export\aoe2de_export.py `
 The command above writes:
 
 ```text
-res/aoe2de_cache/u_arc_archer/
+res/aoe2de_cache/units/u_arc_archer/
   manifest.json
   graphics/
     idleA.json
@@ -51,7 +51,9 @@ res/aoe2de_cache/u_arc_archer/
     ...
 ```
 
-An existing `ROOT/<resource-id>` directory is deleted only after arguments,
+Unit exports write `ROOT/units/<resource-id>`; standalone `--graphics` and
+`--dump-layers` exports write `ROOT/graphics/<resource-id>`. An existing
+resource directory inside its category is deleted only after arguments,
 source graphics, DAT parsing and unit mapping have been validated, then rebuilt
 from scratch.
 Do not point `--out` at a directory whose children are not disposable caches.
@@ -65,6 +67,18 @@ python tools\aoe2de_export\aoe2de_export.py `
   --name spearman_custom `
   --graphics u_inf_spearman_idleA_x2.sld u_inf_spearman_walkA_x2.sld
 ```
+
+The gameplay arrow presentation is exported as a standalone graphic:
+
+```powershell
+python tools\aoe2de_export\aoe2de_export.py `
+  --aoe2 "F:\SteamLibrary\steamapps\common\AoE2DE" `
+  --out "E:\code\gld\res\aoe2de_cache" `
+  --name p_arrow --graphics p_arrow_x2.sld --directions 32 --fps 30
+```
+
+This produces `graphics/p_arrow`. The SLD contains 32 horizontal directions
+with 11 pitch poses per direction and an embedded shadow layer.
 
 ## Discover units
 

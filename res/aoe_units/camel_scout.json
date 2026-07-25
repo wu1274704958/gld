@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "kind": "aoe_gameplay_unit",
+  "id": "camel_scout",
+  "tags": ["scout", "cavalry"],
+  "level": 1,
+  "max_hp": 70.0,
+  "armor": [
+    { "class_id": 3, "amount": 0.0 }
+  ],
+  "collision": { "radius_x": 0.25, "radius_y": 0.25, "height": 2.0 },
+  "movement": { "speed": 1.45 },
+  "target_acquisition": {
+    "strategy_id": "nearest_enemy",
+    "radius": 6.0
+  },
+  "lifecycle": {
+    "death_duration_seconds": 1.5,
+    "disappear_duration_seconds": 1.0
+  },
+  "attack": {
+    "mode": "melee",
+    "damage": [
+      { "class_id": 3, "amount": 7.0 }
+    ],
+    "range": 0.1,
+    "release_seconds": 0.333333,
+    "animation_duration_seconds": 1.0,
+    "cooldown_seconds": 2.0,
+    "critical_chance": 0.35,
+    "critical_multiplier": 2.0,
+    "projectile_id": ""
+  },
+  "presentation": {
+    "backend": "aoe2",
+    "resource_id": "u_cam_camel_scout",
+    "default_player_color": 1,
+    "animations": {
+      "idle": "idleA",
+      "moving": "walkA",
+      "attack": "attackA",
+      "critical_attack": "attackB",
+      "death": "deathA",
+      "disappear": "decayA"
+    }
+  }
+}

@@ -166,6 +166,30 @@ void set_aoe2_playing(EcsWorld& world, entt::entity entity, bool playing) {
         unit->playing = playing;
 }
 
+void set_aoe2_looping(EcsWorld& world, entt::entity entity, bool loop) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || unit->loop == loop) return;
+    unit->loop = loop;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
+}
+
+void set_aoe2_playback_mode(EcsWorld& world, entt::entity entity,
+                            Aoe2PlaybackMode mode) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || unit->playback_mode == mode) return;
+    unit->playback_mode = mode;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
+}
+
+void set_aoe2_playback_time(EcsWorld& world, entt::entity entity, float seconds) {
+    auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
+    if (!unit || !std::isfinite(seconds)) return;
+    const float resolved = std::max(0.f, seconds);
+    if (unit->playback_time == resolved) return;
+    unit->playback_time = resolved;
+    mark_aoe2_render_dirty(world, entity, Aoe2RenderDirty::Frame);
+}
+
 void set_aoe2_direction(EcsWorld& world, entt::entity entity,
                         int direction_slot, int direction_slot_count) {
     auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
@@ -194,6 +218,13 @@ entt::entity spawn_aoe2_unit(EcsWorld& world, const SpawnOptions& options, const
     return entity;
 }
 
+entt::entity spawn_aoe2_graphic(EcsWorld& world, const SpawnOptions& source,
+                                const Transform& transform) {
+    auto options = source;
+    options.resource_kind = Aoe2ResourceKind::Graphic;
+    return spawn_aoe2_unit(world, options, transform);
+}
+
 void spawn_aoe2_unit_system(EcsWorld& world) {
     auto* manager = world.try_resource<Aoe2ResourceManager>();
     if (!manager) return;
@@ -202,18 +233,26 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
     for (auto entity : reg.view<Aoe2SpawnRequest>()) {
         auto& request = reg.get<Aoe2SpawnRequest>(entity);
         if (!request.requested) {
-            request.appearance = manager->load(request.options.unit_id);
+            request.appearance = request.options.resource_kind == Aoe2ResourceKind::Graphic
+                ? manager->load_graphic(request.options.unit_id)
+                : manager->load_unit(request.options.unit_id);
             request.requested = true;
             if (request.appearance.state() == LoadState::NotLoaded) {
+                const char* kind = request.options.resource_kind == Aoe2ResourceKind::Graphic
+                    ? "graphic" : "unit";
                 reg.emplace_or_replace<Aoe2SpawnError>(entity,
-                    Aoe2SpawnError{"unknown AoE2 unit: " + request.options.unit_id});
+                    Aoe2SpawnError{std::string("unknown AoE2 ") + kind + ": " +
+                                   request.options.unit_id});
                 completed.push_back(entity);
                 continue;
             }
         }
         if (request.appearance.state() == LoadState::Failed) {
+            const char* kind = request.options.resource_kind == Aoe2ResourceKind::Graphic
+                ? "graphic" : "unit";
             reg.emplace_or_replace<Aoe2SpawnError>(entity,
-                Aoe2SpawnError{"failed to load AoE2 unit: " + request.options.unit_id});
+                Aoe2SpawnError{std::string("failed to load AoE2 ") + kind + ": " +
+                               request.options.unit_id});
             completed.push_back(entity);
             continue;
         }
@@ -237,6 +276,8 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
         render.player_color = std::clamp(request.options.player_color, 1, 8);
         render.player_color_debug = std::clamp(request.options.player_color_debug, 0, 2);
         render.playback_speed = request.options.playback_speed;
+        render.playback_mode = request.options.playback_mode;
+        render.playback_time = std::max(0.f, request.options.playback_time);
         render.playing = request.options.playing;
         render.loop = request.options.loop;
         render.pending_animation_slot = initial_animation_slot;
@@ -321,14 +362,20 @@ void aoe2_unit_animation_system(EcsWorld& world) {
             render.pending_animation_slot = AnimationSlot::Invalid;
             render.transition = AnimationTransitionState::None;
             render.transition_error.clear();
-            render.playback_time = 0.f;
+            if (render.playback_mode == Aoe2PlaybackMode::Internal)
+                render.playback_time = 0.f;
             render.direction = render.direction_slot;
             if (render.direction_slot_count > 0)
                 render.direction = render.direction_slot * pending->direction_count
                     / render.direction_slot_count;
             render.direction = ((render.direction % pending->direction_count) + pending->direction_count)
                 % pending->direction_count;
-            resolve_frame(render, *pending, 0);
+            int committed_frame = static_cast<int>(std::floor(
+                std::max(0.f, render.playback_time) * pending->fps));
+            if (render.loop) committed_frame %= pending->frames_per_direction;
+            else committed_frame = std::clamp(
+                committed_frame, 0, pending->frames_per_direction - 1);
+            resolve_frame(render, *pending, committed_frame);
             ++render.revision;
             GLD_PERF_MONITOR(++diagnostics.animation_frame_changes);
             mark_aoe2_render_dirty(world, entity,
@@ -355,7 +402,8 @@ void aoe2_unit_animation_system(EcsWorld& world) {
         render.direction = ((render.direction % animation->direction_count) + animation->direction_count)
             % animation->direction_count;
         render.player_color = std::clamp(render.player_color, 1, 8);
-        if (render.playing) render.playback_time += dt * render.playback_speed;
+        if (render.playback_mode == Aoe2PlaybackMode::Internal && render.playing)
+            render.playback_time += dt * render.playback_speed;
         int frame = static_cast<int>(std::floor(std::max(0.f, render.playback_time) * animation->fps));
         if (render.loop) frame %= animation->frames_per_direction;
         else frame = std::clamp(frame, 0, animation->frames_per_direction - 1);

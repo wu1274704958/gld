@@ -55,11 +55,20 @@ namespace gld::ecs {
         bool remove_resource() { return registry.ctx().erase<R>(); }
         template<class R, class... Args>
         R& resource_or_add(Args&&... args) {
-            return resource_or_add_with_priority<R>(static_cast<int>(ResourceCleanupPriority::Normal),
-                                                   std::forward<Args>(args)...);
+            // A plain lookup must not overwrite lifecycle policy chosen by the
+            // resource owner. This is especially important for AssetServer and
+            // AssetManager, which must outlive resources containing handles.
+            if (auto* p = registry.ctx().find<R>())
+                return *p;
+
+            R& res = registry.ctx().emplace<R>(std::forward<Args>(args)...);
+            track_resource<R>(static_cast<int>(ResourceCleanupPriority::Normal));
+            return res;
         }
         template<class R, class... Args>
         R& resource_or_add_with_priority(int priority, Args&&... args) {
+            // This overload is the explicit way to create or update lifecycle
+            // policy for an existing resource.
             if (auto* p = registry.ctx().find<R>()) {
                 track_resource<R>(priority);
                 return *p;

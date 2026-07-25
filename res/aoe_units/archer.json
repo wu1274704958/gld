@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "kind": "aoe_gameplay_unit",
+  "id": "archer",
+  "tags": ["archer", "ranged"],
+  "level": 1,
+  "max_hp": 30.0,
+  "armor": [
+    { "class_id": 3, "amount": 0.0 },
+    { "class_id": 4, "amount": 0.0 }
+  ],
+  "collision": { "radius_x": 0.2, "radius_y": 0.2, "height": 2.0 },
+  "movement": { "speed": 0.96 },
+  "target_acquisition": {
+    "strategy_id": "nearest_enemy",
+    "radius": 6.0
+  },
+  "lifecycle": {
+    "death_duration_seconds": 1.0,
+    "disappear_duration_seconds": 0.0
+  },
+  "attack": {
+    "mode": "projectile",
+    "damage": [
+      { "class_id": 3, "amount": 4.0 }
+    ],
+    "range": 4.0,
+    "release_seconds": 0.5,
+    "animation_duration_seconds": 1.0,
+    "cooldown_seconds": 2.0,
+    "critical_chance": 0.1,
+    "critical_multiplier": 2.0,
+    "projectile_id": "arrow",
+    "projectile_launch_offset": { "x": 0.0, "y": 0.5, "z": 1.5 }
+  },
+  "presentation": {
+    "backend": "aoe2",
+    "resource_id": "u_arc_archer",
+    "default_player_color": 1,
+    "animations": {
+      "idle": "idleA",
+      "moving": "walkA",
+      "attack": "attackA",
+      "death": "idleA"
+    }
+  }
+}

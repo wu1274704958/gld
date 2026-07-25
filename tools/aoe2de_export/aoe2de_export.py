@@ -490,18 +490,21 @@ def validate_resource_id(resource_id: str) -> str:
     return resource_id
 
 
-def target_directory(root: Path, resource_id: str) -> Path:
+def target_directory(root: Path, category: str, resource_id: str) -> Path:
     resource_id = validate_resource_id(resource_id)
+    if category not in {"units", "graphics"}:
+        raise SystemExit(f"invalid cache category: {category}")
     resolved_root = root.resolve()
-    target = (resolved_root / resource_id).resolve()
-    if target.parent != resolved_root:
+    category_root = (resolved_root / category).resolve()
+    target = (category_root / resource_id).resolve()
+    if category_root.parent != resolved_root or target.parent != category_root:
         raise SystemExit(f"unsafe output target outside root: {target}")
     return target
 
 
-def clean_target(root: Path, resource_id: str) -> Path:
-    target = target_directory(root, resource_id)
-    root.mkdir(parents=True, exist_ok=True)
+def clean_target(root: Path, category: str, resource_id: str) -> Path:
+    target = target_directory(root, category, resource_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         if not target.is_dir():
             raise SystemExit(f"output target exists and is not a directory: {target}")
@@ -1057,7 +1060,7 @@ def export_unit(args) -> int:
     dat_match = resolve_dat_unit(dat, args.unit, args.civ_id, args.unit_id, unit_map)
     dat_metadata = serialize_dat_metadata(dat_path, args.aoe2, dat_match)
 
-    out_dir = clean_target(args.out, resource_id)
+    out_dir = clean_target(args.out, "units", resource_id)
     manifest = {
         "schema_version": UNIT_SCHEMA_VERSION,
         "kind": "aoe2de_unit",
@@ -1111,7 +1114,7 @@ def export_graphics(args) -> int:
         Path(filename).stem for filename in args.graphics
         if not (root / filename).is_file()
     ]
-    out_dir = clean_target(args.out, args.name)
+    out_dir = clean_target(args.out, "graphics", args.name)
     manifest = {
         "schema_version": GRAPHICS_SCHEMA_VERSION,
         "kind": "aoe2de_graphics",
@@ -1152,7 +1155,7 @@ def dump_sld_layers(args) -> int:
     missing = [path for path in sources if not path.is_file()]
     if missing:
         raise SystemExit(f"missing source graphic: {missing[0]}")
-    out_dir = clean_target(args.out, args.name)
+    out_dir = clean_target(args.out, "graphics", args.name)
     layers_out = out_dir / "layers"
     layers_out.mkdir()
     SLD, Texture = load_openage(args.openage)

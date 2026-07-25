@@ -1,5 +1,38 @@
 cmake_minimum_required(VERSION 3.14)
+
+# Ninja discovers MSVC header dependencies by parsing /showIncludes output.
+# Keep CMake's compiler detection and later standalone builds on the same tool
+# locale; an encoding mismatch can otherwise produce object files with zero
+# tracked header dependencies.
+if(WIN32 AND CMAKE_GENERATOR MATCHES "Ninja")
+    set(ENV{VSLANG} "1033")
+endif()
+
 project("OpenGL demo" VERSION 0.1.0)
+
+if(MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
+    set(_gld_msvc_english_env
+        "${CMAKE_COMMAND}" -E env VSLANG=1033)
+
+    if(CMAKE_C_COMPILER_LAUNCHER)
+        list(APPEND _gld_msvc_english_env_c ${CMAKE_C_COMPILER_LAUNCHER})
+        list(PREPEND _gld_msvc_english_env_c
+            "${CMAKE_COMMAND}" -E env VSLANG=1033)
+        set(CMAKE_C_COMPILER_LAUNCHER "${_gld_msvc_english_env_c}")
+    else()
+        set(CMAKE_C_COMPILER_LAUNCHER "${_gld_msvc_english_env}")
+    endif()
+
+    if(CMAKE_CXX_COMPILER_LAUNCHER)
+        list(APPEND _gld_msvc_english_env_cxx ${CMAKE_CXX_COMPILER_LAUNCHER})
+        list(PREPEND _gld_msvc_english_env_cxx
+            "${CMAKE_COMMAND}" -E env VSLANG=1033)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${_gld_msvc_english_env_cxx}")
+    else()
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${_gld_msvc_english_env}")
+    endif()
+endif()
+
 include(CTest)
 
 option(GLD_ENABLE_PERFORMANCE_MONITORING
@@ -104,7 +137,22 @@ if(GLM_FOUND AND GLFW3_FOUND)
         aoe2/src/Aoe2Plugin.cpp)
     target_include_directories(gld_aoe2 PUBLIC ${CMAKE_SOURCE_DIR}/aoe2/include)
     target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+
+    add_library(gld_aoe_gameplay STATIC
+        aoe/src/AoeGameplay.cpp)
+    target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
+    target_link_libraries(gld_aoe_gameplay PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+
+    add_library(gld_aoe2_gameplay_bridge STATIC
+        aoe2_gameplay/src/Aoe2GameplayBridge.cpp)
+    target_include_directories(gld_aoe2_gameplay_bridge PUBLIC
+        ${CMAKE_SOURCE_DIR}/aoe2_gameplay/include)
+    target_link_libraries(gld_aoe2_gameplay_bridge PUBLIC gld_aoe_gameplay gld_aoe2)
     if(BUILD_TESTING)
+        add_executable(ecs_world_tests aoe2/tests/EcsWorldTests.cpp)
+        target_link_libraries(ecs_world_tests PRIVATE EnTT::EnTT)
+        add_test(NAME ecs_world_tests COMMAND ecs_world_tests)
+
         add_executable(aoe2_runtime_tests aoe2/tests/Aoe2RuntimeTests.cpp)
         # The tests assert diagnostic traversal counts. Keep those assertions
         # active without forcing monitoring overhead into normal executables.
@@ -118,6 +166,14 @@ if(GLM_FOUND AND GLFW3_FOUND)
             src/EcsGizmoGeometry.cpp)
         target_link_libraries(gizmo_tests PRIVATE EnTT::EnTT)
         add_test(NAME gizmo_tests COMMAND gizmo_tests)
+        add_executable(aoe_gameplay_tests aoe/tests/AoeGameplayTests.cpp)
+        target_link_libraries(aoe_gameplay_tests PRIVATE gld_aoe_gameplay)
+        add_test(NAME aoe_gameplay_tests COMMAND aoe_gameplay_tests)
+        add_executable(aoe2_gameplay_bridge_tests
+            aoe2_gameplay/tests/Aoe2GameplayBridgeTests.cpp)
+        target_link_libraries(aoe2_gameplay_bridge_tests PRIVATE
+            gld_aoe2_gameplay_bridge)
+        add_test(NAME aoe2_gameplay_bridge_tests COMMAND aoe2_gameplay_bridge_tests)
     endif()
 
     message(${ALL_SOURCE_FILES})
@@ -191,6 +247,12 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     CreateExample(DIR aoe2_unit_benchmark FILES main.cpp)
     target_link_libraries(aoe2_unit_benchmark gld_aoe2)
+
+    CreateExample(DIR aoe_gameplay_unit_preview FILES main.cpp)
+    target_link_libraries(aoe_gameplay_unit_preview gld_aoe2_gameplay_bridge)
+
+    CreateExample(DIR aoe_gameplay_squad_preview FILES main.cpp)
+    target_link_libraries(aoe_gameplay_squad_preview gld_aoe2_gameplay_bridge)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

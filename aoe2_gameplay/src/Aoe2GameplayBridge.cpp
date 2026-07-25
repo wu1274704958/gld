@@ -1,0 +1,320 @@
+#include <aoe2_gameplay/Aoe2GameplayBridge.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include <ecs/systems/TransformSystem.hpp>
+
+namespace gld::ecs::aoe2_gameplay {
+using namespace gld::ecs::aoe2;
+
+namespace {
+std::string desired_animation(const aoe::AoeUnitDefinition& definition,
+                              const aoe::AoeActionState& state) {
+    const auto& presentation = definition.presentation;
+    switch (state.state) {
+    case aoe::UnitState::Moving: {
+        const auto moving = presentation.animation("moving");
+        return moving.empty() ? presentation.animation("idle") : moving;
+    }
+    case aoe::UnitState::Attacking:
+        if (state.critical) {
+            const auto critical = presentation.animation("critical_attack");
+            if (!critical.empty()) return critical;
+        }
+        return presentation.animation("attack");
+    case aoe::UnitState::Dying: {
+        const auto death = presentation.animation("death");
+        return death.empty() ? presentation.animation("idle") : death;
+    }
+    case aoe::UnitState::Disappearing: {
+        const auto disappear = presentation.animation("disappear");
+        return disappear.empty() ? presentation.animation("idle") : disappear;
+    }
+    default: return presentation.animation("idle");
+    }
+}
+
+bool looping(aoe::UnitState state) {
+    return state == aoe::UnitState::Idle || state == aoe::UnitState::Moving;
+}
+
+void sync_pending_request(Aoe2SpawnRequest& request, const std::string& animation,
+                          int direction, int direction_count,
+                          const aoe::AoePresentationOptions& options,
+                          float elapsed, bool loop) {
+    request.options.animation = animation;
+    request.options.animation_slot = AnimationSlot::Invalid;
+    request.options.direction = direction;
+    request.options.direction_slot_count = direction_count;
+    request.options.player_color = options.player_color;
+    request.options.layers = options.layers;
+    request.options.playback_mode = Aoe2PlaybackMode::External;
+    request.options.playback_time = elapsed;
+    request.options.playing = false;
+    request.options.loop = loop;
+}
+} // namespace
+
+int aoe2_projectile_direction(glm::vec2 logical_velocity,
+                              int direction_count) {
+    if (direction_count <= 0 ||
+        glm::dot(logical_velocity, logical_velocity) <= 1e-10f) return 0;
+    const glm::vec2 projected{
+        logical_velocity.x - logical_velocity.y,
+        (logical_velocity.x + logical_velocity.y) * .5f};
+    float angle = std::atan2(projected.y, projected.x);
+    const float full_turn = 2.f * glm::pi<float>();
+    if (angle < 0.f) angle += full_turn;
+    const float sector = full_turn / static_cast<float>(direction_count);
+    return static_cast<int>(std::floor((angle + sector * .5f) / sector)) %
+           direction_count;
+}
+
+int aoe2_projectile_pitch_frame(glm::vec3 velocity, int frame_count) {
+    if (frame_count <= 1) return 0;
+    const float ground_speed = glm::length(glm::vec2(velocity));
+    if (ground_speed <= 1e-5f && std::abs(velocity.z) <= 1e-5f)
+        return (frame_count - 1) / 2;
+    const float pitch = std::atan2(velocity.z, ground_speed);
+    const float normalized = std::clamp(
+        .5f - pitch / glm::pi<float>(), 0.f, 1.f);
+    return std::clamp(static_cast<int>(std::lround(
+        normalized * static_cast<float>(frame_count - 1))),
+        0, frame_count - 1);
+}
+
+void aoe2_gameplay_orphan_cleanup_system(EcsWorld& world) {
+    auto& reg = world.reg();
+    std::vector<entt::entity> orphaned;
+    for (auto child : reg.view<AoeGameplayOwner>()) {
+        const auto owner = reg.get<AoeGameplayOwner>(child).gameplay;
+        const auto* link = reg.valid(owner) ? reg.try_get<Aoe2PresentationLink>(owner) : nullptr;
+        const bool inactive = reg.valid(owner) &&
+            reg.any_of<aoe::AoeRecyclePending, aoe::AoePooledUnit>(owner);
+        if (!reg.valid(owner) || inactive || !link || link->render != child)
+            orphaned.push_back(child);
+    }
+    for (auto child : orphaned) if (reg.valid(child)) reg.destroy(child);
+
+    orphaned.clear();
+    for (auto child : reg.view<AoeProjectileOwner>()) {
+        const auto owner = reg.get<AoeProjectileOwner>(child).gameplay;
+        const auto* link = reg.valid(owner)
+            ? reg.try_get<Aoe2ProjectilePresentationLink>(owner) : nullptr;
+        if (!reg.valid(owner) || !link || link->render != child)
+            orphaned.push_back(child);
+    }
+    for (auto child : orphaned) if (reg.valid(child)) reg.destroy(child);
+
+    const auto pending = reg.view<Aoe2PresentationLink>(
+        entt::exclude<aoe::AoeUnitDefinitionRef>);
+    std::vector<entt::entity> stale_links(pending.begin(), pending.end());
+    for (const auto owner : stale_links) {
+        reg.remove<Aoe2PresentationLink, Aoe2PresentationSnapshot,
+                   AoePresentationError>(owner);
+    }
+
+    std::vector<entt::entity> recycling;
+    for (const auto owner : reg.view<Aoe2PresentationLink, aoe::AoeRecyclePending>())
+        recycling.push_back(owner);
+    for (const auto owner : recycling) {
+        const auto child = reg.get<Aoe2PresentationLink>(owner).render;
+        if (reg.valid(child)) reg.destroy(child);
+        reg.remove<Aoe2PresentationLink, Aoe2PresentationSnapshot,
+                   AoePresentationError>(owner);
+    }
+}
+
+void aoe2_projectile_presentation_system(EcsWorld& world) {
+    auto& reg = world.reg();
+    for (const auto entity : reg.view<aoe::AoeProjectile>()) {
+        const auto& projectile = reg.get<aoe::AoeProjectile>(entity);
+        if (projectile.id != "arrow") {
+            reg.emplace_or_replace<AoePresentationError>(entity,
+                AoePresentationError{"no AoE2 projectile presentation: " +
+                                     projectile.id});
+            continue;
+        }
+        glm::vec2 horizontal{projectile.velocity.x, projectile.velocity.y};
+        if (glm::dot(horizontal, horizontal) <= 1e-10f &&
+            reg.valid(projectile.target.entity) &&
+            reg.all_of<aoe::AoePosition>(projectile.target.entity)) {
+            horizontal = reg.get<aoe::AoePosition>(projectile.target.entity).value -
+                glm::vec2(projectile.position);
+        }
+        const int direction = aoe2_projectile_direction(horizontal, 32);
+        const int pitch_frame = aoe2_projectile_pitch_frame(projectile.velocity, 11);
+        auto* link = reg.try_get<Aoe2ProjectilePresentationLink>(entity);
+        if (!link || !reg.valid(link->render)) {
+            SpawnOptions spawn;
+            spawn.unit_id = "p_arrow";
+            spawn.resource_kind = Aoe2ResourceKind::Graphic;
+            spawn.animation = "p_arrow_x2";
+            spawn.direction = direction;
+            spawn.direction_slot_count = 32;
+            spawn.layers = projectile.layers;
+            spawn.playback_mode = Aoe2PlaybackMode::External;
+            spawn.playback_time = static_cast<float>(pitch_frame) / 30.f;
+            spawn.playing = false;
+            spawn.loop = false;
+            const auto child = spawn_aoe2_graphic(world, spawn, Transform{});
+            reg.emplace<AoeProjectileOwner>(child, AoeProjectileOwner{entity});
+            set_parent(world, child, entity);
+            reg.emplace_or_replace<Aoe2ProjectilePresentationLink>(
+                entity, Aoe2ProjectilePresentationLink{child});
+            reg.emplace_or_replace<Aoe2ProjectilePresentationSnapshot>(entity,
+                Aoe2ProjectilePresentationSnapshot{direction, pitch_frame});
+            reg.remove<AoePresentationError>(entity);
+            continue;
+        }
+
+        const auto child = link->render;
+        if (auto* pending = reg.try_get<Aoe2SpawnRequest>(child)) {
+            pending->options.direction = direction;
+            pending->options.direction_slot_count = 32;
+            pending->options.playback_mode = Aoe2PlaybackMode::External;
+            pending->options.playback_time = static_cast<float>(pitch_frame) / 30.f;
+            pending->options.playing = false;
+            pending->options.loop = false;
+            auto& snapshot = reg.get_or_emplace<Aoe2ProjectilePresentationSnapshot>(entity);
+            snapshot.direction = direction;
+            snapshot.pitch_frame = pitch_frame;
+            continue;
+        }
+        if (const auto* error = reg.try_get<Aoe2SpawnError>(child)) {
+            reg.emplace_or_replace<AoePresentationError>(entity,
+                AoePresentationError{error->message});
+            continue;
+        }
+        auto* render = reg.try_get<Aoe2UnitRender>(child);
+        if (!render) continue;
+        auto& snapshot = reg.get_or_emplace<Aoe2ProjectilePresentationSnapshot>(entity);
+        if (snapshot.direction != direction) {
+            set_aoe2_direction(world, child, direction, 32);
+            snapshot.direction = direction;
+        }
+        if (snapshot.pitch_frame != pitch_frame) {
+            float fps = 30.f;
+            if (const auto* appearance = render->appearance.get()) {
+                if (const auto* animation = appearance->find_animation("p_arrow_x2"))
+                    fps = animation->fps;
+            }
+            set_aoe2_playback_time(world, child,
+                static_cast<float>(pitch_frame) / std::max(fps, 1.f));
+            snapshot.pitch_frame = pitch_frame;
+        }
+        set_aoe2_playback_mode(world, child, Aoe2PlaybackMode::External);
+        set_aoe2_playing(world, child, false);
+        set_aoe2_looping(world, child, false);
+    }
+}
+
+void aoe2_gameplay_presentation_system(EcsWorld& world) {
+    auto& reg = world.reg();
+    const auto& clock = world.resource<aoe::AoeGameplayClock>();
+    const auto& settings = world.resource<aoe::AoeGameplaySettings>();
+    for (auto entity : reg.view<aoe::AoeUnitDefinitionRef, aoe::AoeActionState,
+                                aoe::AoeFacing, aoe::AoePresentationOptions>()) {
+        if (reg.any_of<aoe::AoeRecyclePending, aoe::AoePooledUnit>(entity)) continue;
+        const auto& reference = reg.get<aoe::AoeUnitDefinitionRef>(entity);
+        const auto* definition = reference.value.get();
+        if (!definition) continue;
+        if (definition->presentation.backend != "aoe2") {
+            reg.emplace_or_replace<AoePresentationError>(entity,
+                AoePresentationError{"unsupported presentation backend: " +
+                    definition->presentation.backend});
+            continue;
+        }
+        const auto& state = reg.get<aoe::AoeActionState>(entity);
+        const auto& facing = reg.get<aoe::AoeFacing>(entity);
+        const int render_direction = facing.direction;
+        const auto& options = reg.get<aoe::AoePresentationOptions>(entity);
+        const std::string animation = desired_animation(*definition, state);
+        const bool frozen_idle_terminal =
+            (state.state == aoe::UnitState::Dying &&
+             definition->presentation.animation("death").empty()) ||
+            (state.state == aoe::UnitState::Disappearing &&
+             definition->presentation.animation("disappear").empty());
+        const float elapsed = frozen_idle_terminal ? 0.f : static_cast<float>(
+            aoe::aoe_action_elapsed_seconds(state, clock, settings));
+        const bool should_loop = looping(state.state);
+
+        auto* link = reg.try_get<Aoe2PresentationLink>(entity);
+        if (!link || !reg.valid(link->render)) {
+            SpawnOptions spawn;
+            spawn.unit_id = definition->presentation.resource_id;
+            spawn.animation = animation;
+            spawn.direction = render_direction;
+            spawn.direction_slot_count = facing.direction_count;
+            spawn.player_color = options.player_color;
+            spawn.layers = options.layers;
+            spawn.playback_mode = Aoe2PlaybackMode::External;
+            spawn.playback_time = elapsed;
+            spawn.playing = false;
+            spawn.loop = should_loop;
+            const auto child = spawn_aoe2_unit(world, spawn, Transform{});
+            reg.emplace<AoeGameplayOwner>(child, AoeGameplayOwner{entity});
+            set_parent(world, child, entity);
+            reg.emplace_or_replace<Aoe2PresentationLink>(entity, Aoe2PresentationLink{child});
+            reg.emplace_or_replace<Aoe2PresentationSnapshot>(entity,
+                Aoe2PresentationSnapshot{state.state, state.sequence, state.critical,
+                    render_direction, facing.direction_count, options.player_color, animation});
+            reg.remove<AoePresentationError>(entity);
+            continue;
+        }
+
+        const entt::entity child = link->render;
+        if (auto* pending = reg.try_get<Aoe2SpawnRequest>(child)) {
+            sync_pending_request(*pending, animation, render_direction,
+                                 facing.direction_count, options, elapsed, should_loop);
+            continue;
+        }
+        if (const auto* error = reg.try_get<Aoe2SpawnError>(child)) {
+            reg.emplace_or_replace<AoePresentationError>(entity,
+                AoePresentationError{error->message});
+            continue;
+        }
+        auto* render = reg.try_get<Aoe2UnitRender>(child);
+        if (!render) continue;
+        auto& snapshot = reg.get_or_emplace<Aoe2PresentationSnapshot>(entity);
+        if (snapshot.requested_animation != animation || snapshot.sequence != state.sequence ||
+            snapshot.state != state.state || snapshot.critical != state.critical) {
+            if (!request_aoe2_animation(world, child, animation)) {
+                const std::string fallback = state.state == aoe::UnitState::Attacking
+                    ? definition->presentation.animation("attack")
+                    : definition->presentation.animation("idle");
+                if (fallback.empty() || !request_aoe2_animation(world, child, fallback))
+                    reg.emplace_or_replace<AoePresentationError>(entity,
+                        AoePresentationError{"animation unavailable: " + animation});
+            }
+            snapshot.requested_animation = animation;
+            snapshot.sequence = state.sequence;
+            snapshot.state = state.state;
+            snapshot.critical = state.critical;
+        }
+        if (snapshot.direction != render_direction ||
+            snapshot.direction_count != facing.direction_count) {
+            set_aoe2_direction(world, child, render_direction, facing.direction_count);
+            snapshot.direction = render_direction;
+            snapshot.direction_count = facing.direction_count;
+        }
+        if (snapshot.player_color != options.player_color) {
+            set_aoe2_player_color(world, child, options.player_color, 0);
+            snapshot.player_color = options.player_color;
+        }
+        set_aoe2_playback_mode(world, child, Aoe2PlaybackMode::External);
+        set_aoe2_playing(world, child, false);
+        set_aoe2_looping(world, child, should_loop);
+        set_aoe2_playback_time(world, child, elapsed);
+    }
+}
+
+void Aoe2GameplayBridgePlugin::operator()(App& app) const {
+    app.add_system(Stage::PreUpdate, aoe2_gameplay_orphan_cleanup_system);
+    app.add_system(Stage::PreUpdate, aoe2_gameplay_presentation_system);
+    app.add_system(Stage::PreUpdate, aoe2_projectile_presentation_system);
+}
+
+} // namespace gld::ecs::aoe2_gameplay

@@ -28,9 +28,19 @@ struct MemoryFileSystem final : IFileSystem {
         return found == texts.end() ? std::nullopt : std::optional(found->second);
     }
     std::vector<FileSystemEntry> list(const std::string& path) const override {
-        if (path == "cache" && texts.contains("cache/u_test/manifest.json"))
-            return {{"u_test", true, false}};
-        return {};
+        std::vector<FileSystemEntry> result;
+        std::unordered_map<std::string, bool> names;
+        const std::string prefix = path + "/";
+        for (const auto& [candidate, _] : texts) {
+            if (!candidate.starts_with(prefix)) continue;
+            const auto rest = candidate.substr(prefix.size());
+            const auto slash = rest.find('/');
+            const std::string name = rest.substr(0, slash);
+            if (!name.empty()) names[name] = slash != std::string::npos;
+        }
+        for (const auto& [name, directory] : names)
+            result.push_back({name, directory, !directory});
+        return result;
     }
 };
 
@@ -100,6 +110,12 @@ int main() {
     const auto schema2 = load_test_manifest(test_manifest(2));
     assert(schema2 && schema2->schema_version == 2);
     assert(!schema2->dat_metadata);
+    auto graphic_manifest = test_manifest(2);
+    graphic_manifest["kind"] = "aoe2de_graphics";
+    graphic_manifest["id"] = "p_test";
+    const auto graphic = load_test_manifest(std::move(graphic_manifest));
+    assert(graphic && graphic->manifest_kind == "aoe2de_graphics" &&
+           !graphic->dat_metadata);
     const auto schema3 = load_test_manifest(test_manifest(3));
     assert(schema3 && schema3->schema_version == 3 && schema3->dat_metadata);
     assert(schema3->dat_metadata->unit_id == 4);
@@ -143,7 +159,13 @@ int main() {
     assert(!load_test_manifest(std::move(non_finite)));
 
     auto manager_fs = std::make_shared<MemoryFileSystem>();
-    manager_fs->texts["cache/u_test/manifest.json"] = test_manifest(3).dump();
+    manager_fs->texts["cache/units/u_test/manifest.json"] = test_manifest(3).dump();
+    auto indexed_graphic = test_manifest(2);
+    indexed_graphic["kind"] = "aoe2de_graphics";
+    indexed_graphic["id"] = "p_test";
+    manager_fs->texts["cache/graphics/p_test/manifest.json"] = indexed_graphic.dump();
+    // A legacy duplicate remains readable but cannot override the structured path.
+    manager_fs->texts["cache/u_test/manifest.json"] = test_manifest(2).dump();
     AssetServer manager_server;
     manager_server.fs = manager_fs;
     Aoe2ResourceManager manager(manager_server, "cache");
@@ -154,6 +176,11 @@ int main() {
     assert(manager.list_units()[0].civ_id == 0);
     assert(manager.list_units()[0].unit_id == 4);
     assert(manager.list_units()[0].mapping_source == "graphic_unique");
+    assert(manager.list_units()[0].manifest_path ==
+           "cache/units/u_test/manifest.json");
+    assert(manager.list_graphics().size() == 1);
+    assert(manager.list_graphics()[0].id == "p_test");
+    assert(manager.find_graphic("p_test"));
     static_assert(animation_slot_value(AnimationSlot::Invalid) == 0);
     static_assert(animation_slot_value(AnimationSlot::WalkA) == 1);
     static_assert(animation_slot_value(AnimationSlot::WalkB) == 2);
@@ -456,5 +483,65 @@ int main() {
     const auto red_alpha = detail::pack_texture_channels(
         rgba, 3, TextureChannelMapping::RedAlpha);
     assert((red_alpha == std::vector<unsigned char>{7, 255, 0, 255, 3, 0}));
+
+    // Gameplay may own animation time. Internal playback still consumes render
+    // dt, while external playback resolves frames solely from the supplied time.
+    EcsWorld playback_world;
+    auto& playback_server = playback_world.add_resource<AssetServer>();
+    playback_server.world = &playback_world;
+    playback_world.add_resource<Time>();
+    auto playback_appearance = std::make_shared<Aoe2UnitAppearance>();
+    auto make_ready_animation = [](const char* name) {
+        Animation animation;
+        animation.name = name;
+        animation.fps = 10.f;
+        animation.direction_count = 1;
+        animation.frames_per_direction = 3;
+        animation.residency = AnimationResidencyState::Ready;
+        animation.main.status = LayerStatus::Complete;
+        for (int i = 0; i < 3; ++i) {
+            Frame frame;
+            frame.direction = 0;
+            frame.frame = i;
+            frame.present = true;
+            animation.main.frames.push_back(frame);
+        }
+        return animation;
+    };
+    playback_appearance->animations.push_back(make_ready_animation("idleA"));
+    playback_appearance->animations.push_back(make_ready_animation("attackA"));
+    playback_appearance->build_animation_slots();
+    constexpr AssetId PlaybackAppearanceId = 0xA0E2u;
+    auto& playback_store = playback_world.resource_or_add<AssetManager>()
+        .store<Aoe2UnitAppearance>();
+    playback_store.set_loaded(PlaybackAppearanceId, playback_appearance);
+    auto playback_handle = playback_store.acquire(PlaybackAppearanceId);
+    const auto playback_entity = playback_world.spawn();
+    Aoe2UnitRender playback_render;
+    playback_render.appearance = playback_handle;
+    playback_render.animation = "idleA";
+    playback_render.animation_slot = AnimationSlot::IdleA;
+    playback_render.direction_slot_count = 1;
+    playback_render.current_frame = 0;
+    playback_world.reg().emplace<Aoe2UnitRender>(playback_entity, playback_render);
+    playback_world.resource<Time>().dt = 0.11f;
+    aoe2_unit_animation_system(playback_world);
+    auto& driven = playback_world.reg().get<Aoe2UnitRender>(playback_entity);
+    assert(driven.current_frame == 1 && driven.playback_time > 0.10f);
+
+    set_aoe2_playback_mode(playback_world, playback_entity, Aoe2PlaybackMode::External);
+    set_aoe2_playback_time(playback_world, playback_entity, 0.21f);
+    playback_world.resource<Time>().dt = 0.5f;
+    aoe2_unit_animation_system(playback_world);
+    assert(driven.current_frame == 2);
+    assert(std::abs(driven.playback_time - 0.21f) < 0.0001f);
+
+    driven.pending_animation = "attackA";
+    driven.pending_animation_slot = AnimationSlot::AttackA;
+    driven.transition = AnimationTransitionState::Waiting;
+    aoe2_unit_animation_system(playback_world);
+    assert(driven.animation == "attackA" && driven.current_frame == 2);
+    assert(std::abs(driven.playback_time - 0.21f) < 0.0001f);
+    playback_server.shutdown();
     return 0;
 }

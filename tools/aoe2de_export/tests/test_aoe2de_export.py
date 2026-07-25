@@ -141,7 +141,7 @@ class ExporterTests(unittest.TestCase):
             root = Path(temp)
             aoe2, _ = self.make_tree(root, [0x17] * 4)
             out_root = root / "cache"
-            old_target = out_root / "u_test"
+            old_target = out_root / "units" / "u_test"
             old_target.mkdir(parents=True)
             (old_target / "stale.txt").write_text("old", encoding="utf-8")
 
@@ -198,7 +198,7 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(0, result)
             self.assertIn("dropping 1 trailing frame", stdout)
             config = json.loads(
-                (out_root / "u_test" / "graphics" / "idleA.json").read_text()
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
             )
             self.assertEqual(5, config["source_frame_count"])
             self.assertEqual(4, config["exported_frame_count"])
@@ -219,7 +219,7 @@ class ExporterTests(unittest.TestCase):
                 "--directions", "2",
             ])
             config = json.loads(
-                (out_root / "u_test" / "graphics" / "idleA.json").read_text()
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
             )
             shadow = config["layers"]["shadow"]
             self.assertEqual("partial", shadow["status"])
@@ -238,7 +238,7 @@ class ExporterTests(unittest.TestCase):
                 "--directions", "2",
             ])
             config = json.loads(
-                (out_root / "u_test" / "graphics" / "idleA.json").read_text()
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
             )
             player = config["layers"]["player_color"]
             main = config["layers"]["main"]
@@ -260,11 +260,11 @@ class ExporterTests(unittest.TestCase):
                 "--directions", "2",
             ])
             config = json.loads(
-                (out_root / "u_test" / "graphics" / "idleA.json").read_text()
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
             )
             self.assertEqual("invalid", config["layers"]["player_color"]["status"])
             self.assertFalse(
-                (out_root / "u_test" / "graphics" / "idleA_playercolor.png").exists()
+                (out_root / "units" / "u_test" / "graphics" / "idleA_playercolor.png").exists()
             )
 
     def test_more_directions_than_frames_marks_animation_invalid(self):
@@ -279,7 +279,7 @@ class ExporterTests(unittest.TestCase):
             ])
             self.assertEqual(0, result)
             manifest = json.loads(
-                (out_root / "u_test" / "manifest.json").read_text()
+                (out_root / "units" / "u_test" / "manifest.json").read_text()
             )
             self.assertEqual("invalid", manifest["animations"]["idleA"]["status"])
             self.assertFalse(manifest["summary"]["complete"])
@@ -297,7 +297,7 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(0, result)
             self.assertIn("danceA", stdout)
             manifest = json.loads(
-                (out_root / "u_test" / "manifest.json").read_text()
+                (out_root / "units" / "u_test" / "manifest.json").read_text()
             )
             self.assertFalse(manifest["summary"]["complete"])
             self.assertEqual(["danceA"], manifest["missing_animations"])
@@ -398,7 +398,7 @@ class ExporterTests(unittest.TestCase):
                 ])
             self.assertEqual(0, result)
             manifest = json.loads(
-                (root / "cache" / "graphic_only" / "manifest.json").read_text()
+                (root / "cache" / "graphics" / "graphic_only" / "manifest.json").read_text()
             )
             self.assertEqual(2, manifest["schema_version"])
             self.assertNotIn("dat", manifest)

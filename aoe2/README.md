@@ -1,6 +1,7 @@
 # AoE2 runtime module
 
-`gld_aoe2` loads schema-v2 and schema-v3 unit caches produced by
+`gld_aoe2` loads schema-v2/schema-v3 unit caches and schema-v2 standalone
+graphic caches produced by
 `tools/aoe2de_export` and
 turns ECS unit render components into compact, AoE2-specific instanced batches.
 
@@ -15,10 +16,14 @@ resource browsers and HUDs.
 Public entry points are under `aoe2/include/aoe2`:
 
 - `Aoe2Plugin` registers the loader, resource index, animation and batching systems.
-- `Aoe2ResourceManager` scans `<cache-root>/*/manifest.json`, lists unit IDs and
-  returns asynchronous `Handle<Aoe2UnitAppearance>` values.
+- `Aoe2ResourceManager` scans `<cache-root>/units/*/manifest.json` and
+  `<cache-root>/graphics/*/manifest.json`, exposes separate unit/graphic lists,
+  and returns asynchronous `Handle<Aoe2UnitAppearance>` values. Legacy unit
+  manifests directly below the cache root remain a lower-priority fallback.
 - `spawn_aoe2_unit` creates an entity with an `Aoe2SpawnRequest`; the spawn
   system resolves it in place when its appearance becomes available.
+- `spawn_aoe2_graphic` uses the same render/batch machinery but resolves a
+  standalone `aoe2de_graphics` resource without requiring DAT metadata.
 - `Aoe2UnitRender` owns active/pending playback state. Animation changes use
   `request_aoe2_animation`: the active frame freezes until every required
   target texture is ready, then texture/UV/foot/frame commit atomically.
@@ -89,6 +94,14 @@ Typed gameplay setters enqueue precise render dirtiness. Global Transform uses
 `patch_transform` plus revisioned, parent-before-child propagation; the AoE2
 batcher consumes only `TransformChanges` and queued animation/gameplay changes,
 with a low-frequency Debug audit guarding unsupported direct component writes.
+
+Playback can also be externally driven. Set `SpawnOptions::playback_mode` (or
+`set_aoe2_playback_mode`) to `Aoe2PlaybackMode::External`, then provide the
+authoritative elapsed seconds with `set_aoe2_playback_time`. In this mode render
+`dt` never advances time. Asynchronous animation transitions preserve the supplied
+time and resolve the matching frame when the target atlas commits. The independent
+`gld_aoe2_gameplay_bridge` uses this mode so gameplay fixed ticks, rather than asset
+readiness or display frames, own attack/death timing.
 
 The `aoe2_unit_preview` example displays sixteen direction slots. Controls:
 
