@@ -1,6 +1,7 @@
 #include <aoe2/Aoe2Assets.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <cstdio>
 #include <stdexcept>
@@ -89,6 +90,120 @@ void validate_player_layout(const Layer& main, const Layer& mask) {
             a.source_ordinal != b.source_ordinal || a.foot != b.foot)
             throw std::runtime_error("player-color frame layout differs from main");
     }
+}
+
+float finite_number(const json& value, const char* name) {
+    const float result = value.get<float>();
+    if (!std::isfinite(result))
+        throw std::runtime_error(std::string(name) + " must be finite");
+    return result;
+}
+
+float non_negative_number(const json& value, const char* name) {
+    const float result = finite_number(value, name);
+    if (result < 0.f)
+        throw std::runtime_error(std::string(name) + " must be non-negative");
+    return result;
+}
+
+int sentinel_id(const json& value, const char* name) {
+    const int result = value.get<int>();
+    if (result < -1)
+        throw std::runtime_error(std::string(name) + " must be -1 or non-negative");
+    return result;
+}
+
+glm::vec3 parse_vec3(const json& value, const char* name, bool non_negative = false) {
+    if (!value.is_object() || value.size() != 3 ||
+        !value.contains("x") || !value.contains("y") || !value.contains("z"))
+        throw std::runtime_error(std::string(name) + " must contain exactly x, y and z");
+    glm::vec3 result{
+        finite_number(value.at("x"), name),
+        finite_number(value.at("y"), name),
+        finite_number(value.at("z"), name)
+    };
+    if (non_negative && (result.x < 0.f || result.y < 0.f || result.z < 0.f))
+        throw std::runtime_error(std::string(name) + " components must be non-negative");
+    return result;
+}
+
+Aoe2UnitDatMetadata parse_dat_metadata(const json& value) {
+    if (!value.is_object()) throw std::runtime_error("dat must be an object");
+    Aoe2UnitDatMetadata metadata;
+    metadata.source = value.at("source").get<std::string>();
+    metadata.civ_id = sentinel_id(value.at("civ_id"), "dat.civ_id");
+    metadata.unit_id = sentinel_id(value.at("unit_id"), "dat.unit_id");
+    metadata.unit_type = value.at("unit_type").get<int>();
+    if (metadata.civ_id < 0 || metadata.unit_id < 0 || metadata.unit_type < 0)
+        throw std::runtime_error("DAT civ, unit and type must be non-negative");
+    metadata.mapping_source = value.at("mapping_source").get<std::string>();
+    if (metadata.mapping_source != "explicit" && metadata.mapping_source != "map" &&
+        metadata.mapping_source != "graphic_unique")
+        throw std::runtime_error("invalid DAT mapping_source");
+    metadata.collision_size = parse_vec3(
+        value.at("collision_size"), "dat.collision_size", true);
+    if (value.contains("outline_size"))
+        metadata.outline_size = parse_vec3(
+            value.at("outline_size"), "dat.outline_size", true);
+
+    if (value.contains("combat")) {
+        const auto& source = value.at("combat");
+        if (!source.is_object()) throw std::runtime_error("dat.combat must be an object");
+        Aoe2CombatMetadata combat;
+        combat.projectile_unit_id = sentinel_id(
+            source.at("projectile_unit_id"), "combat.projectile_unit_id");
+        combat.frame_delay = source.at("frame_delay").get<int>();
+        if (combat.frame_delay < 0) throw std::runtime_error("combat.frame_delay must be non-negative");
+        combat.weapon_offset = parse_vec3(source.at("weapon_offset"), "combat.weapon_offset");
+        combat.accuracy_percent = source.at("accuracy_percent").get<int>();
+        if (combat.accuracy_percent < 0 || combat.accuracy_percent > 100)
+            throw std::runtime_error("combat.accuracy_percent must be in 0..100");
+        combat.accuracy_dispersion = non_negative_number(
+            source.at("accuracy_dispersion"), "combat.accuracy_dispersion");
+        combat.min_range = non_negative_number(source.at("min_range"), "combat.min_range");
+        combat.max_range = non_negative_number(source.at("max_range"), "combat.max_range");
+        if (combat.min_range > combat.max_range)
+            throw std::runtime_error("combat.min_range exceeds max_range");
+        combat.reload_time = non_negative_number(source.at("reload_time"), "combat.reload_time");
+        combat.blast_width = non_negative_number(source.at("blast_width"), "combat.blast_width");
+        combat.blast_attack_level = source.at("blast_attack_level").get<int>();
+        if (combat.blast_attack_level < 0)
+            throw std::runtime_error("combat.blast_attack_level must be non-negative");
+        combat.attack_graphic_id = sentinel_id(
+            source.at("attack_graphic_id"), "combat.attack_graphic_id");
+
+        const bool has_creatable = source.contains("secondary_projectile_unit_id") ||
+            source.contains("projectile_min_count") || source.contains("projectile_max_count") ||
+            source.contains("projectile_spawning_area");
+        if (has_creatable) {
+            if (!source.contains("secondary_projectile_unit_id") ||
+                !source.contains("projectile_min_count") ||
+                !source.contains("projectile_max_count") ||
+                !source.contains("projectile_spawning_area"))
+                throw std::runtime_error("combat Creatable projectile fields must be complete");
+            combat.secondary_projectile_unit_id = sentinel_id(
+                source.at("secondary_projectile_unit_id"),
+                "combat.secondary_projectile_unit_id");
+            combat.projectile_min_count = non_negative_number(
+                source.at("projectile_min_count"), "combat.projectile_min_count");
+            combat.projectile_max_count = source.at("projectile_max_count").get<int>();
+            if (*combat.projectile_max_count < 0 ||
+                *combat.projectile_min_count > static_cast<float>(*combat.projectile_max_count))
+                throw std::runtime_error("invalid combat projectile count range");
+            const auto& area = source.at("projectile_spawning_area");
+            if (!area.is_object() || area.size() != 3 || !area.contains("width") ||
+                !area.contains("length") || !area.contains("randomness"))
+                throw std::runtime_error(
+                    "combat.projectile_spawning_area must contain width, length and randomness");
+            combat.projectile_spawning_area = glm::vec3{
+                non_negative_number(area.at("width"), "projectile area width"),
+                non_negative_number(area.at("length"), "projectile area length"),
+                non_negative_number(area.at("randomness"), "projectile area randomness")
+            };
+        }
+        metadata.combat = combat;
+    }
+    return metadata;
 }
 } // namespace
 
@@ -231,12 +346,17 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
         const auto manifest_text = fs.read_text(desc.manifest_path());
         if (!manifest_text) return nullptr;
         const json manifest = json::parse(*manifest_text);
-        if (manifest.at("schema_version").get<int>() != 2 ||
+        const int schema_version = manifest.at("schema_version").get<int>();
+        if ((schema_version != 2 && schema_version != 3) ||
             manifest.at("kind").get<std::string>() != "aoe2de_unit") return nullptr;
+        if (schema_version == 3 && !manifest.contains("dat"))
+            throw std::runtime_error("schema 3 unit manifest is missing dat metadata");
 
         auto appearance = std::make_shared<Aoe2UnitAppearance>();
-        appearance->schema_version = 2;
+        appearance->schema_version = schema_version;
         appearance->id = manifest.at("id").get<std::string>();
+        if (schema_version == 3)
+            appearance->dat_metadata = parse_dat_metadata(manifest.at("dat"));
         const auto player_color_format = manifest.at("export_settings")
             .at("player_color").at("format").get<std::string>();
         if (player_color_format != "r8_subcolor_alpha_binary")

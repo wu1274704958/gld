@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -168,6 +169,38 @@ struct Animation {
     const Frame* get(const Layer& layer, int direction, int frame) const;
 };
 
+struct Aoe2CombatMetadata {
+    int projectile_unit_id = -1;
+    std::optional<int> secondary_projectile_unit_id;
+    int frame_delay = 0;
+    glm::vec3 weapon_offset{0.f};
+    int accuracy_percent = 0;
+    float accuracy_dispersion = 0.f;
+    float min_range = 0.f;
+    float max_range = 0.f;
+    float reload_time = 0.f;
+    float blast_width = 0.f;
+    int blast_attack_level = 0;
+    int attack_graphic_id = -1;
+    std::optional<float> projectile_min_count;
+    std::optional<int> projectile_max_count;
+    std::optional<glm::vec3> projectile_spawning_area;
+};
+
+struct Aoe2UnitDatMetadata {
+    std::string source;
+    int civ_id = 0;
+    int unit_id = -1;
+    int unit_type = 0;
+    std::string mapping_source;
+    // Raw DAT collision_size_x/y/z. X/Y are ground-plane radii; Z is height.
+    glm::vec3 collision_size{0.f};
+    // Optional additive schema-3 field. Raw DAT selection/outline extents;
+    // this is not a replacement for gameplay collision or a Sprite bbox.
+    std::optional<glm::vec3> outline_size;
+    std::optional<Aoe2CombatMetadata> combat;
+};
+
 Aoe2ResolvedFrameTable build_resolved_frame_table(const Animation& animation);
 
 struct Aoe2UnitAppearance {
@@ -183,6 +216,7 @@ struct Aoe2UnitAppearance {
     std::vector<std::string> extension_animation_names_storage;
     std::vector<std::string> missing_animations;
     std::vector<std::string> warnings;
+    std::optional<Aoe2UnitDatMetadata> dat_metadata;
 
     void build_animation_slots();
     AnimationSlot find_animation_slot(const std::string& name) const;

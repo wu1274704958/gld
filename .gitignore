@@ -24,3 +24,10 @@ android/gld/.gradle/**
 
 res/99/**
 res/aoe2de_cache/**
+
+# Local Python/tool build products (some legacy CPython 3.13 artifacts are
+# already tracked, but other interpreter versions must not dirty the tree).
+__pycache__/
+*.pyc
+/tools/aoe2de_export/sld/Debug/
+/tools/aoe2de_export/sld/*.pyd

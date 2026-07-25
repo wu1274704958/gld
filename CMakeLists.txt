@@ -113,6 +113,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
         target_include_directories(aoe2_runtime_tests PRIVATE ${CMAKE_SOURCE_DIR}/aoe2/include)
         target_link_libraries(aoe2_runtime_tests PRIVATE gld_aoe2 EnTT::EnTT)
         add_test(NAME aoe2_runtime_tests COMMAND aoe2_runtime_tests)
+        add_executable(gizmo_tests
+            aoe2/tests/GizmoTests.cpp
+            src/EcsGizmoGeometry.cpp)
+        target_link_libraries(gizmo_tests PRIVATE EnTT::EnTT)
+        add_test(NAME gizmo_tests COMMAND gizmo_tests)
     endif()
 
     message(${ALL_SOURCE_FILES})
@@ -180,6 +185,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR ecs_audio_fft FILES main.cpp)
     CreateExample(DIR aoe2_unit_preview FILES main.cpp)
     target_link_libraries(aoe2_unit_preview gld_aoe2)
+
+    CreateExample(DIR aoe2_unit_metadata_preview FILES main.cpp)
+    target_link_libraries(aoe2_unit_metadata_preview gld_aoe2)
 
     CreateExample(DIR aoe2_unit_benchmark FILES main.cpp)
     target_link_libraries(aoe2_unit_benchmark gld_aoe2)

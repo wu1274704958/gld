@@ -20,10 +20,21 @@ void Aoe2ResourceManager::refresh() {
         if (!text) continue;
         try {
             const auto j = nlohmann::json::parse(*text);
-            if (j.at("schema_version").get<int>() != 2 ||
+            const int schema_version = j.at("schema_version").get<int>();
+            if ((schema_version != 2 && schema_version != 3) ||
                 j.at("kind").get<std::string>() != "aoe2de_unit") continue;
             UnitRecord record;
+            record.schema_version = schema_version;
             record.id = j.at("id").get<std::string>();
+            if (schema_version == 3) {
+                const auto& dat = j.at("dat");
+                record.metadata_available = true;
+                record.civ_id = dat.at("civ_id").get<int>();
+                record.unit_id = dat.at("unit_id").get<int>();
+                record.mapping_source = dat.at("mapping_source").get<std::string>();
+                if (record.civ_id < 0 || record.unit_id < 0)
+                    throw std::runtime_error("invalid negative DAT civ/unit id");
+            }
             if (!ids.insert(record.id).second) {
                 std::fprintf(stderr, "[aoe2] duplicate unit id ignored: %s\n", record.id.c_str());
                 continue;

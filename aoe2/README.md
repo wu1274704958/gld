@@ -1,7 +1,16 @@
 # AoE2 runtime module
 
-`gld_aoe2` loads schema-v2 unit caches produced by `tools/aoe2de_export` and
+`gld_aoe2` loads schema-v2 and schema-v3 unit caches produced by
+`tools/aoe2de_export` and
 turns ECS unit render components into compact, AoE2-specific instanced batches.
+
+Schema 3 adds shared `Aoe2UnitDatMetadata` to each appearance: civ/unit/type,
+raw collision size (X/Y radii and Z height) and optional ranged-combat/projectile
+metadata. Schema 2 stays
+fully compatible and exposes `dat_metadata == std::nullopt`. Metadata is not
+copied into the per-unit instance ABI. `Aoe2ResourceManager::UnitRecord` exposes
+schema, metadata availability, civ/unit IDs and mapping source for lightweight
+resource browsers and HUDs.
 
 Public entry points are under `aoe2/include/aoe2`:
 
@@ -90,6 +99,20 @@ The `aoe2_unit_preview` example displays sixteen direction slots. Controls:
 - R: restart animation
 - M: normal/mask/subcolour debug views
 - F5: rescan the cache root
+
+`aoe2_unit_metadata_preview` displays one unit with a generic batched Gizmo
+overlay. White is the SLD foot/gameplay origin; green is the projected collision
+ellipsoid; yellow is the weapon-offset arrow; red is the projectile spawn point;
+green is the DAT gameplay collision, while magenta is the optional DAT
+selection/outline extent; neither is inferred from the Sprite pixels. Yellow is
+the static foot-to-spawn offset and red is its endpoint. Those launch markers
+are bright only on `attackA`'s DAT `frame_delay` and remain dim on other frames,
+because DAT does not provide a per-frame weapon socket. Orange is a facing
+direction derived by the example, not a DAT projectile trajectory. Cyan is a
+derived target-center reference and is explicitly not presented as a DAT impact
+socket. Controls are Left/Right unit, Up/Down animation, A/D facing, Space
+pause, F5 rescan and Escape quit. Schema-2 units still render and show only the
+white marker with `DAT metadata unavailable`.
 
 `aoe2_unit_benchmark` remains interactive by default. Pass
 `--duration <seconds>` to print the last HUD sample and close normally, which is

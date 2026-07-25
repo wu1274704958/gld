@@ -16,7 +16,8 @@ from struct import Struct
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+GRAPHICS_SCHEMA_VERSION = 2
+UNIT_SCHEMA_VERSION = 3
 GRAPHIC_NAME_RE = re.compile(
     r"^(?P<prefix>.+)_(?P<action>[A-Za-z0-9]+)_(?P<scale>x[12])\.sld$"
 )
@@ -24,6 +25,8 @@ RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DEFAULT_DIRECTIONS = 16
 DEFAULT_FPS = 30.0
 LIST_PAGE_SIZE = 50
+DEFAULT_DAT_RELATIVE = Path("resources/_common/dat/empires2_x2_p1.dat")
+DEFAULT_UNIT_MAP = Path(__file__).resolve().with_name("unit_dat_map.json")
 
 SLD_HEADER = Struct("<4s4HI")
 SLD_FRAME_HEADER = Struct("<4H2BH")
@@ -45,6 +48,15 @@ DECODED_LAYERS = {
 
 class ExportError(ValueError):
     """An individual animation cannot be exported safely."""
+
+
+@dataclass(frozen=True)
+class UnitMatch:
+    civ_id: int
+    unit_id: int
+    unit: Any
+    graphics: tuple[tuple[int, str], ...]
+    mapping_source: str
 
 
 @dataclass
@@ -76,6 +88,259 @@ class AtlasLayout:
 
 def graphics_dir(aoe2: Path) -> Path:
     return aoe2 / "resources" / "_common" / "drs" / "graphics"
+
+
+def dat_path_for(aoe2: Path) -> Path:
+    return aoe2 / DEFAULT_DAT_RELATIVE
+
+
+def load_dat(path: Path):
+    try:
+        from genieutils.datfile import DatFile
+    except ImportError as exc:
+        raise SystemExit(
+            "AoE2 DAT export requires genieutils-py. Install it with:\n"
+            "  python -m pip install genieutils-py"
+        ) from exc
+    if not path.is_file():
+        raise SystemExit(f"DAT file does not exist: {path}")
+    try:
+        return DatFile.parse(path)
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"failed to parse DAT file {path}: {exc}") from exc
+
+
+def load_unit_map(path: Path) -> dict[str, dict[str, int]]:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"failed to read unit map {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"unit map root must be a JSON object: {path}")
+    result: dict[str, dict[str, int]] = {}
+    for prefix, entry in value.items():
+        if (not isinstance(prefix, str) or not isinstance(entry, dict) or
+                set(entry) != {"civ_id", "unit_id"} or
+                not all(isinstance(entry[key], int) and entry[key] >= 0
+                        for key in ("civ_id", "unit_id"))):
+            raise SystemExit(
+                f"invalid unit map entry for {prefix!r}; expected "
+                '{"civ_id": non-negative int, "unit_id": non-negative int}'
+            )
+        result[prefix] = entry
+    return result
+
+
+def graphic_prefix(file_name: str) -> str | None:
+    """Return the SLD unit prefix from DAT filenames with or without .sld."""
+    name = Path(str(file_name).replace("\\", "/")).name
+    if name.lower().endswith(".sld"):
+        name = name[:-4]
+    match = re.match(r"^(?P<prefix>.+)_[^_]+_x[12]$", name, re.IGNORECASE)
+    return match.group("prefix") if match else None
+
+
+def _graphic_id_values(unit: Any) -> list[int]:
+    values: list[int] = []
+    for name in ("standing_graphic", "dying_graphic", "undead_graphic"):
+        value = getattr(unit, name, None)
+        if isinstance(value, (tuple, list)):
+            values.extend(item for item in value if isinstance(item, int))
+        elif isinstance(value, int):
+            values.append(value)
+    moving = getattr(unit, "dead_fish", None)
+    if moving is not None:
+        for name in ("walking_graphic", "running_graphic"):
+            value = getattr(moving, name, None)
+            if isinstance(value, int):
+                values.append(value)
+    combat = getattr(unit, "type_50", None)
+    if combat is not None:
+        for name in ("attack_graphic", "attack_graphic_2"):
+            value = getattr(combat, name, None)
+            if isinstance(value, int):
+                values.append(value)
+    for damage in getattr(unit, "damage_graphics", ()) or ():
+        for name in ("graphic_id", "graphic"):
+            value = getattr(damage, name, None)
+            if isinstance(value, int):
+                values.append(value)
+                break
+    return list(dict.fromkeys(value for value in values if value >= 0))
+
+
+def referenced_graphics(dat: Any, unit: Any) -> tuple[tuple[int, str], ...]:
+    result: list[tuple[int, str]] = []
+    graphics = getattr(dat, "graphics", ())
+    for graphic_id in _graphic_id_values(unit):
+        if graphic_id >= len(graphics):
+            continue
+        file_name = str(getattr(graphics[graphic_id], "file_name", ""))
+        if file_name:
+            result.append((graphic_id, file_name))
+    return tuple(result)
+
+
+def get_dat_unit(dat: Any, civ_id: int, unit_id: int) -> Any:
+    civs = getattr(dat, "civs", ())
+    if civ_id < 0 or civ_id >= len(civs):
+        raise SystemExit(f"DAT civ id {civ_id} is out of range 0..{len(civs) - 1}")
+    units = getattr(civs[civ_id], "units", ())
+    if unit_id < 0 or unit_id >= len(units):
+        raise SystemExit(
+            f"DAT unit id {unit_id} is out of range for civ {civ_id} "
+            f"(0..{len(units) - 1})"
+        )
+    unit = units[unit_id]
+    if unit is None:
+        raise SystemExit(f"DAT unit {unit_id} does not exist for civ {civ_id}")
+    return unit
+
+
+def _match_warning(prefix: str, match: UnitMatch) -> None:
+    if any(graphic_prefix(name) == prefix for _id, name in match.graphics):
+        return
+    names = ", ".join(name for _id, name in match.graphics) or "no referenced graphics"
+    print(
+        f"warning: DAT civ {match.civ_id} unit {match.unit_id} "
+        f"({getattr(match.unit, 'name', '')}) does not reference graphic prefix "
+        f"'{prefix}' ({names}); continuing because {match.mapping_source} mapping was requested"
+    )
+
+
+def resolve_dat_unit(dat: Any, prefix: str, civ_id: int,
+                     unit_id: int | None, unit_map: dict[str, dict[str, int]]) -> UnitMatch:
+    if unit_id is not None:
+        unit = get_dat_unit(dat, civ_id, unit_id)
+        match = UnitMatch(civ_id, unit_id, unit, referenced_graphics(dat, unit), "explicit")
+        _match_warning(prefix, match)
+        return match
+
+    if prefix in unit_map:
+        entry = unit_map[prefix]
+        mapped_civ, mapped_unit = entry["civ_id"], entry["unit_id"]
+        unit = get_dat_unit(dat, mapped_civ, mapped_unit)
+        match = UnitMatch(mapped_civ, mapped_unit, unit,
+                          referenced_graphics(dat, unit), "map")
+        _match_warning(prefix, match)
+        return match
+
+    civs = getattr(dat, "civs", ())
+    if civ_id < 0 or civ_id >= len(civs):
+        raise SystemExit(f"DAT civ id {civ_id} is out of range 0..{len(civs) - 1}")
+    candidates: list[UnitMatch] = []
+    for index, unit in enumerate(getattr(civs[civ_id], "units", ())):
+        if unit is None:
+            continue
+        graphics = referenced_graphics(dat, unit)
+        matched = tuple(item for item in graphics if graphic_prefix(item[1]) == prefix)
+        if matched:
+            candidates.append(UnitMatch(civ_id, index, unit, matched, "graphic_unique"))
+    if len(candidates) == 1:
+        return candidates[0]
+
+    lines = [
+        f"cannot uniquely map graphic prefix '{prefix}' to a gameplay unit "
+        f"in civ {civ_id}: {len(candidates)} candidate(s)"
+    ]
+    for candidate in candidates:
+        graphics = ", ".join(
+            f"{graphic_id}:{name}" for graphic_id, name in candidate.graphics
+        )
+        lines.append(
+            f"  civ={candidate.civ_id} unit={candidate.unit_id} "
+            f"name={getattr(candidate.unit, 'name', '')!r} graphics=[{graphics}]"
+        )
+    lines.append("Use --unit-id (and --civ-id) or add an entry to --unit-map.")
+    raise SystemExit("\n".join(lines))
+
+
+def _number(value: Any) -> int | float:
+    return value if isinstance(value, int) and not isinstance(value, bool) else float(value)
+
+
+def _non_negative_finite(value: Any, name: str) -> float:
+    result = float(value)
+    if not math.isfinite(result) or result < 0.0:
+        raise ExportError(f"{name} must be finite and non-negative, got {value!r}")
+    return result
+
+
+def serialize_dat_metadata(dat_path: Path, aoe2: Path, match: UnitMatch) -> dict[str, Any]:
+    unit = match.unit
+    source: str
+    try:
+        source = dat_path.resolve().relative_to(aoe2.resolve()).as_posix()
+    except ValueError:
+        source = dat_path.as_posix()
+    value: dict[str, Any] = {
+        "source": source,
+        "civ_id": match.civ_id,
+        "unit_id": match.unit_id,
+        "unit_type": int(getattr(unit, "type")),
+        "mapping_source": match.mapping_source,
+        "collision_size": {
+            "x": float(getattr(unit, "collision_size_x")),
+            "y": float(getattr(unit, "collision_size_y")),
+            "z": float(getattr(unit, "collision_size_z")),
+        },
+        "outline_size": {
+            "x": _non_negative_finite(getattr(unit, "outline_size_x"),
+                                       "DAT outline_size_x"),
+            "y": _non_negative_finite(getattr(unit, "outline_size_y"),
+                                       "DAT outline_size_y"),
+            "z": _non_negative_finite(getattr(unit, "outline_size_z"),
+                                       "DAT outline_size_z"),
+        },
+    }
+    combat = getattr(unit, "type_50", None)
+    creatable = getattr(unit, "creatable", None)
+    if combat is not None:
+        displacement = getattr(combat, "graphic_displacement")
+        record: dict[str, Any] = {
+            "projectile_unit_id": int(getattr(combat, "projectile_unit_id")),
+            "frame_delay": int(getattr(combat, "frame_delay")),
+            "weapon_offset": {
+                "x": float(displacement[0]), "y": float(displacement[1]),
+                "z": float(displacement[2]),
+            },
+            "accuracy_percent": int(getattr(combat, "accuracy_percent")),
+            "accuracy_dispersion": float(getattr(combat, "accuracy_dispersion")),
+            "min_range": float(getattr(combat, "min_range")),
+            "max_range": float(getattr(combat, "max_range")),
+            "reload_time": float(getattr(combat, "reload_time")),
+            "blast_width": float(getattr(combat, "blast_width")),
+            "blast_attack_level": int(getattr(combat, "blast_attack_level")),
+            "attack_graphic_id": int(getattr(combat, "attack_graphic")),
+        }
+        if creatable is not None:
+            area = getattr(creatable, "projectile_spawning_area")
+            record.update({
+                "secondary_projectile_unit_id": int(
+                    getattr(creatable, "secondary_projectile_unit")),
+                "projectile_min_count": _number(getattr(creatable, "total_projectiles")),
+                "projectile_max_count": int(getattr(creatable, "max_total_projectiles")),
+                "projectile_spawning_area": {
+                    "width": float(area[0]), "length": float(area[1]),
+                    "randomness": float(area[2]),
+                },
+            })
+        value["combat"] = record
+    elif creatable is not None:
+        area = getattr(creatable, "projectile_spawning_area")
+        value["creatable"] = {
+            "secondary_projectile_unit_id": int(
+                getattr(creatable, "secondary_projectile_unit")),
+            "projectile_min_count": _number(getattr(creatable, "total_projectiles")),
+            "projectile_max_count": int(getattr(creatable, "max_total_projectiles")),
+            "projectile_spawning_area": {
+                "width": float(area[0]), "length": float(area[1]),
+                "randomness": float(area[2]),
+            },
+        }
+    return value
 
 
 def parse_graphic_name(name: str) -> tuple[str, str, str] | None:
@@ -184,6 +449,16 @@ def positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError("must be an integer") from exc
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
     return parsed
 
 
@@ -655,7 +930,7 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
     parsed = parse_graphic_name(source.name)
     actual_scale = parsed[2] if parsed else None
     config = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": GRAPHICS_SCHEMA_VERSION,
         "name": name,
         "source": source.name,
         "scale": actual_scale,
@@ -776,9 +1051,15 @@ def export_unit(args) -> int:
         else:
             sources[action] = source
 
+    dat_path = args.dat or dat_path_for(args.aoe2)
+    dat = load_dat(dat_path)
+    unit_map = load_unit_map(args.unit_map)
+    dat_match = resolve_dat_unit(dat, args.unit, args.civ_id, args.unit_id, unit_map)
+    dat_metadata = serialize_dat_metadata(dat_path, args.aoe2, dat_match)
+
     out_dir = clean_target(args.out, resource_id)
     manifest = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": UNIT_SCHEMA_VERSION,
         "kind": "aoe2de_unit",
         "id": resource_id,
         "unit": args.unit,
@@ -787,6 +1068,7 @@ def export_unit(args) -> int:
         "requested_animations": requested,
         "discovered_animations": discovered,
         "missing_animations": missing,
+        "dat": dat_metadata,
         "animations": {},
     }
     for action in missing:
@@ -831,7 +1113,7 @@ def export_graphics(args) -> int:
     ]
     out_dir = clean_target(args.out, args.name)
     manifest = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": GRAPHICS_SCHEMA_VERSION,
         "kind": "aoe2de_graphics",
         "id": args.name,
         "unit": None,
@@ -904,9 +1186,16 @@ def parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--aoe2", type=Path,
-        default=Path(r"D:\program1\steam\steamapps\common\AoE2DE")
+        default=Path(r"F:\SteamLibrary\steamapps\common\AoE2DE")
     )
     parser.add_argument("--openage", type=Path, default=Path(r"E:\code\openage"))
+    parser.add_argument(
+        "--dat", type=Path,
+        help="AoE2 gameplay DAT (defaults to resources/_common/dat under --aoe2)"
+    )
+    parser.add_argument("--civ-id", type=non_negative_int, default=0)
+    parser.add_argument("--unit-id", type=non_negative_int)
+    parser.add_argument("--unit-map", type=Path, default=DEFAULT_UNIT_MAP)
     parser.add_argument("--out", type=Path, help="cache root directory")
     parser.add_argument("--name", help="resource id under --out")
     parser.add_argument("--list", nargs="?", const="*", metavar="PATTERN")

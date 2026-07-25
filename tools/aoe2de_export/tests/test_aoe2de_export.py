@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy
@@ -56,6 +57,35 @@ class FakeTexture:
         ]
 
 
+def fake_dat(prefix: str = "u_test"):
+    combat = SimpleNamespace(
+        projectile_unit_id=3, frame_delay=5,
+        graphic_displacement=(0.0, 0.16, 0.8), accuracy_percent=80,
+        accuracy_dispersion=0.5, min_range=0.0, max_range=4.0,
+        reload_time=2.0, blast_width=0.0, blast_attack_level=0,
+        attack_graphic=1, attack_graphic_2=-1,
+    )
+    creatable = SimpleNamespace(
+        secondary_projectile_unit=-1, total_projectiles=1.0,
+        max_total_projectiles=1, projectile_spawning_area=(0.0, 0.0, 0.0),
+    )
+    unit = SimpleNamespace(
+        id=4, name="TEST", type=70, standing_graphic=(0, -1),
+        dying_graphic=-1, undead_graphic=-1, dead_fish=None,
+        damage_graphics=[], collision_size_x=0.2, collision_size_y=0.2,
+        collision_size_z=0.8, outline_size_x=0.3, outline_size_y=0.4,
+        outline_size_z=0.9, type_50=combat, creatable=creatable,
+    )
+    graphics = [
+        SimpleNamespace(file_name=f"{prefix}_idleA_x2"),
+        SimpleNamespace(file_name=f"{prefix}_attackA_x2"),
+    ]
+    return SimpleNamespace(
+        graphics=graphics,
+        civs=[SimpleNamespace(units=[None, None, None, None, unit])],
+    )
+
+
 def make_sld(frame_types: list[int]) -> bytes:
     data = bytearray(exporter.SLD_HEADER.pack(
         b"SLD0", 1, len(frame_types), 0, 0, 0
@@ -86,7 +116,8 @@ class ExporterTests(unittest.TestCase):
 
     def run_fake(self, argv: list[str]):
         stdout = io.StringIO()
-        with mock.patch.object(exporter, "load_openage", return_value=(FakeSLD, FakeTexture)):
+        with mock.patch.object(exporter, "load_openage", return_value=(FakeSLD, FakeTexture)), \
+             mock.patch.object(exporter, "load_dat", return_value=fake_dat()):
             with contextlib.redirect_stdout(stdout):
                 result = exporter.main(argv)
         return result, stdout.getvalue()
@@ -122,7 +153,13 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(0, result)
             self.assertFalse((old_target / "stale.txt").exists())
             manifest = json.loads((old_target / "manifest.json").read_text())
-            self.assertEqual(2, manifest["schema_version"])
+            self.assertEqual(3, manifest["schema_version"])
+            self.assertEqual("graphic_unique", manifest["dat"]["mapping_source"])
+            self.assertEqual(4, manifest["dat"]["unit_id"])
+            self.assertEqual(
+                {"x": 0.0, "y": 0.16, "z": 0.8},
+                manifest["dat"]["combat"]["weapon_offset"],
+            )
             self.assertTrue(manifest["summary"]["complete"])
             record = manifest["animations"]["idleA"]
             self.assertEqual("exported", record["status"])
@@ -275,6 +312,109 @@ class ExporterTests(unittest.TestCase):
                     "--aoe2", str(aoe2), "--out", str(root / "cache"),
                     "--graphics", source.name,
                 ])
+
+    def test_dat_mapping_priority_explicit_map_and_unique(self):
+        dat = fake_dat()
+        unique = exporter.resolve_dat_unit(dat, "u_test", 0, None, {})
+        self.assertEqual((0, 4, "graphic_unique"),
+                         (unique.civ_id, unique.unit_id, unique.mapping_source))
+        mapped = exporter.resolve_dat_unit(
+            dat, "shared_special", 0, None,
+            {"shared_special": {"civ_id": 0, "unit_id": 4}},
+        )
+        self.assertEqual("map", mapped.mapping_source)
+        explicit = exporter.resolve_dat_unit(
+            dat, "shared_special", 0, 4,
+            {"shared_special": {"civ_id": 0, "unit_id": 999}},
+        )
+        self.assertEqual((4, "explicit"), (explicit.unit_id, explicit.mapping_source))
+
+    def test_dat_mapping_zero_and_ambiguous_candidates_are_diagnostic(self):
+        dat = fake_dat()
+        with self.assertRaisesRegex(SystemExit, "0 candidate"):
+            exporter.resolve_dat_unit(dat, "missing", 0, None, {})
+        duplicate = SimpleNamespace(**vars(dat.civs[0].units[4]))
+        duplicate.name = "OTHER"
+        dat.civs[0].units.append(duplicate)
+        with self.assertRaisesRegex(SystemExit, "2 candidate") as raised:
+            exporter.resolve_dat_unit(dat, "u_test", 0, None, {})
+        message = str(raised.exception)
+        self.assertIn("unit=4", message)
+        self.assertIn("unit=5", message)
+        self.assertIn("u_test_idleA_x2", message)
+
+    def test_dat_metadata_serializes_combat_creatable_and_sentinels(self):
+        dat = fake_dat()
+        match = exporter.resolve_dat_unit(dat, "u_test", 0, None, {})
+        metadata = exporter.serialize_dat_metadata(
+            Path("aoe2/resources/_common/dat/empires2_x2_p1.dat"),
+            Path("aoe2"), match,
+        )
+        self.assertEqual({"x": 0.2, "y": 0.2, "z": 0.8},
+                         metadata["collision_size"])
+        self.assertEqual({"x": 0.3, "y": 0.4, "z": 0.9},
+                         metadata["outline_size"])
+        combat = metadata["combat"]
+        self.assertEqual(-1, combat["secondary_projectile_unit_id"])
+        self.assertEqual(1, combat["projectile_min_count"])
+        self.assertEqual(
+            {"width": 0.0, "length": 0.0, "randomness": 0.0},
+            combat["projectile_spawning_area"],
+        )
+        dat.civs[0].units[4].type_50 = None
+        dat.civs[0].units[4].creatable = None
+        without_optional = exporter.serialize_dat_metadata(
+            Path("external.dat"), Path("aoe2"), match,
+        )
+        self.assertNotIn("combat", without_optional)
+        self.assertNotIn("creatable", without_optional)
+
+    def test_dat_metadata_rejects_invalid_outline(self):
+        dat = fake_dat()
+        match = exporter.resolve_dat_unit(dat, "u_test", 0, None, {})
+        for attribute, value in (("outline_size_x", -0.1),
+                                 ("outline_size_y", float("nan")),
+                                 ("outline_size_z", float("inf"))):
+            unit = dat.civs[0].units[4]
+            original = getattr(unit, attribute)
+            setattr(unit, attribute, value)
+            with self.assertRaisesRegex(exporter.ExportError,
+                                        "finite and non-negative"):
+                exporter.serialize_dat_metadata(Path("test.dat"), Path("."), match)
+            setattr(unit, attribute, original)
+
+    def test_graphics_export_never_loads_dat(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2, source = self.make_tree(root, [0x17] * 4)
+            with mock.patch.object(exporter, "load_openage",
+                                   return_value=(FakeSLD, FakeTexture)), \
+                 mock.patch.object(exporter, "load_dat",
+                                   side_effect=AssertionError("DAT was loaded")):
+                result = exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--name", "graphic_only", "--graphics", source.name,
+                    "--directions", "2",
+                ])
+            self.assertEqual(0, result)
+            manifest = json.loads(
+                (root / "cache" / "graphic_only" / "manifest.json").read_text()
+            )
+            self.assertEqual(2, manifest["schema_version"])
+            self.assertNotIn("dat", manifest)
+
+    def test_missing_genieutils_has_actionable_install_hint(self):
+        original_import = __import__
+
+        def import_without_genieutils(name, *args, **kwargs):
+            if name.startswith("genieutils"):
+                raise ImportError("not installed")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=import_without_genieutils):
+            with self.assertRaisesRegex(
+                    SystemExit, r"python -m pip install genieutils-py"):
+                exporter.load_dat(Path("unused.dat"))
 
 
 if __name__ == "__main__":

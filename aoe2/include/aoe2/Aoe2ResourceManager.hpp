@@ -12,6 +12,11 @@ struct UnitRecord {
     std::vector<std::string> missing_animations;
     bool complete = false;
     int warning_count = 0;
+    int schema_version = 0;
+    bool metadata_available = false;
+    int civ_id = -1;
+    int unit_id = -1;
+    std::string mapping_source;
 };
 
 class Aoe2ResourceManager {

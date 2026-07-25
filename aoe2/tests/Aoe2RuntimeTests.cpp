@@ -2,17 +2,158 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
+#include <unordered_map>
 
 #include <ecs/systems/TransformSystem.hpp>
 #include <ecs/render/Batch.hpp>
 #include <ecs/assets/Loader.hpp>
 #include <aoe2/Aoe2Assets.hpp>
+#include <aoe2/Aoe2ResourceManager.hpp>
 #include <aoe2/Aoe2Systems.hpp>
+#include <nlohmann/json.hpp>
 
 using namespace gld::ecs;
 using namespace gld::ecs::aoe2;
 
+namespace {
+struct MemoryFileSystem final : IFileSystem {
+    std::unordered_map<std::string, std::string> texts;
+    bool exists(const std::string& path) const override { return texts.contains(path); }
+    std::optional<std::vector<std::byte>> read_bytes(const std::string&) const override {
+        return std::nullopt;
+    }
+    std::optional<std::string> read_text(const std::string& path) const override {
+        const auto found = texts.find(path);
+        return found == texts.end() ? std::nullopt : std::optional(found->second);
+    }
+    std::vector<FileSystemEntry> list(const std::string& path) const override {
+        if (path == "cache" && texts.contains("cache/u_test/manifest.json"))
+            return {{"u_test", true, false}};
+        return {};
+    }
+};
+
+nlohmann::json test_animation_config() {
+    const nlohmann::json frame = {
+        {"source_ordinal", 0}, {"source_frame_index", 0},
+        {"direction", 0}, {"frame", 0}, {"present", true},
+        {"x", 0}, {"y", 0}, {"w", 1}, {"h", 1},
+        {"foot", {{"x", 0}, {"y", 0}, {"space", "frame_pixels_top_left"}}}
+    };
+    return {
+        {"schema_version", 2}, {"frame_order", "direction_major"},
+        {"fps", 30.0}, {"direction_count", 1}, {"frames_per_direction", 1},
+        {"layers", {
+            {"main", {{"status", "complete"}, {"atlas_w", 1}, {"atlas_h", 1},
+                      {"image", "idle.png"}, {"frames", nlohmann::json::array({frame})}}},
+            {"shadow", {{"status", "missing"}}},
+            {"player_color", {{"status", "missing"}}}
+        }}
+    };
+}
+
+nlohmann::json test_manifest(int schema) {
+    nlohmann::json manifest = {
+        {"schema_version", schema}, {"kind", "aoe2de_unit"}, {"id", "u_test"},
+        {"export_settings", {{"player_color", {{"format", "r8_subcolor_alpha_binary"}}}}},
+        {"animations", {{"idleA", {{"status", "exported"},
+                                     {"config", "graphics/idleA.json"}}}}}
+    };
+    if (schema == 3) {
+        manifest["dat"] = {
+            {"source", "resources/_common/dat/empires2_x2_p1.dat"},
+            {"civ_id", 0}, {"unit_id", 4}, {"unit_type", 70},
+            {"mapping_source", "graphic_unique"},
+            {"collision_size", {{"x", 0.2}, {"y", 0.3}, {"z", 0.8}}},
+            {"outline_size", {{"x", 0.4}, {"y", 0.5}, {"z", 0.9}}},
+            {"combat", {
+                {"projectile_unit_id", 3}, {"secondary_projectile_unit_id", -1},
+                {"frame_delay", 5},
+                {"weapon_offset", {{"x", 0.0}, {"y", 0.16}, {"z", 0.8}}},
+                {"accuracy_percent", 80}, {"accuracy_dispersion", 0.5},
+                {"min_range", 0.0}, {"max_range", 4.0}, {"reload_time", 2.0},
+                {"blast_width", 0.0}, {"blast_attack_level", 0},
+                {"attack_graphic_id", 123}, {"projectile_min_count", 1},
+                {"projectile_max_count", 1},
+                {"projectile_spawning_area", {
+                    {"width", 0.0}, {"length", 0.0}, {"randomness", 0.0}}}
+            }}
+        };
+    }
+    return manifest;
+}
+
+std::shared_ptr<Aoe2UnitAppearance> load_test_manifest(nlohmann::json manifest) {
+    MemoryFileSystem fs;
+    fs.texts["cache/u_test/manifest.json"] = manifest.dump();
+    fs.texts["cache/u_test/graphics/idleA.json"] = test_animation_config().dump();
+    AssetServer server;
+    Aoe2UnitAppearanceLoader loader(server);
+    auto cpu = loader.load_cpu(Aoe2UnitAppearanceDesc("cache/u_test/manifest.json"), fs);
+    return cpu ? loader.finalize(cpu, Aoe2UnitAppearanceDesc("cache/u_test/manifest.json"))
+               : nullptr;
+}
+} // namespace
+
 int main() {
+    const auto schema2 = load_test_manifest(test_manifest(2));
+    assert(schema2 && schema2->schema_version == 2);
+    assert(!schema2->dat_metadata);
+    const auto schema3 = load_test_manifest(test_manifest(3));
+    assert(schema3 && schema3->schema_version == 3 && schema3->dat_metadata);
+    assert(schema3->dat_metadata->unit_id == 4);
+    assert(std::abs(schema3->dat_metadata->collision_size.z - 0.8f) < 0.0001f);
+    assert(schema3->dat_metadata->outline_size);
+    assert(std::abs(schema3->dat_metadata->outline_size->x - 0.4f) < 0.0001f);
+    assert(schema3->dat_metadata->combat);
+    assert(schema3->dat_metadata->combat->secondary_projectile_unit_id == -1);
+    assert(schema3->dat_metadata->combat->projectile_max_count == 1);
+
+    auto missing_dat = test_manifest(3);
+    missing_dat.erase("dat");
+    assert(!load_test_manifest(std::move(missing_dat)));
+    auto negative_collision = test_manifest(3);
+    negative_collision["dat"]["collision_size"]["x"] = -0.1;
+    assert(!load_test_manifest(std::move(negative_collision)));
+    auto old_schema3 = test_manifest(3);
+    old_schema3["dat"].erase("outline_size");
+    const auto compatible_schema3 = load_test_manifest(std::move(old_schema3));
+    assert(compatible_schema3 && compatible_schema3->dat_metadata &&
+           !compatible_schema3->dat_metadata->outline_size);
+    auto negative_outline = test_manifest(3);
+    negative_outline["dat"]["outline_size"]["y"] = -0.1;
+    assert(!load_test_manifest(std::move(negative_outline)));
+    auto incomplete_outline = test_manifest(3);
+    incomplete_outline["dat"]["outline_size"].erase("z");
+    assert(!load_test_manifest(std::move(incomplete_outline)));
+    auto non_finite_outline = test_manifest(3);
+    non_finite_outline["dat"]["outline_size"]["x"] =
+        std::numeric_limits<double>::infinity();
+    assert(!load_test_manifest(std::move(non_finite_outline)));
+    auto invalid_id = test_manifest(3);
+    invalid_id["dat"]["combat"]["projectile_unit_id"] = -2;
+    assert(!load_test_manifest(std::move(invalid_id)));
+    auto incomplete_vector = test_manifest(3);
+    incomplete_vector["dat"]["combat"]["weapon_offset"].erase("z");
+    assert(!load_test_manifest(std::move(incomplete_vector)));
+    auto non_finite = test_manifest(3);
+    non_finite["dat"]["combat"]["reload_time"] =
+        std::numeric_limits<double>::infinity();
+    assert(!load_test_manifest(std::move(non_finite)));
+
+    auto manager_fs = std::make_shared<MemoryFileSystem>();
+    manager_fs->texts["cache/u_test/manifest.json"] = test_manifest(3).dump();
+    AssetServer manager_server;
+    manager_server.fs = manager_fs;
+    Aoe2ResourceManager manager(manager_server, "cache");
+    manager.refresh();
+    assert(manager.list_units().size() == 1);
+    assert(manager.list_units()[0].schema_version == 3);
+    assert(manager.list_units()[0].metadata_available);
+    assert(manager.list_units()[0].civ_id == 0);
+    assert(manager.list_units()[0].unit_id == 4);
+    assert(manager.list_units()[0].mapping_source == "graphic_unique");
     static_assert(animation_slot_value(AnimationSlot::Invalid) == 0);
     static_assert(animation_slot_value(AnimationSlot::WalkA) == 1);
     static_assert(animation_slot_value(AnimationSlot::WalkB) == 2);
