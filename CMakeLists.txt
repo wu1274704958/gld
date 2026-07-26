@@ -139,9 +139,13 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
 
     add_library(gld_aoe_gameplay STATIC
+        aoe/src/AoeMap.cpp
         aoe/src/AoeGameplay.cpp)
     target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
     target_link_libraries(gld_aoe_gameplay PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+    if(MSVC)
+        target_compile_options(gld_aoe_gameplay PRIVATE /bigobj)
+    endif()
 
     add_library(gld_aoe2_gameplay_bridge STATIC
         aoe2_gameplay/src/Aoe2GameplayBridge.cpp)
@@ -169,6 +173,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
         add_executable(aoe_gameplay_tests aoe/tests/AoeGameplayTests.cpp)
         target_link_libraries(aoe_gameplay_tests PRIVATE gld_aoe_gameplay)
         add_test(NAME aoe_gameplay_tests COMMAND aoe_gameplay_tests)
+        add_executable(aoe_map_tests aoe/tests/AoeMapTests.cpp)
+        target_link_libraries(aoe_map_tests PRIVATE gld_aoe_gameplay)
+        add_test(NAME aoe_map_tests COMMAND aoe_map_tests)
+        add_executable(aoe_map_benchmark example/aoe_map_benchmark/main.cpp)
+        target_link_libraries(aoe_map_benchmark PRIVATE gld_aoe_gameplay)
         add_executable(aoe2_gameplay_bridge_tests
             aoe2_gameplay/tests/Aoe2GameplayBridgeTests.cpp)
         target_link_libraries(aoe2_gameplay_bridge_tests PRIVATE

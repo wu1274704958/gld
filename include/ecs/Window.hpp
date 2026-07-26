@@ -20,6 +20,7 @@ namespace gld::ecs {
         std::string title;
         bool should_close = false;
         bool presented = false;   // set by present_system; run_app skips its swap
+        bool vsync = true;
         glm::vec2 last_cursor{0.f};
         bool has_cursor = false;
     };
@@ -29,8 +30,11 @@ namespace gld::ecs {
         int width = 1280;
         int height = 720;
         std::string title = "ecs";
+        bool vsync = true;
         void operator()(App& app) const;
     };
+
+    void set_window_vsync(Window& window, bool enabled);
 
     // Reads WindowResized events -> glViewport + Window size (PreUpdate).
     void window_resize_system(EcsWorld& w);

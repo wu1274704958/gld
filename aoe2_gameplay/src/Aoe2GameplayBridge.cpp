@@ -50,12 +50,23 @@ float update_presentation_playback(
     Aoe2PresentationSnapshot& snapshot, const aoe::AoeActionState& state,
     const aoe::AoeGameplayClock& clock,
     const aoe::AoeGameplaySettings& settings,
+    const aoe::AoeLocomotionState* locomotion, float nominal_speed,
     std::string_view animation, float action_elapsed) {
     const bool changed = snapshot.state != state.state ||
         snapshot.sequence != state.sequence ||
         snapshot.critical != state.critical ||
         snapshot.requested_animation != animation;
-    if (clock.tick >= snapshot.last_gameplay_tick) {
+    if (state.state == aoe::UnitState::Moving) {
+        if (locomotion && nominal_speed > 0.f &&
+            std::isfinite(locomotion->distance_travelled)) {
+            const double distance = std::max(
+                snapshot.locomotion_distance,
+                locomotion->distance_travelled);
+            snapshot.playback_time +=
+                (distance - snapshot.locomotion_distance) /
+                static_cast<double>(nominal_speed);
+        }
+    } else if (clock.tick >= snapshot.last_gameplay_tick) {
         snapshot.playback_time += static_cast<double>(
             clock.tick - snapshot.last_gameplay_tick) * settings.fixed_dt;
     }
@@ -66,6 +77,8 @@ float update_presentation_playback(
     snapshot.critical = state.critical;
     snapshot.requested_animation = animation;
     snapshot.last_gameplay_tick = clock.tick;
+    if (locomotion && std::isfinite(locomotion->distance_travelled))
+        snapshot.locomotion_distance = locomotion->distance_travelled;
     return static_cast<float>(std::max(0.0, snapshot.playback_time));
 }
 
@@ -286,20 +299,26 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         const bool should_loop = looping(state.state);
         auto* snapshot = reg.try_get<Aoe2PresentationSnapshot>(entity);
         if (!snapshot) {
+            const auto* locomotion =
+                reg.try_get<aoe::AoeLocomotionState>(entity);
             snapshot = &reg.emplace<Aoe2PresentationSnapshot>(entity,
                 Aoe2PresentationSnapshot{
                     .state = state.state,
                     .sequence = state.sequence,
                     .last_gameplay_tick = clock.tick,
                     .playback_time = action_elapsed,
+                    .locomotion_distance = locomotion
+                        ? locomotion->distance_travelled : 0.0,
                     .critical = state.critical,
                     .direction = render_direction,
                     .direction_count = facing.direction_count,
                     .player_color = options.player_color,
                     .requested_animation = animation});
         }
+        const auto* locomotion = reg.try_get<aoe::AoeLocomotionState>(entity);
         float playback_time = update_presentation_playback(
-            *snapshot, state, clock, settings, animation, action_elapsed);
+            *snapshot, state, clock, settings, locomotion,
+            definition->movement.speed, animation, action_elapsed);
         if (frozen_idle_terminal) playback_time = 0.f;
 
         auto* link = reg.try_get<Aoe2PresentationLink>(entity);

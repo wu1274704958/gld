@@ -7,6 +7,7 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -19,6 +20,7 @@
 #include <ecs/Components.hpp>
 #include <ecs/Events.hpp>
 #include <ecs/assets/AssetServer.hpp>
+#include <aoe/AoeMap.hpp>
 
 namespace gld::ecs::aoe {
 
@@ -146,6 +148,19 @@ struct AoePosition { glm::vec2 value{0.f}; };
 // Gameplay systems always read AoePosition directly.
 struct AoePositionHistory { glm::vec2 previous{0.f}; };
 struct AoeMovement { float speed = 1.f; };
+struct AoeLocomotionState {
+    glm::vec2 velocity{0.f};
+    glm::vec2 previous_velocity{0.f};
+    glm::vec2 cached_target_velocity{0.f};
+    float actual_speed = 0.f;
+    double distance_travelled = 0.0;
+    std::uint64_t last_steering_tick = 0;
+    std::uint64_t threat_signature = 0;
+    std::int8_t avoidance_side = 0;
+    std::uint8_t avoidance_side_hold_ticks = 0;
+    int pending_facing_direction = -1;
+    std::uint8_t pending_facing_ticks = 0;
+};
 struct AoeTeam { std::uint32_t id = 0; };
 struct AoeFacing { int direction = 0; int direction_count = 16; };
 struct AoePresentationOptions { int player_color = 1; std::uint32_t layers = 0x1u; };
@@ -161,9 +176,32 @@ struct AoeMoveGoal {
     float stopping_distance = 0.f;
     AoeUnitTarget target{};
 };
+struct AoeEngagementApproach {
+    AoeUnitTarget target{};
+    glm::vec2 direction{1.f, 0.f};
+    float desired_gap = 0.f;
+    std::uint64_t assignment_sequence = 0;
+};
 struct AoeNavigationPath {
     std::vector<glm::vec2> waypoints;
     std::size_t current = 0;
+    glm::vec2 requested_goal{0.f};
+    std::uint64_t map_revision = 0;
+    std::uint64_t request_sequence = 0;
+    std::uint64_t last_repath_tick = 0;
+    std::uint32_t blocked_ticks = 0;
+    bool no_path = false;
+    bool include_dynamic_obstacles = false;
+};
+struct AoeMapStaticObstacle {
+    AoeStaticObstacleShape shape = AoeStaticObstacleShape::Aabb;
+    glm::vec2 half_extents{.5f};
+    float radius = .5f;
+    AoeObstacleId obstacle_id = 0;
+    glm::vec2 registered_center{0.f};
+    glm::vec2 registered_half_extents{0.f};
+    float registered_radius = 0.f;
+    AoeStaticObstacleShape registered_shape = AoeStaticObstacleShape::Aabb;
 };
 struct AoeRecyclePending {};
 struct AoePooledUnit {};
@@ -184,11 +222,124 @@ struct AoeGameplayIdentity {
     std::uint64_t rng_state = 1;
 };
 
+struct AoePathRequest {
+    glm::vec2 start{0.f};
+    glm::vec2 goal{0.f};
+    glm::vec2 clearance{0.f};
+    entt::entity subject{entt::null};
+    entt::entity squad{entt::null};
+    entt::entity ignored_dynamic_target{entt::null};
+    bool include_dynamic_obstacles = false;
+};
+
+enum class AoePathStatus { Ready, NoPath, InvalidStart, InvalidGoal };
+
+struct AoePathResult {
+    AoePathStatus status = AoePathStatus::NoPath;
+    std::vector<glm::vec2> waypoints;
+    std::uint64_t map_revision = 0;
+};
+
+template<class T>
+concept AoePathfinderLogic = requires(EcsWorld& world,
+                                      const AoePathRequest& request) {
+    { T::find(world, request) } -> std::same_as<AoePathResult>;
+};
+
+class AoePathfinderRegistry {
+public:
+    using FindFn = AoePathResult (*)(EcsWorld&, const AoePathRequest&);
+
+    template<AoePathfinderLogic T>
+    void bind(std::string id) { bind_erased(std::move(id), &T::find); }
+
+    bool contains(std::string_view id) const;
+    AoePathResult find(std::string_view id, EcsWorld&,
+                       const AoePathRequest&) const;
+
+private:
+    void bind_erased(std::string id, FindFn function);
+    std::unordered_map<std::string, FindFn> entries_;
+};
+
+struct DirectPathfinderLogic {
+    static AoePathResult find(EcsWorld&, const AoePathRequest&);
+};
+
+struct GridAStarPathfinderLogic {
+    static AoePathResult find(EcsWorld&, const AoePathRequest&);
+};
+
+struct AoeSteeringNeighbor {
+    entt::entity entity{entt::null};
+    std::uint64_t instance_id = 0;
+    glm::vec2 position{0.f};
+    glm::vec2 radii{0.f};
+    glm::vec2 velocity{0.f};
+};
+
+struct AoeSteeringContext {
+    entt::entity subject{entt::null};
+    std::uint64_t instance_id = 0;
+    glm::vec2 position{0.f};
+    glm::vec2 radii{0.f};
+    glm::vec2 current_velocity{0.f};
+    glm::vec2 preferred_velocity{0.f};
+    glm::vec2 goal{0.f};
+    float max_speed = 0.f;
+    float prediction_seconds = .6f;
+    float separation_padding = .15f;
+    const AoeLogicMap* map = nullptr;
+    std::span<const AoeSteeringNeighbor> neighbors{};
+    int preferred_avoidance_side = 0;
+    float side_switch_margin = .35f;
+};
+
+struct AoeSteeringResult {
+    glm::vec2 target_velocity{0.f};
+    int avoidance_side = 0;
+    bool threatened = false;
+};
+
+template<class T>
+concept AoeSteeringLogic = requires(const AoeSteeringContext& context) {
+    { T::steer(context) } -> std::same_as<AoeSteeringResult>;
+};
+
+class AoeSteeringRegistry {
+public:
+    using SteerFn = AoeSteeringResult (*)(const AoeSteeringContext&);
+
+    template<AoeSteeringLogic T>
+    void bind(std::string id) { bind_erased(std::move(id), &T::steer); }
+
+    bool contains(std::string_view id) const;
+    AoeSteeringResult steer(std::string_view id,
+                            const AoeSteeringContext&) const;
+
+private:
+    void bind_erased(std::string id, SteerFn function);
+    std::unordered_map<std::string, SteerFn> entries_;
+};
+
+struct DefaultLocalSteeringLogic {
+    static AoeSteeringResult steer(const AoeSteeringContext&);
+};
+
+enum class AoeNavigationEventStatus { Ready, Blocked, NoPath };
+struct AoeNavigationEvent {
+    entt::entity subject{entt::null};
+    std::uint64_t request_sequence = 0;
+    AoeNavigationEventStatus status = AoeNavigationEventStatus::Ready;
+    std::uint64_t tick = 0;
+};
+
 struct AoeTargetAcquisitionContext {
     entt::entity seeker{entt::null};
     glm::vec2 origin{0.f};
     float radius = 0.f;
     std::uint32_t seeker_team = 0;
+    std::span<const AoeUnitTarget> excluded{};
 };
 
 template<class T>
@@ -380,7 +531,9 @@ struct AoeSquadSpawnOptions {
 
 enum class AoeSquadSpawnStatus { Pending, Ready, Partial, Failed, Empty };
 enum class AoeSquadOrderType { Idle, MoveTo, AttackTarget, AttackMove, Stop };
-enum class AoeSquadPhase { Forming, Moving, Engaging, Regrouping, Idle, Empty, Failed };
+enum class AoeSquadPhase {
+    Forming, Moving, Engaging, Regrouping, Blocked, Idle, Empty, Failed
+};
 
 struct AoeSquadPendingMember {
     entt::entity entity{entt::null};
@@ -542,6 +695,31 @@ struct AoeGameplaySettings {
     std::uint64_t random_seed = 0x6a09e667f3bcc909ull;
 };
 
+struct AoeNavigationSettings {
+    std::string unit_pathfinder_id = "grid_astar";
+    std::string squad_pathfinder_id = "grid_astar";
+    std::string steering_strategy_id = "local_default";
+    std::uint32_t blocked_repath_ticks = 12;
+    std::uint32_t repath_cooldown_ticks = 3;
+    std::uint32_t steering_max_neighbors = 8;
+    std::uint32_t steering_full_solve_interval = 2;
+    std::uint32_t steering_side_hold_ticks = 6;
+    std::uint32_t steering_facing_stable_ticks = 2;
+    float steering_prediction_seconds = .6f;
+    float steering_separation_padding = .15f;
+    float steering_imminent_collision_seconds = .2f;
+    float steering_side_switch_margin = .35f;
+    float steering_max_acceleration = 4.f;
+    float steering_max_turn_radians_per_second = 6.28318530718f;
+    float steering_stalled_speed = .05f;
+    float squad_leash = 3.f;
+    float slot_repath_distance = .5f;
+};
+
+struct AoeStaticObstacleBindings {
+    std::unordered_map<entt::entity, AoeObstacleId> entities;
+};
+
 struct AoeGameplayClock {
     double accumulator = 0.0;
     std::uint64_t tick = 0;
@@ -564,6 +742,24 @@ struct AoeGameplayDiagnostics {
     std::uint64_t projectiles_hit = 0;
     std::uint64_t projectiles_missed = 0;
     std::uint64_t projectiles_failed = 0;
+    std::uint64_t steering_fallbacks = 0;
+    std::uint64_t steering_fast_path = 0;
+    std::uint64_t steering_full_solves = 0;
+    std::uint64_t steering_cached_solves = 0;
+    std::uint64_t steering_imminent_solves = 0;
+    std::uint64_t steering_neighbors_considered = 0;
+    std::uint64_t steering_side_switches = 0;
+    std::uint64_t facing_changes_suppressed = 0;
+    std::uint64_t facing_changes_committed = 0;
+    double movement_last_ms = 0.0;
+    double movement_peak_ms = 0.0;
+};
+
+// Fixed-tick scratch is a world resource so its high-water capacities are
+// reused instead of allocating temporary vectors for every movement tick.
+struct AoeCrowdSteeringScratch {
+    std::vector<entt::entity> arrived;
+    std::vector<AoeSteeringNeighbor> nearest_neighbors;
 };
 
 struct AoeGameplayPlugin {
@@ -604,5 +800,7 @@ void spawn_aoe_gameplay_unit_system(EcsWorld&);
 void aoe_gameplay_fixed_system(EcsWorld&);
 void aoe_gameplay_recycle_system(EcsWorld&);
 void aoe_projectile_tick(EcsWorld&, std::uint64_t tick);
+void aoe_map_static_obstacle_system(EcsWorld&);
+void aoe_dynamic_obstacle_index_system(EcsWorld&);
 
 } // namespace gld::ecs::aoe

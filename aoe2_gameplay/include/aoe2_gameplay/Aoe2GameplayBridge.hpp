@@ -18,6 +18,7 @@ struct Aoe2PresentationSnapshot {
     std::uint64_t sequence = 0;
     std::uint64_t last_gameplay_tick = 0;
     double playback_time = 0.0;
+    double locomotion_distance = 0.0;
     bool critical = false;
     int direction = 0;
     int direction_count = 16;

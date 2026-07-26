@@ -97,6 +97,43 @@ std::shared_ptr<AoeUnitDefinition> parse(nlohmann::json source) {
                            AoeUnitDefinitionDesc("unit.json"));
 }
 
+AoeMapDefinition flat_map(std::uint32_t width = 20,
+                          std::uint32_t height = 12) {
+    AoeMapDefinition result;
+    result.id = "gameplay_map";
+    result.origin = {0.f, 0.f};
+    result.tile_size = 1.f;
+    result.width = width;
+    result.height = height;
+    result.heights.resize(static_cast<std::size_t>(width + 1) *
+                          (height + 1), 0.f);
+    return result;
+}
+
+AoeMapDefinition squad_stress_map() {
+    AoeMapDefinition result;
+    result.id = "squad_stress_map";
+    result.origin = {-18.f, -8.f};
+    result.tile_size = 1.f;
+    result.width = 36;
+    result.height = 16;
+    result.heights.resize(37u * 17u, 0.f);
+    AoeStaticObstacleDesc left;
+    left.shape = AoeStaticObstacleShape::Aabb;
+    left.center = {-4.f, 0.f};
+    left.half_extents = {.8f, 2.5f};
+    result.static_obstacles.push_back(left);
+    AoeStaticObstacleDesc right = left;
+    right.center = {4.f, 0.f};
+    result.static_obstacles.push_back(right);
+    AoeStaticObstacleDesc south;
+    south.shape = AoeStaticObstacleShape::Circle;
+    south.center = {0.f, -4.f};
+    south.radius = 1.f;
+    result.static_obstacles.push_back(south);
+    return result;
+}
+
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -120,6 +157,10 @@ struct Fixture {
         world.resource_or_add<AoeSquadCommands>();
         world.resource_or_add<Events<AoeActionEvent>>();
         world.resource_or_add<AoeGameplayDiagnostics>();
+        auto& navigation = world.resource_or_add<AoeNavigationSettings>();
+        // Most legacy tests assert exact constant-speed positions. Dedicated
+        // steering tests below exercise the production acceleration defaults.
+        navigation.steering_max_acceleration = 1000.f;
         world.resource_or_add<AoeTargetAcquisitionRegistry>()
             .bind<NearestEnemyAcquisitionStrategy>("nearest_enemy");
         world.resource_or_add<AoeFormationRegistry>()
@@ -142,6 +183,7 @@ struct Fixture {
         world.reg().emplace<AoeCollider>(entity, AoeCollider{0.2f, 0.3f, 1.8f});
         world.reg().emplace<AoePosition>(entity, AoePosition{position});
         world.reg().emplace<AoeMovement>(entity, AoeMovement{2.f});
+        world.reg().emplace<AoeLocomotionState>(entity);
         world.reg().emplace<AoeTeam>(entity, AoeTeam{team});
         world.reg().emplace<AoeFacing>(entity);
         world.reg().emplace<AoePresentationOptions>(entity);
@@ -194,6 +236,59 @@ int main() {
         duplicate_acquisition_rejected = true;
     }
     assert(duplicate_acquisition_rejected);
+
+    AoeSteeringRegistry steering_registry;
+    steering_registry.bind<DefaultLocalSteeringLogic>("local_default");
+    assert(steering_registry.contains("local_default"));
+    const AoeSteeringContext unobstructed_steering{
+        .instance_id = 1,
+        .preferred_velocity = {2.f, 0.f},
+        .goal = {10.f, 0.f},
+        .max_speed = 2.f};
+    assert(glm::length(steering_registry.steer(
+               "local_default", unobstructed_steering).target_velocity -
+           glm::vec2(2.f, 0.f)) < 1e-5f);
+    const std::array<AoeSteeringNeighbor, 1> head_on_neighbor{{
+        {entt::entity{2}, 2, {1.f, 0.f}, {.2f, .2f}, {-2.f, 0.f}}}};
+    AoeSteeringContext head_on_steering{
+        .subject = entt::entity{1},
+        .instance_id = 1,
+        .position = {0.f, 0.f},
+        .radii = {.2f, .2f},
+        .current_velocity = {2.f, 0.f},
+        .preferred_velocity = {2.f, 0.f},
+        .goal = {10.f, 0.f},
+        .max_speed = 2.f,
+        .neighbors = head_on_neighbor};
+    const auto head_on_result = steering_registry.steer(
+        "local_default", head_on_steering);
+    assert(std::abs(head_on_result.target_velocity.y) > .1f);
+    assert(head_on_result.target_velocity == steering_registry.steer(
+        "local_default", head_on_steering).target_velocity);
+    const std::array<AoeSteeringNeighbor, 1> reverse_neighbor{{
+        {entt::entity{1}, 1, {0.f, 0.f}, {.2f, .2f}, {2.f, 0.f}}}};
+    AoeSteeringContext reverse_head_on = head_on_steering;
+    reverse_head_on.subject = entt::entity{2};
+    reverse_head_on.instance_id = 2;
+    reverse_head_on.position = {1.f, 0.f};
+    reverse_head_on.current_velocity = {-2.f, 0.f};
+    reverse_head_on.preferred_velocity = {-2.f, 0.f};
+    reverse_head_on.goal = {-10.f, 0.f};
+    reverse_head_on.neighbors = reverse_neighbor;
+    const auto reverse_result = steering_registry.steer(
+        "local_default", reverse_head_on);
+    assert(head_on_result.target_velocity.y *
+               reverse_result.target_velocity.y < 0.f);
+    head_on_steering.preferred_avoidance_side =
+        head_on_result.avoidance_side;
+    head_on_steering.side_switch_margin = 2.35f;
+    auto perturbed_neighbor = head_on_neighbor;
+    perturbed_neighbor[0].position.y = .01f;
+    head_on_steering.neighbors = perturbed_neighbor;
+    const auto held_side_result = steering_registry.steer(
+        "local_default", head_on_steering);
+    assert(held_side_result.avoidance_side ==
+           head_on_result.avoidance_side);
 
     auto explicit_acquisition = definition_json();
     explicit_acquisition["target_acquisition"] = {
@@ -351,6 +446,131 @@ int main() {
                .get<AoePosition>(interpolated_mover).value -
            glm::vec2(.8f, 0.f)) < 1e-5f);
 
+    Fixture acceleration_fixture;
+    acceleration_fixture.world.resource<AoeNavigationSettings>()
+        .steering_max_acceleration = 4.f;
+    const auto accelerating = acceleration_fixture.unit({0.f, 0.f}, 50.f, 1);
+    assert(request_aoe_move(acceleration_fixture.world, accelerating,
+                            {10.f, 0.f}));
+    acceleration_fixture.advance_ticks(1);
+    const auto& first_motion = acceleration_fixture.world.reg()
+        .get<AoeLocomotionState>(accelerating);
+    assert(std::abs(first_motion.actual_speed - .4f) < 1e-5f);
+    assert(std::abs(first_motion.distance_travelled - .04) < 1e-5);
+    const double first_distance = first_motion.distance_travelled;
+    acceleration_fixture.advance_ticks(1);
+    const auto& second_motion = acceleration_fixture.world.reg()
+        .get<AoeLocomotionState>(accelerating);
+    assert(std::abs(second_motion.actual_speed - .8f) < 1e-5f);
+    assert(second_motion.distance_travelled > first_distance);
+
+    // Grid A* drives authoritative movement around static obstacles. Removing
+    // a sealing obstacle changes the map revision and resumes a retained goal.
+    Fixture map_movement_fixture;
+    map_movement_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& movement_map = map_movement_fixture.world.resource<AoeLogicMap>();
+    AoeStaticObstacleDesc movement_wall;
+    movement_wall.shape = AoeStaticObstacleShape::Aabb;
+    movement_wall.center = {6.f, 6.f};
+    movement_wall.half_extents = {.45f, 1.5f};
+    movement_map.add_static_obstacle(movement_wall);
+    const auto map_mover = map_movement_fixture.unit({2.f, 6.f}, 50.f, 1);
+    assert(request_aoe_move(map_movement_fixture.world, map_mover, {10.f, 6.f}));
+    map_movement_fixture.advance_ticks(1);
+    const auto& detour_path = map_movement_fixture.world.reg()
+        .get<AoeNavigationPath>(map_mover);
+    assert(!detour_path.no_path && !detour_path.waypoints.empty());
+    bool path_leaves_centerline = false;
+    for (const auto waypoint : detour_path.waypoints)
+        path_leaves_centerline = path_leaves_centerline ||
+            std::abs(waypoint.y - 6.f) > .5f;
+    assert(path_leaves_centerline);
+    map_movement_fixture.advance_ticks(60);
+    assert(glm::length(map_movement_fixture.world.reg()
+               .get<AoePosition>(map_mover).value - glm::vec2(10.f, 6.f)) < .05f);
+
+    Fixture sealed_map_fixture;
+    sealed_map_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& sealed_map = sealed_map_fixture.world.resource<AoeLogicMap>();
+    AoeStaticObstacleDesc sealed_wall;
+    sealed_wall.shape = AoeStaticObstacleShape::Aabb;
+    sealed_wall.center = {6.f, 6.f};
+    sealed_wall.half_extents = {.45f, 6.f};
+    const auto sealed_id = sealed_map.add_static_obstacle(sealed_wall);
+    const auto sealed_mover = sealed_map_fixture.unit({2.f, 6.f}, 50.f, 1);
+    assert(request_aoe_move(sealed_map_fixture.world, sealed_mover, {10.f, 6.f}));
+    sealed_map_fixture.advance_ticks(1);
+    assert(sealed_map_fixture.world.reg().get<AoeNavigationPath>(
+               sealed_mover).no_path);
+    assert(sealed_map_fixture.world.reg().get<AoeActionState>(
+               sealed_mover).state == UnitState::Idle);
+    assert(sealed_map.remove_static_obstacle(sealed_id));
+    sealed_map_fixture.advance_ticks(60);
+    assert(glm::length(sealed_map_fixture.world.reg()
+               .get<AoePosition>(sealed_mover).value - glm::vec2(10.f, 6.f)) < .05f);
+
+    // A dynamic unit blocks the direct step. After the wait threshold, the
+    // mover replans through the spatial index and passes around it.
+    Fixture dynamic_map_fixture;
+    dynamic_map_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    const auto dynamic_mover = dynamic_map_fixture.unit({2.f, 4.f}, 50.f, 1);
+    const auto dynamic_blocker = dynamic_map_fixture.unit({5.f, 4.f}, 50.f, 2);
+    (void)dynamic_blocker;
+    assert(request_aoe_move(dynamic_map_fixture.world,
+                            dynamic_mover, {9.f, 4.f}));
+    dynamic_map_fixture.advance_ticks(70);
+    assert(glm::length(dynamic_map_fixture.world.reg()
+               .get<AoePosition>(dynamic_mover).value - glm::vec2(9.f, 4.f)) < .1f);
+    assert(dynamic_map_fixture.world.resource<AoeDynamicObstacleIndex>()
+               .diagnostics().units_indexed == 2);
+
+    // A short dynamic contact is handled by local steering instead of
+    // invalidating the global path on the first blocked fixed tick.
+    Fixture immediate_repath_fixture;
+    immediate_repath_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    const auto immediate_mover = immediate_repath_fixture.unit({2.f, 4.f}, 50.f, 1);
+    const auto immediate_blocker = immediate_repath_fixture.unit({2.8f, 4.f}, 50.f, 2);
+    (void)immediate_blocker;
+    assert(request_aoe_move(immediate_repath_fixture.world,
+                            immediate_mover, {8.f, 4.f}));
+    bool requested_dynamic_repath = false;
+    for (int i = 0; i < 8; ++i) {
+        immediate_repath_fixture.advance_ticks(1);
+        const auto* path = immediate_repath_fixture.world.reg()
+            .try_get<AoeNavigationPath>(immediate_mover);
+        requested_dynamic_repath = requested_dynamic_repath ||
+            (path && path->include_dynamic_obstacles);
+    }
+    assert(!requested_dynamic_repath);
+    assert(immediate_repath_fixture.world.resource<AoeGameplayDiagnostics>()
+               .steering_imminent_solves > 0);
+    immediate_repath_fixture.advance_ticks(70);
+    assert(glm::length(immediate_repath_fixture.world.reg()
+               .get<AoePosition>(immediate_mover).value -
+           glm::vec2(8.f, 4.f)) < .1f);
+
+    Fixture cached_steering_fixture;
+    cached_steering_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    cached_steering_fixture.world.resource<AoeNavigationSettings>()
+        .steering_imminent_collision_seconds = 0.f;
+    cached_steering_fixture.world.resource<AoeNavigationSettings>()
+        .steering_max_acceleration = 0.f;
+    const auto cached_follower = cached_steering_fixture.unit(
+        {2.f, 4.f}, 50.f, 1);
+    const auto cached_leader = cached_steering_fixture.unit(
+        {3.f, 4.f}, 50.f, 1);
+    assert(request_aoe_move(cached_steering_fixture.world,
+                            cached_follower, {10.f, 4.f}));
+    assert(request_aoe_move(cached_steering_fixture.world,
+                            cached_leader, {11.f, 4.f}));
+    const auto steering_entity_count = cached_steering_fixture.world.reg()
+        .storage<entt::entity>().free_list();
+    cached_steering_fixture.advance_ticks(6);
+    assert(cached_steering_fixture.world.reg()
+               .storage<entt::entity>().free_list() == steering_entity_count);
+    assert(cached_steering_fixture.world.resource<AoeGameplayDiagnostics>()
+               .steering_cached_solves > 0);
+
     // The default strategy ignores self/allies/terminal units, compares
     // collider surface gaps, and returns a stable incarnation-aware target.
     Fixture acquisition_fixture;
@@ -436,8 +656,12 @@ int main() {
     const float center_before = squad_fixture.world.reg().get<AoePosition>(squad).value.x;
     assert(request_aoe_squad_move(squad_fixture.world, squad, {4.f, 0.f}));
     squad_fixture.advance_ticks(1);
-    assert(std::abs(squad_fixture.world.reg().get<AoePosition>(squad).value.x -
-                    center_before - .1f) < 1e-5f);
+    for (int i = 0; i < 20 &&
+         squad_fixture.world.reg().get<AoePosition>(squad).value.x <=
+             center_before + 1e-5f; ++i)
+        squad_fixture.advance_ticks(1);
+    assert(squad_fixture.world.reg().get<AoePosition>(squad).value.x >
+           center_before);
     assert(squad_fixture.world.reg().get<AoeSquadState>(squad).movement_speed == 1.f);
 
     const auto detached = squad_fixture.world.reg()
@@ -446,6 +670,123 @@ int main() {
     squad_fixture.advance_ticks(1);
     assert(!squad_fixture.world.reg().all_of<AoeSquadMember>(detached));
     assert(squad_fixture.world.reg().get<AoeSquadMembers>(squad).active.size() == 3);
+
+    // A squad guide routes the virtual anchor around static geometry while
+    // every member independently follows its moving formation slot.
+    Fixture mapped_squad_fixture;
+    mapped_squad_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    AoeSquadSpawnOptions mapped_options;
+    mapped_options.composition = {{"test", 4, 1}};
+    mapped_options.center = {3.f, 6.f};
+    mapped_options.forward = {1.f, 0.f};
+    mapped_options.team_id = 1;
+    const auto mapped_squad = spawn_aoe_gameplay_squad(
+        mapped_squad_fixture.world, mapped_options);
+    spawn_aoe_gameplay_unit_system(mapped_squad_fixture.world);
+    mapped_squad_fixture.advance_ticks(1);
+    AoeStaticObstacleDesc squad_wall;
+    squad_wall.shape = AoeStaticObstacleShape::Aabb;
+    squad_wall.center = {9.f, 6.f};
+    squad_wall.half_extents = {.45f, 2.5f};
+    mapped_squad_fixture.world.resource<AoeLogicMap>()
+        .add_static_obstacle(squad_wall);
+    assert(request_aoe_squad_move(
+        mapped_squad_fixture.world, mapped_squad, {16.f, 6.f}));
+    mapped_squad_fixture.advance_ticks(1);
+    const auto& mapped_guide = mapped_squad_fixture.world.reg()
+        .get<AoeNavigationPath>(mapped_squad);
+    assert(!mapped_guide.no_path && !mapped_guide.waypoints.empty());
+    bool guide_detours = false;
+    for (const auto waypoint : mapped_guide.waypoints)
+        guide_detours = guide_detours || std::abs(waypoint.y - 6.f) > 2.f;
+    assert(guide_detours);
+    for (const auto& member : mapped_squad_fixture.world.reg()
+             .get<AoeSquadMembers>(mapped_squad).active)
+        assert(mapped_squad_fixture.world.reg()
+                   .all_of<AoeNavigationPath>(member.entity));
+    mapped_squad_fixture.advance_ticks(160);
+    assert(mapped_squad_fixture.world.reg().get<AoeSquadState>(mapped_squad)
+               .phase == AoeSquadPhase::Idle);
+    assert(glm::length(mapped_squad_fixture.world.reg()
+               .get<AoePosition>(mapped_squad).value - glm::vec2(16.f, 6.f)) < .05f);
+
+    // The preview-sized route remains stable with a 64-member formation. The
+    // anchor follows its static guide while members independently split around
+    // the two barriers and eventually converge at the destination.
+    Fixture stress_squad_fixture;
+    stress_squad_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
+    AoeSquadSpawnOptions stress_options;
+    stress_options.composition = {{"test", 64, 1}};
+    stress_options.center = {-11.f, 0.f};
+    stress_options.forward = {1.f, 0.f};
+    stress_options.formation_spacing = .2f;
+    stress_options.team_id = 1;
+    const auto stress_squad = spawn_aoe_gameplay_squad(
+        stress_squad_fixture.world, stress_options);
+    spawn_aoe_gameplay_unit_system(stress_squad_fixture.world);
+    stress_squad_fixture.advance_ticks(1);
+    assert(stress_squad_fixture.world.reg().get<AoeSquadMembers>(stress_squad)
+               .active.size() == 64);
+    assert(request_aoe_squad_move(
+        stress_squad_fixture.world, stress_squad, {11.f, 0.f}));
+    stress_squad_fixture.advance_ticks(1);
+    const auto& stress_guide = stress_squad_fixture.world.reg()
+        .get<AoeNavigationPath>(stress_squad);
+    assert(!stress_guide.no_path && !stress_guide.waypoints.empty());
+    bool stress_detours = false;
+    for (const auto waypoint : stress_guide.waypoints)
+        stress_detours = stress_detours || std::abs(waypoint.y) > 2.5f;
+    assert(stress_detours);
+    stress_squad_fixture.advance_ticks(800);
+    assert(stress_squad_fixture.world.reg().get<AoeSquadState>(stress_squad)
+               .phase == AoeSquadPhase::Idle);
+    assert(glm::length(stress_squad_fixture.world.reg()
+               .get<AoePosition>(stress_squad).value - glm::vec2(11.f, 0.f)) < .05f);
+
+    // A sealed map produces a stable Blocked state. Changing the static map
+    // revision invalidates the guide and lets the same order resume.
+    Fixture blocked_squad_fixture;
+    blocked_squad_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    AoeSquadSpawnOptions blocked_options = mapped_options;
+    const auto blocked_squad = spawn_aoe_gameplay_squad(
+        blocked_squad_fixture.world, blocked_options);
+    spawn_aoe_gameplay_unit_system(blocked_squad_fixture.world);
+    blocked_squad_fixture.advance_ticks(1);
+    squad_wall.half_extents = {.45f, 6.f};
+    const auto blocking_wall = blocked_squad_fixture.world
+        .resource<AoeLogicMap>().add_static_obstacle(squad_wall);
+    assert(request_aoe_squad_move(
+        blocked_squad_fixture.world, blocked_squad, {16.f, 6.f}));
+    blocked_squad_fixture.advance_ticks(1);
+    assert(blocked_squad_fixture.world.reg().get<AoeSquadState>(blocked_squad)
+               .phase == AoeSquadPhase::Blocked);
+    assert(blocked_squad_fixture.world.resource<AoeLogicMap>()
+               .remove_static_obstacle(blocking_wall));
+    blocked_squad_fixture.advance_ticks(120);
+    assert(blocked_squad_fixture.world.reg().get<AoeSquadState>(blocked_squad)
+               .phase == AoeSquadPhase::Idle);
+
+    // A lagging member no longer freezes the virtual anchor and every other
+    // formation slot. The leash remains diagnostic-only while the member
+    // independently catches up at the destination.
+    Fixture leash_fixture;
+    leash_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    const auto leash_squad = spawn_aoe_gameplay_squad(
+        leash_fixture.world, mapped_options);
+    spawn_aoe_gameplay_unit_system(leash_fixture.world);
+    leash_fixture.advance_ticks(1);
+    const auto lagging_member = leash_fixture.world.reg()
+        .get<AoeSquadMembers>(leash_squad).active.front().entity;
+    assert(request_aoe_squad_move(
+        leash_fixture.world, leash_squad, {12.f, 6.f}));
+    leash_fixture.advance_ticks(1);
+    leash_fixture.world.reg().get<AoePosition>(lagging_member).value = {3.f, 11.f};
+    const glm::vec2 leash_anchor = leash_fixture.world.reg()
+        .get<AoePosition>(leash_squad).value;
+    leash_fixture.advance_ticks(1);
+    assert(leash_fixture.world.reg().get<AoePosition>(leash_squad).value.x >
+           leash_anchor.x);
+    leash_fixture.world.reg().get<AoePosition>(lagging_member).value = leash_anchor;
 
     Fixture partial_squad_fixture;
     AoeSquadSpawnOptions partial_options;
@@ -509,34 +850,28 @@ int main() {
     assert(request_aoe_squad_attack_move(
         squad_combat_fixture.world, attackers, {8.f, 0.f}));
     squad_combat_fixture.advance_ticks(1);
-    const auto shared_target = squad_combat_fixture.world.reg()
-        .get<AoeSquadOrder>(attackers).target;
-    assert(shared_target.entity == shared_enemy);
+    assert(squad_combat_fixture.world.reg().get<AoeSquadOrder>(attackers)
+               .target.entity == entt::null);
+    std::vector<entt::entity> distributed_targets;
     for (const auto& member : squad_combat_fixture.world.reg()
              .get<AoeSquadMembers>(attackers).active) {
         assert(squad_combat_fixture.world.reg().all_of<AoeAttackOrder>(member.entity));
-        assert(squad_combat_fixture.world.reg().get<AoeAttackOrder>(member.entity)
-                   .target.entity == shared_enemy);
+        distributed_targets.push_back(squad_combat_fixture.world.reg()
+            .get<AoeAttackOrder>(member.entity).target.entity);
+        assert(squad_combat_fixture.world.reg()
+            .all_of<AoeEngagementApproach>(member.entity));
+        assert(std::abs(squad_combat_fixture.world.reg()
+            .get<AoeEngagementApproach>(member.entity).desired_gap - 3.2f) < 1e-5f);
     }
-    for (int i = 0; i < 100 && squad_combat_fixture.world.reg()
-             .get<AoeHealth>(shared_enemy).current > 0.f; ++i)
+    std::sort(distributed_targets.begin(), distributed_targets.end());
+    assert(distributed_targets ==
+           std::vector<entt::entity>({shared_enemy, next_shared_enemy}));
+    for (int i = 0; i < 100 &&
+         (squad_combat_fixture.world.reg().get<AoeHealth>(shared_enemy).current > 0.f ||
+          squad_combat_fixture.world.reg().get<AoeHealth>(next_shared_enemy).current > 0.f);
+         ++i)
         squad_combat_fixture.advance_ticks(1);
     assert(squad_combat_fixture.world.reg().get<AoeHealth>(shared_enemy).current == 0.f);
-    squad_combat_fixture.advance_ticks(1);
-    assert(squad_combat_fixture.world.reg().get<AoeSquadOrder>(attackers)
-               .target.entity == next_shared_enemy);
-    assert(squad_combat_fixture.world.reg().get<AoeSquadState>(attackers).phase ==
-           AoeSquadPhase::Engaging);
-    for (const auto& member : squad_combat_fixture.world.reg()
-             .get<AoeSquadMembers>(attackers).active) {
-        assert(squad_combat_fixture.world.reg().all_of<AoeAttackOrder>(member.entity));
-        assert(squad_combat_fixture.world.reg().get<AoeAttackOrder>(member.entity)
-                   .target.entity == next_shared_enemy);
-    }
-
-    for (int i = 0; i < 100 && squad_combat_fixture.world.reg()
-             .get<AoeHealth>(next_shared_enemy).current > 0.f; ++i)
-        squad_combat_fixture.advance_ticks(1);
     assert(squad_combat_fixture.world.reg().get<AoeHealth>(next_shared_enemy).current == 0.f);
     const float center_before_resume = squad_combat_fixture.world.reg()
         .get<AoePosition>(attackers).value.x;
@@ -550,6 +885,36 @@ int main() {
     assert(squad_combat_fixture.world.reg().get<AoePosition>(attackers).value.x >
            center_before_resume);
 
+    Fixture partial_engagement_fixture;
+    AoeSquadSpawnOptions partial_engagement_options;
+    partial_engagement_options.composition = {{"test", 2, 1}};
+    partial_engagement_options.team_id = 1;
+    const auto partial_engagement_squad = spawn_aoe_gameplay_squad(
+        partial_engagement_fixture.world, partial_engagement_options);
+    spawn_aoe_gameplay_unit_system(partial_engagement_fixture.world);
+    partial_engagement_fixture.advance_ticks(1);
+    partial_engagement_fixture.unit({2.f, 0.f}, 500.f, 2);
+    assert(request_aoe_squad_attack_move(partial_engagement_fixture.world,
+                                         partial_engagement_squad,
+                                         {8.f, 0.f}));
+    partial_engagement_fixture.advance_ticks(1);
+    std::size_t engaged_members = 0;
+    std::size_t moving_members = 0;
+    for (const auto& member : partial_engagement_fixture.world.reg()
+             .get<AoeSquadMembers>(partial_engagement_squad).active) {
+        engaged_members += partial_engagement_fixture.world.reg()
+            .all_of<AoeAttackOrder>(member.entity);
+        moving_members += partial_engagement_fixture.world.reg()
+            .all_of<AoeMoveGoal>(member.entity);
+    }
+    assert(engaged_members == 1 && moving_members == 1);
+    const float partial_anchor = partial_engagement_fixture.world.reg()
+        .get<AoePosition>(partial_engagement_squad).value.x;
+    partial_engagement_fixture.advance_ticks(1);
+    assert(partial_engagement_fixture.world.reg()
+               .get<AoePosition>(partial_engagement_squad).value.x >
+           partial_anchor);
+
     const auto disband_member = squad_combat_fixture.world.reg()
         .get<AoeSquadMembers>(attackers).active.front().entity;
     assert(disband_aoe_gameplay_squad(squad_combat_fixture.world, attackers));
@@ -561,7 +926,7 @@ int main() {
     // another nearby enemy.
     Fixture explicit_squad_fixture;
     AoeSquadSpawnOptions explicit_squad_options;
-    explicit_squad_options.composition = {{"test", 1, 1}};
+    explicit_squad_options.composition = {{"test", 2, 1}};
     explicit_squad_options.team_id = 1;
     const auto explicit_squad = spawn_aoe_gameplay_squad(
         explicit_squad_fixture.world, explicit_squad_options);
@@ -571,6 +936,14 @@ int main() {
     const auto ignored_enemy = explicit_squad_fixture.unit({3.f, 0.f}, 50.f, 2);
     assert(request_aoe_squad_attack(
         explicit_squad_fixture.world, explicit_squad, explicit_enemy));
+    explicit_squad_fixture.advance_ticks(1);
+    for (const auto& member : explicit_squad_fixture.world.reg()
+             .get<AoeSquadMembers>(explicit_squad).active) {
+        assert(explicit_squad_fixture.world.reg().get<AoeAttackOrder>(
+                   member.entity).target.entity == explicit_enemy);
+        assert(explicit_squad_fixture.world.reg().all_of<
+                   AoeEngagementApproach>(member.entity));
+    }
     for (int i = 0; i < 100 && explicit_squad_fixture.world.reg()
              .get<AoeHealth>(explicit_enemy).current > 0.f; ++i)
         explicit_squad_fixture.advance_ticks(1);
@@ -589,6 +962,8 @@ int main() {
 
     // Logical movement is projected into the 2:1 isometric screen-facing space
     // before selecting the nearest clockwise SLD sector around screen +X.
+    // Locomotion-facing changes require two stable fixed ticks so velocity
+    // jitter at a sector boundary cannot dirty the render direction every tick.
     Fixture direction_fixture;
     const std::pair<glm::vec2, int> direction_cases[] = {
         {{ 1.f, -1.f},  0}, {{ 1.f,  0.f},  1},
@@ -599,7 +974,7 @@ int main() {
     for (const auto& [destination, expected] : direction_cases) {
         const auto mover = direction_fixture.unit({0.f, 0.f});
         assert(request_aoe_move(direction_fixture.world, mover, destination));
-        direction_fixture.advance_ticks(1);
+        direction_fixture.advance_ticks(2);
         assert(direction_fixture.world.reg().get<AoeFacing>(mover).direction == expected);
     }
 
@@ -617,9 +992,21 @@ int main() {
         const auto mover = direction_fixture.unit({0.f, 0.f});
         assert(request_aoe_move(direction_fixture.world, mover,
                                 logical_vector_for_screen_angle(degrees)));
-        direction_fixture.advance_ticks(1);
+        direction_fixture.advance_ticks(2);
         assert(direction_fixture.world.reg().get<AoeFacing>(mover).direction == expected);
     }
+    const auto jittering = direction_fixture.unit({0.f, 0.f});
+    for (int i = 0; i < 8; ++i) {
+        const float angle = (i & 1) ? 11.24f : 11.26f;
+        const auto current = direction_fixture.world.reg()
+            .get<AoePosition>(jittering).value;
+        assert(request_aoe_move(direction_fixture.world, jittering,
+            current + logical_vector_for_screen_angle(angle)));
+        direction_fixture.advance_ticks(1);
+    }
+    assert(direction_fixture.world.reg().get<AoeFacing>(jittering).direction == 0);
+    assert(direction_fixture.world.resource<AoeGameplayDiagnostics>()
+               .facing_changes_suppressed > 0);
     const auto stationary = direction_fixture.unit({2.f, 3.f});
     direction_fixture.world.reg().get<AoeFacing>(stationary).direction = 7;
     assert(request_aoe_move(direction_fixture.world, stationary, {2.f, 3.f}));
@@ -759,8 +1146,8 @@ int main() {
     }
     assert(saw_damage && saw_death);
 
-    // Attack Move acquires a hostile unit while travelling, ignores allies,
-    // keeps attacking until it dies, then resumes the original destination.
+    // Attack Move ignores hostiles outside real attack range, interrupts as
+    // soon as one enters range, then resumes the original destination.
     Fixture attack_move_fixture;
     const auto attack_mover = attack_move_fixture.unit({0.f, 0.f}, 50.f, 1);
     const auto attack_move_ally = attack_move_fixture.unit({1.f, 0.f}, 50.f, 1);
@@ -769,7 +1156,13 @@ int main() {
         attack_move_fixture.world, attack_mover, {10.f, 0.f}));
     attack_move_fixture.advance_ticks(1);
     assert(attack_move_fixture.world.reg().all_of<AoeAttackMoveOrder,
-        AoeAttackOrder, AoeMoveGoal>(attack_mover));
+        AoeMoveGoal>(attack_mover));
+    assert(!attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover));
+    for (int i = 0; i < 20 &&
+         !attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover);
+         ++i)
+        attack_move_fixture.advance_ticks(1);
+    assert(attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover));
     assert(attack_move_fixture.world.reg().get<AoeAttackOrder>(attack_mover)
                .target.entity == attack_move_enemy);
     assert(attack_move_fixture.world.reg().get<AoeAttackOrder>(attack_mover)
@@ -823,7 +1216,7 @@ int main() {
     const auto arrival_mover = arrival_fixture.unit({0.f, 0.f}, 50.f, 1);
     arrival_fixture.unit({.5f, 0.f}, 50.f, 1);
     assert(request_aoe_attack_move(arrival_fixture.world, arrival_mover, {1.f, 0.f}));
-    arrival_fixture.advance_ticks(10);
+    arrival_fixture.advance_ticks(20);
     assert(!arrival_fixture.world.reg().any_of<AoeAttackMoveOrder,
         AoeAttackOrder, AoeMoveGoal, AoeNavigationPath>(arrival_mover));
     assert(arrival_fixture.world.reg().get<AoeActionState>(arrival_mover).state ==
@@ -875,9 +1268,14 @@ int main() {
     assert(death_index < disappear_index && disappear_index < recycle_index);
     assert(lifecycle_events[disappear_index].tick - lifecycle_events[death_index].tick == 2);
     assert(lifecycle_events[recycle_index].tick - lifecycle_events[disappear_index].tick == 2);
+    fixture.world.reg().emplace<AoeMapStaticObstacle>(target);
+    fixture.world.reg().emplace<AoeEngagementApproach>(target);
     aoe_gameplay_recycle_system(fixture.world);
     assert(fixture.world.reg().valid(target) && fixture.world.reg().all_of<AoePooledUnit>(target));
     assert(!fixture.world.reg().all_of<AoePositionHistory>(target));
+    assert(!fixture.world.reg().all_of<AoeLocomotionState>(target));
+    assert(!fixture.world.reg().all_of<AoeMapStaticObstacle>(target));
+    assert(!fixture.world.reg().all_of<AoeEngagementApproach>(target));
     assert(fixture.world.resource<AoeGameplayPool>().available.size() == 1);
 
     AoeUnitSpawnOptions reuse_options;
@@ -892,6 +1290,10 @@ int main() {
     assert(fixture.world.reg().get<AoePositionHistory>(reused).previous ==
            glm::vec2(3.f, -2.f));
     assert(fixture.world.reg().get<AoeTeam>(reused).id == 7);
+    const auto& reused_motion = fixture.world.reg()
+        .get<AoeLocomotionState>(reused);
+    assert(reused_motion.velocity == glm::vec2(0.f));
+    assert(reused_motion.distance_travelled == 0.0);
     assert(fixture.world.reg().get<AoeGameplayIdentity>(reused).instance_id != old_identity);
 
     AoeGameplayCommand stale{AoeCommandType::AttackTarget, attacker};

@@ -27,6 +27,7 @@ int main() {
 
     auto definition = std::make_shared<AoeUnitDefinition>();
     definition->id = "test";
+    definition->movement.speed = 1.f;
     definition->presentation.backend = "aoe2";
     definition->presentation.resource_id = "u_test";
     definition->presentation.animations = {
@@ -50,6 +51,7 @@ int main() {
     world.reg().emplace<AoeFacing>(gameplay, AoeFacing{5, 16});
     world.reg().emplace<AoePresentationOptions>(gameplay,
         AoePresentationOptions{2, 0x4u});
+    world.reg().emplace<AoeLocomotionState>(gameplay);
 
     aoe2_gameplay_presentation_system(world);
     const auto first_child = world.reg().get<Aoe2PresentationLink>(gameplay).render;
@@ -96,6 +98,7 @@ int main() {
     assert(moving_start.loop && !moving_start.playing);
 
     world.resource<AoeGameplayClock>().tick = 14;
+    world.reg().get<AoeLocomotionState>(gameplay).distance_travelled = .1;
     aoe2_gameplay_presentation_system(world);
     const auto& moving = world.reg().get<Aoe2SpawnRequest>(first_child).options;
     assert(moving.playback_mode == Aoe2PlaybackMode::External);
@@ -202,6 +205,28 @@ int main() {
     assert(world.reg().valid(second_child) && second_child != first_child);
     assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
                     .options.playback_time, 0.1f));
+
+    // Moving playback consumes authoritative travelled distance: a blocked
+    // gameplay tick freezes the walk frame, while half nominal speed advances
+    // the animation clock by half a tick.
+    action.state = UnitState::Moving;
+    action.sequence = 13;
+    action.state_started_tick = 25;
+    aoe2_gameplay_presentation_system(world);
+    const float blocked_cursor = world.reg().get<Aoe2SpawnRequest>(second_child)
+        .options.playback_time;
+    world.resource<AoeGameplayClock>().tick = 26;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
+                    .options.playback_time, blocked_cursor));
+    world.reg().get<AoeLocomotionState>(gameplay).distance_travelled += .05;
+    world.resource<AoeGameplayClock>().tick = 27;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
+                    .options.playback_time, blocked_cursor + .05f));
+    action.state = UnitState::Disappearing;
+    action.sequence = 14;
+    action.state_started_tick = 27;
 
     // Presentation errors are attached to the parent and do not mutate its action.
     definition->presentation.backend = "unsupported";

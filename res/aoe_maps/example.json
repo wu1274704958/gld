@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "kind": "aoe_logic_map",
+  "id": "example",
+  "origin": {"x": 0.0, "y": 0.0},
+  "tile_size": 1.0,
+  "width": 4,
+  "height": 4,
+  "heights": [
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 1.0, 0.0,
+    0.0, 0.0, 1.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0
+  ],
+  "static_obstacles": [
+    {
+      "id": "building_01",
+      "shape": "aabb",
+      "center": {"x": 2.0, "y": 1.0},
+      "half_extents": {"x": 0.5, "y": 0.5}
+    },
+    {
+      "id": "tree_01",
+      "shape": "circle",
+      "center": {"x": 1.0, "y": 3.0},
+      "radius": 0.35
+    }
+  ]
+}

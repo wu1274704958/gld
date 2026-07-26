@@ -1,6 +1,7 @@
 #include <aoe/AoeGameplay.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -14,6 +15,78 @@ namespace gld::ecs::aoe {
 namespace {
 using json = nlohmann::json;
 constexpr float Epsilon = 1e-5f;
+
+float steering_dynamic_safe_fraction(
+    glm::vec2 from, glm::vec2 to, glm::vec2 radii,
+    std::span<const AoeSteeringNeighbor> neighbors) {
+    float result = 1.f;
+    const glm::vec2 delta = to - from;
+    for (const auto& neighbor : neighbors) {
+        const glm::vec2 combined = radii + neighbor.radii;
+        if (!(combined.x > 0.f) || !(combined.y > 0.f)) continue;
+        const glm::vec2 start = from - neighbor.position;
+        const float rx2 = combined.x * combined.x;
+        const float ry2 = combined.y * combined.y;
+        const float a = delta.x * delta.x / rx2 +
+                        delta.y * delta.y / ry2;
+        const float b = 2.f * (start.x * delta.x / rx2 +
+                               start.y * delta.y / ry2);
+        const float c = start.x * start.x / rx2 +
+                        start.y * start.y / ry2 - 1.f;
+        float enter = 1.f;
+        if (c <= 0.f) enter = b >= -Epsilon ? 1.f : 0.f;
+        else if (a > Epsilon) {
+            const float discriminant = b * b - 4.f * a * c;
+            if (discriminant >= 0.f) {
+                const float root = std::sqrt(std::max(0.f, discriminant));
+                const float value = (-b - root) / (2.f * a);
+                if (value >= 0.f && value <= 1.f) enter = value;
+            }
+        }
+        if (enter < 1.f)
+            result = std::min(result, std::max(0.f, enter - .0001f));
+    }
+    return result;
+}
+
+struct AStarOpenNode {
+    std::size_t index = 0;
+    float cost = 0.f;
+    float estimate = 0.f;
+};
+
+struct AStarOpenCompare {
+    bool operator()(const AStarOpenNode& a, const AStarOpenNode& b) const {
+        if (std::abs(a.estimate - b.estimate) > Epsilon)
+            return a.estimate > b.estimate;
+        if (std::abs(a.cost - b.cost) > Epsilon) return a.cost > b.cost;
+        return a.index > b.index;
+    }
+};
+
+struct AStarWorkspace {
+    std::vector<float> costs;
+    std::vector<std::size_t> parents;
+    std::vector<std::uint32_t> generations;
+    std::vector<std::uint32_t> closed;
+    std::vector<AStarOpenNode> open;
+    std::uint32_t generation = 0;
+
+    void begin(std::size_t count) {
+        if (costs.size() < count) {
+            costs.resize(count);
+            parents.resize(count);
+            generations.resize(count, 0);
+            closed.resize(count, 0);
+        }
+        if (++generation == 0) {
+            std::fill(generations.begin(), generations.end(), 0);
+            std::fill(closed.begin(), closed.end(), 0);
+            generation = 1;
+        }
+        open.clear();
+    }
+};
 
 float finite_number(const json& value, const char* name) {
     const double number = value.get<double>();
@@ -224,9 +297,9 @@ bool target_valid(const entt::registry& reg, const AoeUnitTarget& target) {
            reg.all_of<AoePosition, AoeCollider, AoeUnitDefinitionRef>(target.entity);
 }
 
-void set_facing_toward(AoeFacing& facing, glm::vec2 delta) {
+int facing_direction_toward(const AoeFacing& facing, glm::vec2 delta) {
     if (facing.direction_count <= 0 ||
-        glm::dot(delta, delta) <= Epsilon * Epsilon) return;
+        glm::dot(delta, delta) <= Epsilon * Epsilon) return facing.direction;
 
     // Gameplay positions use AoE map X/Y axes, while SLD directions are
     // screen-facing sectors. Project the delta through the same 2:1 isometric
@@ -247,11 +320,44 @@ void set_facing_toward(AoeFacing& facing, glm::vec2 delta) {
     const float sector_width = full_turn / static_cast<float>(facing.direction_count);
     const int sector = static_cast<int>(
         std::floor((angle + sector_width * .5f) / sector_width));
-    facing.direction = sector % facing.direction_count;
+    return sector % facing.direction_count;
+}
+
+void set_facing_toward(AoeFacing& facing, glm::vec2 delta) {
+    facing.direction = facing_direction_toward(facing, delta);
+}
+
+void set_locomotion_facing(
+    AoeFacing& facing, AoeLocomotionState& locomotion, glm::vec2 delta,
+    const AoeNavigationSettings& settings, AoeGameplayDiagnostics& diagnostics) {
+    const int desired = facing_direction_toward(facing, delta);
+    if (desired == facing.direction) {
+        locomotion.pending_facing_direction = -1;
+        locomotion.pending_facing_ticks = 0;
+        return;
+    }
+    if (locomotion.pending_facing_direction != desired) {
+        locomotion.pending_facing_direction = desired;
+        locomotion.pending_facing_ticks = 1;
+    } else if (locomotion.pending_facing_ticks <
+               std::numeric_limits<std::uint8_t>::max()) {
+        ++locomotion.pending_facing_ticks;
+    }
+    const auto stable_ticks = std::max(
+        1u, settings.steering_facing_stable_ticks);
+    if (locomotion.pending_facing_ticks < stable_ticks) {
+        ++diagnostics.facing_changes_suppressed;
+        return;
+    }
+    facing.direction = desired;
+    locomotion.pending_facing_direction = -1;
+    locomotion.pending_facing_ticks = 0;
+    ++diagnostics.facing_changes_committed;
 }
 
 void clear_active_engagement(entt::registry& reg, entt::entity entity) {
     reg.remove<AoeAttackOrder>(entity);
+    reg.remove<AoeEngagementApproach>(entity);
     reg.remove<AoeMoveGoal>(entity);
     reg.remove<AoeNavigationPath>(entity);
 }
@@ -269,6 +375,10 @@ void set_idle_if_active(entt::registry& reg, entt::entity entity,
     state.state_started_tick = tick;
     state.critical = false;
     state.release_emitted = false;
+    if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
+        locomotion->velocity = {0.f, 0.f};
+        locomotion->actual_speed = 0.f;
+    }
 }
 
 void begin_death(EcsWorld& world, entt::entity entity, std::uint64_t tick) {
@@ -398,6 +508,10 @@ void reset_member_action(entt::registry& reg, entt::entity entity,
     state->state_started_tick = tick;
     state->critical = false;
     state->release_emitted = false;
+    if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
+        locomotion->velocity = {0.f, 0.f};
+        locomotion->actual_speed = 0.f;
+    }
     if (changed) ++state->sequence;
 }
 
@@ -406,6 +520,20 @@ void stop_squad_member(entt::registry& reg, entt::entity entity,
     cancel_orders(reg, entity);
     if (remove_limit) reg.remove<AoeSquadMoveSpeedLimit>(entity);
     reset_member_action(reg, entity, tick);
+}
+
+void assign_engagement_approach(entt::registry& reg, entt::entity entity,
+                                const AoeUnitTarget& target,
+                                const AttackDefinition& attack) {
+    const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
+    const double seed = static_cast<double>(identity ? identity->instance_id : 0);
+    const double turn = std::fmod(seed * 0.6180339887498948482, 1.0);
+    const float angle = static_cast<float>(turn * glm::two_pi<double>());
+    const float range_factor = attack.mode == AttackMode::Projectile ? .8f : .5f;
+    reg.emplace_or_replace<AoeEngagementApproach>(entity,
+        AoeEngagementApproach{
+            target, {std::cos(angle), std::sin(angle)},
+            attack.range * range_factor, target.instance_id});
 }
 
 void attack_with_squad_member(entt::registry& reg, entt::entity entity,
@@ -420,6 +548,7 @@ void attack_with_squad_member(entt::registry& reg, entt::entity entity,
         return;
     }
     reg.emplace_or_replace<AoeAttackOrder>(entity, AoeAttackOrder{target});
+    assign_engagement_approach(reg, entity, target, *definition->attack);
     reset_member_action(reg, entity, tick);
 }
 
@@ -430,6 +559,34 @@ glm::vec2 squad_slot_world(const AoePosition& center,
     const glm::vec2 right{forward.y, -forward.x};
     return center.value + right * slot.local_offset.x +
            forward * slot.local_offset.y;
+}
+
+glm::vec2 attack_approach_destination(const entt::registry& reg,
+                                      entt::entity entity,
+                                      const AoeUnitTarget& target) {
+    const auto& target_position = reg.get<AoePosition>(target.entity);
+    const auto* approach = reg.try_get<AoeEngagementApproach>(entity);
+    if (!approach || approach->target.entity != target.entity ||
+        approach->target.instance_id != target.instance_id)
+        return target_position.value;
+    glm::vec2 direction = approach->direction;
+    if (glm::length(direction) <= Epsilon) direction = {1.f, 0.f};
+    else direction = glm::normalize(direction);
+    const auto& collider = reg.get<AoeCollider>(entity);
+    const auto& target_collider = reg.get<AoeCollider>(target.entity);
+    const float radius = aoe_collider_support_radius(target_collider, direction) +
+                         aoe_collider_support_radius(collider, -direction) +
+                         approach->desired_gap;
+    return target_position.value + direction * radius;
+}
+
+entt::entity ignored_formation_squad(const entt::registry& reg,
+                                     entt::entity entity) {
+    const auto* member = reg.try_get<AoeSquadMember>(entity);
+    if (!member || !reg.valid(member->squad)) return entt::null;
+    const auto* state = reg.try_get<AoeSquadState>(member->squad);
+    return state && state->phase == AoeSquadPhase::Engaging
+        ? entt::null : member->squad;
 }
 
 glm::vec2 squad_centroid(const entt::registry& reg,
@@ -536,6 +693,7 @@ void handle_squad_layout_failure(EcsWorld& world, entt::entity squad,
         spawn.errors.end())
         spawn.errors.emplace_back(message);
     clear_squad_member_orders(reg, members, tick);
+    reg.remove<AoeNavigationPath>(squad);
     order = {};
     spawn.status = AoeSquadSpawnStatus::Failed;
     state.phase = AoeSquadPhase::Failed;
@@ -548,6 +706,9 @@ void drive_squad_slots(entt::registry& reg, entt::entity squad,
     for (const auto& slot : formation.slots) {
         if (!squad_member_valid(reg, slot.unit)) continue;
         const auto entity = slot.unit.entity;
+        if (const auto* attack = reg.try_get<AoeAttackOrder>(entity);
+            attack && target_valid(reg, attack->target))
+            continue;
         const glm::vec2 destination = squad_slot_world(center, formation, slot);
         reg.remove<AoeAttackOrder, AoeAttackMoveOrder>(entity);
         reg.emplace_or_replace<AoeSquadMoveSpeedLimit>(entity,
@@ -559,10 +720,8 @@ void drive_squad_slots(entt::registry& reg, entt::entity squad,
         if (!path || path->waypoints.empty())
             reg.emplace_or_replace<AoeNavigationPath>(entity,
                 AoeNavigationPath{{destination}, 0});
-        else {
-            path->waypoints.back() = destination;
+        else
             path->current = std::min(path->current, path->waypoints.size() - 1);
-        }
         auto& state = reg.get<AoeActionState>(entity);
         if (state.state == UnitState::Attacking) reset_member_action(reg, entity, tick);
     }
@@ -651,15 +810,7 @@ void apply_command(EcsWorld& world, const AoeGameplayCommand& command, std::uint
         !reg.all_of<AoePosition, AoeCollider, AoeMovement, AoeFacing>(command.unit)) {
         reject(world); return;
     }
-    cancel_orders(reg, command.unit);
-    reg.emplace_or_replace<AoeAttackOrder>(command.unit, AoeAttackOrder{command.target});
-    if (state->state == UnitState::Attacking) {
-        state->state = UnitState::Idle;
-        state->state_started_tick = tick;
-        state->critical = false;
-        state->release_emitted = false;
-        ++state->sequence;
-    }
+    attack_with_squad_member(reg, command.unit, command.target, tick);
 }
 
 void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
@@ -667,7 +818,7 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
     auto* strategies = world.try_resource<AoeTargetAcquisitionRegistry>();
     if (!strategies) return;
     std::vector<entt::entity> finish;
-    for (const auto entity : reg.view<AoeAttackMoveOrder, AoePosition,
+    for (const auto entity : reg.view<AoeAttackMoveOrder, AoePosition, AoeCollider,
                                       AoeActionState, AoeUnitDefinitionRef,
                                       AoeTeam>(entt::exclude<AoePooledUnit,
                                                             AoeRecyclePending>)) {
@@ -682,7 +833,14 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
         }
 
         if (const auto* attack = reg.try_get<AoeAttackOrder>(entity)) {
-            if (target_valid(reg, attack->target)) continue;
+            if (target_valid(reg, attack->target)) {
+                if (state.state == UnitState::Attacking) continue;
+                const float gap = aoe_surface_gap(
+                    reg.get<AoePosition>(entity), reg.get<AoeCollider>(entity),
+                    reg.get<AoePosition>(attack->target.entity),
+                    reg.get<AoeCollider>(attack->target.entity));
+                if (gap <= definition->attack->range + Epsilon) continue;
+            }
             clear_active_engagement(reg, entity);
             set_idle_if_active(reg, entity, tick);
         }
@@ -691,7 +849,7 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
         const auto& acquisition = definition->target_acquisition;
         auto target = strategies->select(acquisition.strategy_id, world,
             AoeTargetAcquisitionContext{
-                entity, position.value, acquisition.radius,
+                entity, position.value, definition->attack->range,
                 reg.get<AoeTeam>(entity).id});
         if (target && (target->entity == entity || !target_valid(reg, *target)))
             target.reset();
@@ -700,6 +858,8 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
             reg.remove<AoeNavigationPath>(entity);
             reg.emplace_or_replace<AoeAttackOrder>(entity,
                 AoeAttackOrder{*target});
+            assign_engagement_approach(reg, entity, *target,
+                                       *definition->attack);
             set_idle_if_active(reg, entity, tick);
             continue;
         }
@@ -835,6 +995,7 @@ void apply_squad_command(EcsWorld& world, const AoeSquadCommand& command,
         return;
     }
     clear_squad_member_orders(reg, members, tick);
+    reg.remove<AoeNavigationPath>(command.squad);
     if (command.type == AoeSquadCommandType::Stop) {
         reg.get<AoePosition>(command.squad).value = squad_centroid(
             reg, members, reg.get<AoePosition>(command.squad).value);
@@ -888,17 +1049,96 @@ void engage_squad_target(EcsWorld& world, entt::entity squad,
     reg.get<AoeSquadState>(squad).phase = AoeSquadPhase::Engaging;
 }
 
-std::optional<AoeUnitTarget> select_squad_target(
-    EcsWorld& world, entt::entity squad,
-    const AoeTargetAcquisitionRegistry* acquisition) {
+std::optional<AoeUnitTarget> select_member_target(
+    EcsWorld& world, entt::entity entity,
+    const AoeTargetAcquisitionRegistry* acquisition,
+    std::span<const AoeUnitTarget> excluded) {
     if (!acquisition) return std::nullopt;
     auto& reg = world.reg();
-    const auto& combat = reg.get<AoeSquadCombatSettings>(squad);
-    auto target = acquisition->select(combat.acquisition_strategy_id, world,
-        {squad, reg.get<AoePosition>(squad).value, combat.acquisition_radius,
-         reg.get<AoeTeam>(squad).id});
+    const auto* reference = reg.try_get<AoeUnitDefinitionRef>(entity);
+    const auto* definition = reference ? reference->value.get() : nullptr;
+    if (!definition || !definition->attack ||
+        !acquisition->contains(definition->target_acquisition.strategy_id) ||
+        !reg.all_of<AoePosition, AoeTeam>(entity))
+        return std::nullopt;
+    auto target = acquisition->select(
+        definition->target_acquisition.strategy_id, world,
+        {entity, reg.get<AoePosition>(entity).value,
+         definition->attack->range, reg.get<AoeTeam>(entity).id,
+         excluded});
     if (!target || !target_valid(reg, *target)) return std::nullopt;
     return target;
+}
+
+bool update_squad_attack_move_engagement(
+    EcsWorld& world, entt::entity squad,
+    const AoeTargetAcquisitionRegistry* acquisition,
+    std::uint64_t tick) {
+    auto& reg = world.reg();
+    auto& members = reg.get<AoeSquadMembers>(squad);
+    bool active = false;
+    std::vector<AoeUnitTarget> claimed;
+    claimed.reserve(members.active.size());
+    for (const auto& member : members.active) {
+        if (!squad_member_valid(reg, member)) continue;
+        if (const auto* current = reg.try_get<AoeAttackOrder>(member.entity);
+            current && target_valid(reg, current->target)) {
+            const auto& action = reg.get<AoeActionState>(member.entity);
+            const auto* definition = reg.get<AoeUnitDefinitionRef>(
+                member.entity).value.get();
+            const float gap = definition && definition->attack
+                ? aoe_surface_gap(
+                    reg.get<AoePosition>(member.entity),
+                    reg.get<AoeCollider>(member.entity),
+                    reg.get<AoePosition>(current->target.entity),
+                    reg.get<AoeCollider>(current->target.entity))
+                : std::numeric_limits<float>::infinity();
+            if (action.state != UnitState::Attacking &&
+                (!definition || !definition->attack ||
+                 gap > definition->attack->range + Epsilon)) {
+                clear_active_engagement(reg, member.entity);
+                reset_member_action(reg, member.entity, tick);
+            } else {
+                const auto* approach = reg.try_get<AoeEngagementApproach>(
+                    member.entity);
+                if (!approach ||
+                    approach->target.entity != current->target.entity ||
+                    approach->target.instance_id !=
+                        current->target.instance_id) {
+                    if (definition && definition->attack)
+                        assign_engagement_approach(reg, member.entity,
+                                                   current->target,
+                                                   *definition->attack);
+                }
+                claimed.push_back(current->target);
+                active = true;
+                continue;
+            }
+        }
+        clear_active_engagement(reg, member.entity);
+        auto target = select_member_target(
+            world, member.entity, acquisition, claimed);
+        if (!target || !target_valid(reg, *target)) {
+            reset_member_action(reg, member.entity, tick);
+            continue;
+        }
+        attack_with_squad_member(reg, member.entity, *target, tick);
+        claimed.push_back(*target);
+        active = true;
+    }
+    if (active)
+        reg.get<AoeSquadState>(squad).phase = AoeSquadPhase::Engaging;
+    return active;
+}
+
+bool squad_has_unengaged_member(const entt::registry& reg,
+                                const AoeSquadMembers& members) {
+    for (const auto& member : members.active) {
+        if (!squad_member_valid(reg, member)) continue;
+        const auto* attack = reg.try_get<AoeAttackOrder>(member.entity);
+        if (!attack || !target_valid(reg, attack->target)) return true;
+    }
+    return false;
 }
 
 void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
@@ -919,6 +1159,7 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
         auto& state = reg.get<AoeSquadState>(squad);
         auto& center = reg.get<AoePosition>(squad);
         bool acquisition_attempted = false;
+        bool attack_move_active = false;
 
         if (formation.dirty && state.phase != AoeSquadPhase::Engaging) {
             if (!rebuild_squad_layout(world, squad)) {
@@ -936,21 +1177,35 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
                     reg.get<AoeMovement>(member.entity).speed);
         if (!std::isfinite(state.movement_speed)) state.movement_speed = 0.f;
 
+        if (order.type == AoeSquadOrderType::AttackMove &&
+            state.phase == AoeSquadPhase::Engaging) {
+            acquisition_attempted = true;
+            if (update_squad_attack_move_engagement(
+                    world, squad, acquisition, tick)) {
+                order.target = {};
+                attack_move_active = true;
+            } else {
+                clear_squad_member_orders(reg, members, tick);
+                order.target = {};
+                formation.dirty = true;
+                state.phase = AoeSquadPhase::Moving;
+            }
+        }
+
         if (order.target.entity != entt::null && !target_valid(reg, order.target)) {
             clear_squad_member_orders(reg, members, tick);
             order.target = {};
             center.value = squad_centroid(reg, members, center.value);
             formation.dirty = true;
+            reg.remove<AoeNavigationPath>(squad);
             if (order.type == AoeSquadOrderType::AttackTarget) {
                 order.type = AoeSquadOrderType::Idle;
                 state.phase = AoeSquadPhase::Regrouping;
             } else if (order.type == AoeSquadOrderType::AttackMove) {
                 acquisition_attempted = true;
-                if (auto next = select_squad_target(world, squad, acquisition)) {
-                    order.target = *next;
-                    engage_squad_target(world, squad, *next, tick);
-                    continue;
-                }
+                if (update_squad_attack_move_engagement(
+                        world, squad, acquisition, tick))
+                    attack_move_active = true;
                 const glm::vec2 delta = order.destination - center.value;
                 if (glm::length(delta) > Epsilon)
                     formation.forward = glm::normalize(delta);
@@ -982,27 +1237,97 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
 
         if (order.type == AoeSquadOrderType::AttackMove &&
             !acquisition_attempted) {
-            if (auto target = select_squad_target(world, squad, acquisition)) {
-                order.target = *target;
-                engage_squad_target(world, squad, *target, tick);
-                continue;
-            }
+            order.target = {};
+            if (update_squad_attack_move_engagement(
+                    world, squad, acquisition, tick))
+                attack_move_active = true;
         }
+
+        // If every live member is fighting, defer the squad movement exactly
+        // like a single-unit Attack Move. Otherwise the anchor and unengaged
+        // members continue, while drive_squad_slots skips active attackers.
+        if (attack_move_active && !squad_has_unengaged_member(reg, members))
+            continue;
 
         if (order.type == AoeSquadOrderType::MoveTo ||
             order.type == AoeSquadOrderType::AttackMove) {
-            const glm::vec2 delta = order.destination - center.value;
-            const float distance = glm::length(delta);
-            if (distance > Epsilon && state.movement_speed > 0.f) {
-                formation.forward = delta / distance;
-                center.value += formation.forward * std::min(
-                    distance, state.movement_speed * dt);
-                state.phase = AoeSquadPhase::Moving;
+            auto* guide = reg.try_get<AoeNavigationPath>(squad);
+            const auto* map = world.try_resource<AoeLogicMap>();
+            const std::uint64_t revision = map ? map->static_revision() : 0;
+            const bool needs_guide = !guide ||
+                (!guide->no_path && (guide->waypoints.empty() ||
+                                     guide->current >= guide->waypoints.size())) ||
+                glm::length(guide->requested_goal - order.destination) > Epsilon ||
+                guide->map_revision != revision;
+            if (needs_guide) {
+                const std::uint64_t next_sequence = guide
+                    ? guide->request_sequence + 1 : 1;
+                glm::vec2 clearance{0.f};
+                bool have_member = false;
+                for (const auto& member : members.active) {
+                    if (!squad_member_valid(reg, member)) continue;
+                    const auto& collider = reg.get<AoeCollider>(member.entity);
+                    const glm::vec2 radii{collider.radius_x, collider.radius_y};
+                    clearance = have_member ? glm::min(clearance, radii) : radii;
+                    have_member = true;
+                }
+                auto& registry = world.resource_or_add<AoePathfinderRegistry>();
+                if (!registry.contains("direct"))
+                    registry.bind<DirectPathfinderLogic>("direct");
+                if (!registry.contains("grid_astar"))
+                    registry.bind<GridAStarPathfinderLogic>("grid_astar");
+                const auto& navigation =
+                    world.resource_or_add<AoeNavigationSettings>();
+                const auto result = registry.find(
+                    map ? navigation.squad_pathfinder_id : "direct", world,
+                    {center.value, order.destination, clearance,
+                     squad, squad, entt::null, false});
+                auto& value = reg.emplace_or_replace<AoeNavigationPath>(squad);
+                value.requested_goal = order.destination;
+                value.map_revision = result.map_revision;
+                value.request_sequence = next_sequence;
+                value.last_repath_tick = tick;
+                value.waypoints = result.waypoints;
+                value.current = 0;
+                value.no_path = result.status != AoePathStatus::Ready ||
+                                value.waypoints.empty();
+                guide = &value;
+                world.resource_or_add<Events<AoeNavigationEvent>>().emit(
+                    squad, value.request_sequence,
+                    value.no_path ? AoeNavigationEventStatus::NoPath
+                                  : AoeNavigationEventStatus::Ready,
+                    tick);
             }
+            if (guide->no_path) {
+                state.phase = AoeSquadPhase::Blocked;
+                drive_squad_slots(reg, squad, state.movement_speed, tick);
+                continue;
+            }
+
+            // The guide represents the squad's intent, not a hard tether.
+            // Individual members may temporarily fall behind while detouring;
+            // freezing the anchor made every other slot stop as well and left
+            // the slowest member unable to catch a moving slot.
+            if (state.movement_speed > 0.f) {
+                while (guide->current < guide->waypoints.size()) {
+                    const glm::vec2 delta = guide->waypoints[guide->current] -
+                                            center.value;
+                    const float distance = glm::length(delta);
+                    if (distance <= Epsilon) { ++guide->current; continue; }
+                    formation.forward = delta / distance;
+                    center.value += formation.forward * std::min(
+                        distance, state.movement_speed * dt);
+                    break;
+                }
+            }
+            state.phase = attack_move_active
+                ? AoeSquadPhase::Engaging : AoeSquadPhase::Moving;
             drive_squad_slots(reg, squad, state.movement_speed, tick);
-            if (glm::length(order.destination - center.value) <= Epsilon &&
+            if (guide->current >= guide->waypoints.size() &&
+                glm::length(order.destination - center.value) <= Epsilon &&
                 squad_slots_arrived(reg, squad)) {
                 clear_squad_member_orders(reg, members, tick);
+                reg.remove<AoeNavigationPath>(squad);
                 order = {};
                 state.phase = AoeSquadPhase::Idle;
             }
@@ -1036,6 +1361,45 @@ void command_tick(EcsWorld& world, std::uint64_t tick) {
     }
 }
 
+bool plan_navigation_path(EcsWorld& world, entt::entity entity,
+                          glm::vec2 goal, bool include_dynamic,
+                          entt::entity ignored_dynamic_target,
+                          std::uint64_t tick) {
+    auto& reg = world.reg();
+    if (!reg.all_of<AoePosition, AoeCollider>(entity)) return false;
+    auto& path = reg.get_or_emplace<AoeNavigationPath>(entity);
+    const auto& collider = reg.get<AoeCollider>(entity);
+    const entt::entity squad = ignored_formation_squad(reg, entity);
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    auto& registry = world.resource_or_add<AoePathfinderRegistry>();
+    if (!registry.contains("direct"))
+        registry.bind<DirectPathfinderLogic>("direct");
+    if (!registry.contains("grid_astar"))
+        registry.bind<GridAStarPathfinderLogic>("grid_astar");
+    const std::string& id = world.try_resource<AoeLogicMap>()
+        ? settings.unit_pathfinder_id : std::string("direct");
+    const auto result = registry.find(id, world, {
+        reg.get<AoePosition>(entity).value, goal,
+        {collider.radius_x, collider.radius_y}, entity, squad,
+        ignored_dynamic_target, include_dynamic});
+    ++path.request_sequence;
+    path.requested_goal = goal;
+    path.map_revision = result.map_revision;
+    path.last_repath_tick = tick;
+    path.include_dynamic_obstacles = include_dynamic;
+    path.blocked_ticks = 0;
+    path.current = 0;
+    path.waypoints = result.waypoints;
+    path.no_path = result.status != AoePathStatus::Ready ||
+                   path.waypoints.empty();
+    world.resource_or_add<Events<AoeNavigationEvent>>().emit(
+        entity, path.request_sequence,
+        path.no_path ? AoeNavigationEventStatus::NoPath
+                     : AoeNavigationEventStatus::Ready,
+        tick);
+    return !path.no_path;
+}
+
 void navigation_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
     std::vector<entt::entity> invalid;
@@ -1052,10 +1416,17 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
                                           target_position, target_collider);
         if (state.state == UnitState::Attacking) continue;
         if (gap > definition->attack->range + Epsilon) {
+            const auto* approach = reg.try_get<AoeEngagementApproach>(entity);
+            const bool has_approach = approach &&
+                approach->target.entity == order.target.entity &&
+                approach->target.instance_id == order.target.instance_id;
             reg.emplace_or_replace<AoeMoveGoal>(entity,
-                AoeMoveGoal{target_position.value, definition->attack->range, order.target});
-            reg.emplace_or_replace<AoeNavigationPath>(entity,
-                AoeNavigationPath{{target_position.value}, 0});
+                AoeMoveGoal{
+                    has_approach
+                        ? attack_approach_destination(reg, entity, order.target)
+                        : target_position.value,
+                    has_approach ? 0.f : definition->attack->range,
+                    order.target});
             if (state.state != UnitState::Moving) {
                 state.state = UnitState::Moving;
                 state.state_started_tick = tick;
@@ -1076,31 +1447,133 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
         else cancel_orders(reg, entity);
         set_idle_if_active(reg, entity, tick);
     }
-}
 
-void movement_tick(EcsWorld& world, std::uint64_t tick) {
-    auto& reg = world.reg();
-    const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
-    std::vector<entt::entity> arrived;
-    for (auto entity : reg.view<AoePosition, AoeMovement, AoeMoveGoal,
-                                AoeNavigationPath, AoeActionState, AoeFacing>()) {
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const std::uint64_t map_revision = map ? map->static_revision() : 0;
+    const auto& nav_settings = world.resource_or_add<AoeNavigationSettings>();
+    for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMoveGoal,
+                                      AoeActionState>(
+             entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
         auto& state = reg.get<AoeActionState>(entity);
         if (state.state == UnitState::Attacking || is_terminal(state.state)) continue;
         auto& goal = reg.get<AoeMoveGoal>(entity);
+        if (goal.target.entity != entt::null) {
+            if (!target_valid(reg, goal.target)) continue;
+            goal.destination = reg.all_of<AoeEngagementApproach>(entity)
+                ? attack_approach_destination(reg, entity, goal.target)
+                : reg.get<AoePosition>(goal.target.entity).value;
+        }
+        auto* path = reg.try_get<AoeNavigationPath>(entity);
+        const float threshold = reg.all_of<AoeSquadMember>(entity) ||
+                                goal.target.entity != entt::null
+            ? nav_settings.slot_repath_distance : Epsilon;
+        bool needs_path = !path ||
+            (!path->no_path &&
+             (path->waypoints.empty() || path->current >= path->waypoints.size())) ||
+            (path && glm::length(path->requested_goal - goal.destination) > threshold) ||
+            (path && path->map_revision != map_revision);
+        bool include_dynamic = path && path->include_dynamic_obstacles;
+        if (path && path->no_path) {
+            if (path->map_revision != map_revision) needs_path = true;
+            else if (path->include_dynamic_obstacles &&
+                     tick - path->last_repath_tick >= [&] {
+                         const auto* identity =
+                             reg.try_get<AoeGameplayIdentity>(entity);
+                         return nav_settings.repath_cooldown_ticks +
+                             static_cast<std::uint32_t>(
+                                 identity ? identity->instance_id % 3u : 0u);
+                     }())
+                needs_path = true;
+        }
+        if (path && !path->no_path && !needs_path &&
+            glm::length(path->requested_goal - goal.destination) > Epsilon &&
+            !path->waypoints.empty()) {
+            const glm::vec2 tail_start = path->waypoints.size() > 1
+                ? path->waypoints[path->waypoints.size() - 2]
+                : reg.get<AoePosition>(entity).value;
+            const glm::vec2 radii{reg.get<AoeCollider>(entity).radius_x,
+                                  reg.get<AoeCollider>(entity).radius_y};
+            if (map && map->valid() &&
+                map->static_safe_fraction(tail_start, goal.destination,
+                                          radii) < 1.f) {
+                needs_path = true;
+            } else {
+                path->waypoints.back() = goal.destination;
+                path->requested_goal = goal.destination;
+            }
+        }
+        if (needs_path) {
+            if (!plan_navigation_path(world, entity, goal.destination,
+                                      include_dynamic, goal.target.entity,
+                                      tick)) {
+                state.state = include_dynamic ||
+                    reg.all_of<AoeSquadMember>(entity)
+                    ? UnitState::Moving : UnitState::Idle;
+                state.state_started_tick = tick;
+            } else if (state.state == UnitState::Idle) {
+                state.state = UnitState::Moving;
+                state.state_started_tick = tick;
+            }
+        }
+    }
+}
+
+void movement_tick(EcsWorld& world, std::uint64_t tick) {
+    const auto movement_started = std::chrono::steady_clock::now();
+    auto& reg = world.reg();
+    const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
+    {
+        auto& steering = world.resource_or_add<AoeSteeringRegistry>();
+        if (!steering.contains("local_default"))
+            steering.bind<DefaultLocalSteeringLogic>("local_default");
+    }
+    // EcsWorld resource insertion can relocate its type-erased storage. Take
+    // long-lived references only after all resources needed by this tick have
+    // been materialized.
+    world.resource_or_add<Events<AoeNavigationEvent>>();
+    world.resource_or_add<AoeGameplayDiagnostics>();
+    world.resource_or_add<AoeCrowdSteeringScratch>();
+    const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
+    const auto& steering = world.resource<AoeSteeringRegistry>();
+    for (const auto entity : reg.view<AoeLocomotionState>()) {
+        auto& locomotion = reg.get<AoeLocomotionState>(entity);
+        locomotion.previous_velocity = locomotion.velocity;
+        locomotion.actual_speed = 0.f;
+    }
+    auto& scratch = world.resource<AoeCrowdSteeringScratch>();
+    auto& arrived = scratch.arrived;
+    auto& neighbors = scratch.nearest_neighbors;
+    arrived.clear();
+    neighbors.clear();
+    neighbors.reserve(navigation.steering_max_neighbors + 1u);
+    for (auto entity : reg.view<AoePosition, AoeCollider, AoeMovement, AoeMoveGoal,
+                                AoeNavigationPath, AoeActionState, AoeFacing>()) {
+        auto& locomotion = reg.get_or_emplace<AoeLocomotionState>(entity);
+        auto& state = reg.get<AoeActionState>(entity);
+        if (state.state == UnitState::Attacking || is_terminal(state.state)) {
+            locomotion.velocity = {0.f, 0.f};
+            continue;
+        }
+        auto& goal = reg.get<AoeMoveGoal>(entity);
         auto& path = reg.get<AoeNavigationPath>(entity);
+        if (path.no_path) {
+            locomotion.velocity = {0.f, 0.f};
+            continue;
+        }
         if (goal.target.entity != entt::null) {
             if (!target_valid(reg, goal.target)) { arrived.push_back(entity); continue; }
-            goal.destination = reg.get<AoePosition>(goal.target.entity).value;
+            goal.destination = reg.all_of<AoeEngagementApproach>(entity)
+                ? attack_approach_destination(reg, entity, goal.target)
+                : reg.get<AoePosition>(goal.target.entity).value;
         }
         if (path.waypoints.empty() || path.current >= path.waypoints.size()) {
             arrived.push_back(entity);
             continue;
         }
-        if (goal.target.entity != entt::null) path.waypoints.back() = goal.destination;
         auto& position = reg.get<AoePosition>(entity);
         glm::vec2 delta = path.waypoints[path.current] - position.value;
         const float distance = glm::length(delta);
-        bool reached = distance <= Epsilon;
+        bool reached = distance <= .01f;
         float remaining = distance;
         const bool final_waypoint = path.current + 1 >= path.waypoints.size();
         if (goal.target.entity != entt::null && final_waypoint && !reached) {
@@ -1110,14 +1583,256 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             reached = remaining <= Epsilon;
         }
         if (!reached) {
-            const glm::vec2 direction = delta / distance;
+            const glm::vec2 preferred_direction = delta / distance;
             float speed = reg.get<AoeMovement>(entity).speed;
             if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity))
                 speed = std::min(speed, limit->value);
-            const float step = std::min(remaining, speed * dt);
-            position.value += direction * step;
-            set_facing_toward(reg.get<AoeFacing>(entity), direction);
-            state.state = UnitState::Moving;
+            // Arrive instead of orbiting a final point. With a persistent
+            // heading, full speed all the way to an epsilon-sized target can
+            // repeatedly overshoot it, especially after a sharp A* corner.
+            float desired_speed = std::min(speed, remaining / .25f);
+            if (glm::length(locomotion.velocity) > Epsilon) {
+                const float alignment = glm::dot(
+                    glm::normalize(locomotion.velocity), preferred_direction);
+                // Turn in place at a reduced pace instead of carrying full
+                // tangential speed around a sharp waypoint indefinitely.
+                desired_speed *= std::clamp(
+                    (alignment + .25f) / 1.25f, .1f, 1.f);
+            }
+            const glm::vec2 preferred_velocity =
+                preferred_direction * desired_speed;
+            const auto& collider = reg.get<AoeCollider>(entity);
+            const glm::vec2 radii{collider.radius_x, collider.radius_y};
+            const auto* map = world.try_resource<AoeLogicMap>();
+            const auto* dynamic = world.try_resource<AoeDynamicObstacleIndex>();
+            const entt::entity ignored_squad =
+                ignored_formation_squad(reg, entity);
+            neighbors.clear();
+            if (map && map->valid() && dynamic &&
+                dynamic->entries().size() > 1 &&
+                navigation.steering_max_neighbors > 0) {
+                const float query_radius = std::max(
+                    speed * navigation.steering_prediction_seconds +
+                        navigation.steering_separation_padding,
+                    std::max(radii.x, radii.y) * 4.f);
+                dynamic->query(*map, position.value - glm::vec2(query_radius),
+                    position.value + glm::vec2(query_radius),
+                    [&](const AoeDynamicObstacleEntry& obstacle) {
+                        if (obstacle.entity == entity ||
+                            (ignored_squad != entt::null &&
+                             obstacle.squad == ignored_squad))
+                            return;
+                        const AoeSteeringNeighbor candidate{obstacle.entity,
+                            obstacle.instance_id, obstacle.center,
+                            obstacle.radii, obstacle.velocity};
+                        const auto insertion = std::lower_bound(
+                            neighbors.begin(), neighbors.end(), candidate,
+                            [&](const AoeSteeringNeighbor& existing,
+                                const AoeSteeringNeighbor& value) {
+                                const auto relevance = [&](const auto& item) {
+                                    const glm::vec2 delta =
+                                        item.position - position.value;
+                                    const glm::vec2 combined = radii +
+                                        item.radii + glm::vec2(Epsilon);
+                                    return delta.x * delta.x /
+                                               (combined.x * combined.x) +
+                                           delta.y * delta.y /
+                                               (combined.y * combined.y);
+                                };
+                                const float existing_distance = relevance(existing);
+                                const float value_distance = relevance(value);
+                                if (std::abs(existing_distance - value_distance) >
+                                    Epsilon)
+                                    return existing_distance < value_distance;
+                                return existing.instance_id < value.instance_id;
+                            });
+                        if (insertion == neighbors.end() &&
+                            neighbors.size() >= navigation.steering_max_neighbors)
+                            return;
+                        neighbors.insert(insertion, candidate);
+                        if (neighbors.size() > navigation.steering_max_neighbors)
+                            neighbors.pop_back();
+                    });
+            }
+            const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
+            auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
+            diagnostics.steering_neighbors_considered += neighbors.size();
+            bool threatened = false;
+            bool imminent = false;
+            std::uint64_t threat_signature = 1469598103934665603ull;
+            const auto heading_x = static_cast<std::int32_t>(
+                std::round(preferred_direction.x * 1024.f));
+            const auto heading_y = static_cast<std::int32_t>(
+                std::round(preferred_direction.y * 1024.f));
+            threat_signature ^= static_cast<std::uint32_t>(heading_x);
+            threat_signature *= 1099511628211ull;
+            threat_signature ^= static_cast<std::uint32_t>(heading_y);
+            threat_signature *= 1099511628211ull;
+            for (const auto& neighbor : neighbors) {
+                threat_signature ^= neighbor.instance_id;
+                threat_signature *= 1099511628211ull;
+                const glm::vec2 relative_position =
+                    neighbor.position - position.value;
+                const glm::vec2 relative_velocity =
+                    preferred_velocity - neighbor.velocity;
+                const float relative_speed2 = glm::dot(
+                    relative_velocity, relative_velocity);
+                const float closest_time = relative_speed2 > Epsilon
+                    ? std::clamp(glm::dot(relative_position, relative_velocity) /
+                                     relative_speed2,
+                                 0.f,
+                                 navigation.steering_prediction_seconds)
+                    : 0.f;
+                const glm::vec2 closest = relative_position -
+                    relative_velocity * closest_time;
+                const glm::vec2 combined = radii + neighbor.radii +
+                    glm::vec2(std::max(0.f,
+                        navigation.steering_separation_padding));
+                const float normalized2 =
+                    closest.x * closest.x / (combined.x * combined.x) +
+                    closest.y * closest.y / (combined.y * combined.y);
+                threatened = threatened || normalized2 < 4.f;
+                imminent = imminent ||
+                    (normalized2 < 1.f && closest_time <=
+                        navigation.steering_imminent_collision_seconds);
+            }
+            AoeSteeringResult steering_result{preferred_velocity};
+            const auto interval = std::max(
+                1u, navigation.steering_full_solve_interval);
+            const bool cache_valid = locomotion.last_steering_tick != 0 &&
+                glm::dot(locomotion.cached_target_velocity,
+                         locomotion.cached_target_velocity) > Epsilon * Epsilon;
+            const bool cadence_due = !identity ||
+                ((tick + identity->instance_id) % interval == 0);
+            const bool signature_changed =
+                threat_signature != locomotion.threat_signature;
+            const bool full_solve = !threatened || imminent || !cache_valid ||
+                signature_changed || cadence_due;
+            if (!full_solve) {
+                steering_result.target_velocity =
+                    locomotion.cached_target_velocity;
+                steering_result.avoidance_side = locomotion.avoidance_side;
+                steering_result.threatened = true;
+                ++diagnostics.steering_cached_solves;
+            } else if (steering.contains(navigation.steering_strategy_id)) {
+                steering_result = steering.steer(
+                    navigation.steering_strategy_id,
+                    {entity, identity ? identity->instance_id : 0,
+                     position.value, radii, locomotion.velocity,
+                     preferred_velocity, path.waypoints[path.current], speed,
+                     navigation.steering_prediction_seconds,
+                     navigation.steering_separation_padding,
+                     map && map->valid() ? map : nullptr, neighbors,
+                     locomotion.avoidance_side,
+                     navigation.steering_side_switch_margin +
+                         (locomotion.avoidance_side_hold_ticks > 0 && !imminent
+                              ? 2.f : 0.f)});
+                locomotion.cached_target_velocity =
+                    steering_result.target_velocity;
+                locomotion.last_steering_tick = tick;
+                locomotion.threat_signature = threat_signature;
+                if (imminent) ++diagnostics.steering_imminent_solves;
+                else if (threatened) ++diagnostics.steering_full_solves;
+                else ++diagnostics.steering_fast_path;
+            } else {
+                ++diagnostics.steering_fallbacks;
+            }
+            if (locomotion.avoidance_side_hold_ticks > 0)
+                --locomotion.avoidance_side_hold_ticks;
+            if (steering_result.avoidance_side != 0 &&
+                steering_result.avoidance_side != locomotion.avoidance_side) {
+                if (locomotion.avoidance_side != 0)
+                    ++diagnostics.steering_side_switches;
+                locomotion.avoidance_side = static_cast<std::int8_t>(
+                    steering_result.avoidance_side);
+                locomotion.avoidance_side_hold_ticks =
+                    static_cast<std::uint8_t>(std::min(
+                        navigation.steering_side_hold_ticks,
+                        static_cast<std::uint32_t>(
+                            std::numeric_limits<std::uint8_t>::max())));
+            }
+            glm::vec2 target_velocity = steering_result.target_velocity;
+            if (!std::isfinite(target_velocity.x) ||
+                !std::isfinite(target_velocity.y)) {
+                target_velocity = preferred_velocity;
+                ++diagnostics.steering_fallbacks;
+            }
+            const float target_speed = std::min(speed, glm::length(target_velocity));
+            glm::vec2 target_direction = target_speed > Epsilon
+                ? target_velocity / glm::length(target_velocity)
+                : preferred_direction;
+            const float current_speed = glm::length(locomotion.velocity);
+            glm::vec2 new_direction = target_direction;
+            if (current_speed > Epsilon) {
+                const glm::vec2 current_direction =
+                    locomotion.velocity / current_speed;
+                const float signed_angle = std::atan2(
+                    current_direction.x * target_direction.y -
+                        current_direction.y * target_direction.x,
+                    std::clamp(glm::dot(current_direction, target_direction),
+                               -1.f, 1.f));
+                const float max_turn = std::max(0.f,
+                    navigation.steering_max_turn_radians_per_second) * dt;
+                const float turn = std::clamp(signed_angle, -max_turn, max_turn);
+                const float c = std::cos(turn);
+                const float s = std::sin(turn);
+                new_direction = {current_direction.x * c - current_direction.y * s,
+                                 current_direction.x * s + current_direction.y * c};
+            }
+            const float max_speed_change = std::max(
+                0.f, navigation.steering_max_acceleration) * dt;
+            const float new_speed = current_speed < target_speed
+                ? std::min(target_speed, current_speed + max_speed_change)
+                : std::max(target_speed, current_speed - max_speed_change);
+            glm::vec2 velocity = new_direction * new_speed;
+            const float step = std::min(remaining, glm::length(velocity) * dt);
+            const glm::vec2 move_direction = glm::length(velocity) > Epsilon
+                ? glm::normalize(velocity) : preferred_direction;
+            const glm::vec2 candidate = position.value + move_direction * step;
+            float safe = 1.f;
+            if (map && map->valid()) {
+                safe = map->static_safe_fraction(position.value, candidate, radii);
+                if (dynamic) {
+                    safe = std::min(safe,
+                        navigation.steering_max_neighbors > 0
+                            ? steering_dynamic_safe_fraction(
+                                  position.value, candidate, radii, neighbors)
+                            : dynamic->dynamic_safe_fraction(
+                                  *map, position.value, candidate, radii,
+                                  entity, ignored_squad));
+                }
+            }
+            const glm::vec2 displacement = move_direction * step * safe;
+            position.value += displacement;
+            locomotion.velocity = dt > 0.f ? displacement / dt : glm::vec2{0.f};
+            locomotion.actual_speed = glm::length(locomotion.velocity);
+            locomotion.distance_travelled += glm::length(displacement);
+            if (locomotion.actual_speed > navigation.steering_stalled_speed)
+                set_locomotion_facing(reg.get<AoeFacing>(entity), locomotion,
+                    locomotion.velocity, navigation, diagnostics);
+            const float forward_progress = glm::dot(
+                displacement, preferred_direction);
+            if (forward_progress + Epsilon <
+                navigation.steering_stalled_speed * dt) {
+                ++path.blocked_ticks;
+                const std::uint32_t repath_trigger = std::max(
+                    1u, navigation.blocked_repath_ticks);
+                if (path.blocked_ticks == repath_trigger)
+                    world.resource_or_add<Events<AoeNavigationEvent>>().emit(
+                        entity, path.request_sequence,
+                        AoeNavigationEventStatus::Blocked, tick);
+                if (path.blocked_ticks >= repath_trigger) {
+                    path.include_dynamic_obstacles = true;
+                    path.waypoints.clear();
+                    path.current = 0;
+                    path.no_path = false;
+                    path.blocked_ticks = 0;
+                }
+                state.state = UnitState::Moving;
+            } else {
+                path.blocked_ticks = 0;
+                state.state = UnitState::Moving;
+            }
         } else if (!final_waypoint) {
             ++path.current;
             state.state = UnitState::Moving;
@@ -1125,6 +1840,15 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
     }
     for (auto entity : arrived) {
         if (!reg.valid(entity)) continue;
+        if (const auto* goal = reg.try_get<AoeMoveGoal>(entity);
+            goal && goal->target.entity == entt::null &&
+            reg.all_of<AoePosition>(entity)) {
+            auto& position = reg.get<AoePosition>(entity);
+            const float snapped = glm::length(goal->destination - position.value);
+            position.value = goal->destination;
+            if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity))
+                locomotion->distance_travelled += snapped;
+        }
         reg.remove<AoeMoveGoal>(entity);
         reg.remove<AoeNavigationPath>(entity);
         auto& state = reg.get<AoeActionState>(entity);
@@ -1132,7 +1856,23 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             state.state = UnitState::Idle;
             state.state_started_tick = tick;
         }
+        if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
+            locomotion->velocity = {0.f, 0.f};
+            locomotion->actual_speed = 0.f;
+        }
     }
+    for (const auto entity : reg.view<AoeLocomotionState>(
+             entt::exclude<AoeMoveGoal>)) {
+        auto& locomotion = reg.get<AoeLocomotionState>(entity);
+        locomotion.velocity = {0.f, 0.f};
+        locomotion.actual_speed = 0.f;
+    }
+    auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
+    diagnostics.movement_last_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - movement_started).count();
+    diagnostics.movement_peak_ms = std::max(
+        diagnostics.movement_peak_ms, diagnostics.movement_last_ms);
 }
 
 void combat_tick(EcsWorld& world, std::uint64_t tick) {
@@ -1294,6 +2034,8 @@ void fixed_tick(EcsWorld& world) {
     ++clock.tick;
     capture_position_history_tick(world);
     squad_spawn_resolution_tick(world);
+    aoe_map_static_obstacle_system(world);
+    aoe_dynamic_obstacle_index_system(world);
     squad_command_tick(world, clock.tick);
     command_tick(world, clock.tick);
     squad_membership_cleanup_tick(world);
@@ -1321,6 +2063,372 @@ glm::vec2 aoe_interpolated_position(
     const float alpha = static_cast<float>(std::clamp(
         clock.accumulator / settings.fixed_dt, 0.0, 1.0));
     return history->previous + (current.value - history->previous) * alpha;
+}
+
+void AoePathfinderRegistry::bind_erased(std::string id, FindFn function) {
+    if (id.empty() || !function)
+        throw std::invalid_argument(
+            "pathfinder binding requires a non-empty id and function");
+    if (!entries_.emplace(std::move(id), function).second)
+        throw std::invalid_argument("duplicate pathfinder binding");
+}
+
+bool AoePathfinderRegistry::contains(std::string_view id) const {
+    return entries_.find(std::string(id)) != entries_.end();
+}
+
+AoePathResult AoePathfinderRegistry::find(
+    std::string_view id, EcsWorld& world,
+    const AoePathRequest& request) const {
+    const auto it = entries_.find(std::string(id));
+    return it == entries_.end()
+        ? AoePathResult{AoePathStatus::NoPath}
+        : it->second(world, request);
+}
+
+void AoeSteeringRegistry::bind_erased(std::string id, SteerFn function) {
+    if (id.empty() || !function)
+        throw std::invalid_argument(
+            "steering binding requires a non-empty id and function");
+    if (!entries_.emplace(std::move(id), function).second)
+        throw std::invalid_argument("duplicate steering binding");
+}
+
+bool AoeSteeringRegistry::contains(std::string_view id) const {
+    return entries_.find(std::string(id)) != entries_.end();
+}
+
+AoeSteeringResult AoeSteeringRegistry::steer(
+    std::string_view id, const AoeSteeringContext& context) const {
+    const auto it = entries_.find(std::string(id));
+    return it == entries_.end()
+        ? AoeSteeringResult{context.preferred_velocity}
+        : it->second(context);
+}
+
+AoeSteeringResult DefaultLocalSteeringLogic::steer(
+    const AoeSteeringContext& context) {
+    const float preferred_speed = glm::length(context.preferred_velocity);
+    if (!(preferred_speed > Epsilon) || !(context.max_speed > 0.f))
+        return {};
+
+    const glm::vec2 preferred = context.preferred_velocity / preferred_speed;
+    const glm::vec2 current = glm::length(context.current_velocity) > Epsilon
+        ? glm::normalize(context.current_velocity) : preferred;
+    const float horizon = std::max(0.f, context.prediction_seconds);
+    bool threatened = false;
+    for (const auto& neighbor : context.neighbors) {
+        const glm::vec2 relative_position = neighbor.position - context.position;
+        const glm::vec2 relative_velocity =
+            context.preferred_velocity - neighbor.velocity;
+        const float relative_speed2 = glm::dot(relative_velocity,
+                                               relative_velocity);
+        const float closest_time = relative_speed2 > Epsilon
+            ? std::clamp(glm::dot(relative_position, relative_velocity) /
+                             relative_speed2,
+                         0.f, horizon)
+            : 0.f;
+        const glm::vec2 separation = relative_position -
+            relative_velocity * closest_time;
+        const glm::vec2 combined = context.radii + neighbor.radii +
+            glm::vec2(std::max(0.f, context.separation_padding));
+        const float normalized2 =
+            separation.x * separation.x / (combined.x * combined.x) +
+            separation.y * separation.y / (combined.y * combined.y);
+        if (normalized2 < 4.f) { threatened = true; break; }
+    }
+
+    const float desired_feeler = std::max(
+        context.max_speed * horizon,
+        std::max(context.radii.x, context.radii.y) * 1.5f);
+    const float feeler = std::min(
+        desired_feeler,
+        std::max(Epsilon, glm::length(context.goal - context.position)));
+    float straight_clearance = 1.f;
+    if (context.map && context.map->valid() && horizon > 0.f)
+        straight_clearance = context.map->static_safe_fraction(
+            context.position, context.position + preferred * feeler,
+            context.radii);
+    if (!threatened && straight_clearance >= 1.f - Epsilon)
+        return {context.preferred_velocity, context.preferred_avoidance_side,
+                false};
+
+    // The common case compares only straight, cached-side lateral and the
+    // opposite lateral candidate. This replaces the old nine trigonometric
+    // candidates while retaining an escape for wall/crowd conflicts.
+    constexpr float Diagonal = .7071067811865475f;
+    const glm::vec2 left{
+        (preferred.x - preferred.y) * Diagonal,
+        (preferred.x + preferred.y) * Diagonal};
+    const glm::vec2 right{
+        (preferred.x + preferred.y) * Diagonal,
+        (-preferred.x + preferred.y) * Diagonal};
+    const int held_side = context.preferred_avoidance_side == 0
+        ? 1 : (context.preferred_avoidance_side > 0 ? 1 : -1);
+    const std::array<std::pair<glm::vec2, int>, 3> candidates{{
+        {preferred, 0},
+        {held_side > 0 ? left : right, held_side},
+        {held_side > 0 ? right : left, -held_side}}};
+
+    float best_score = -std::numeric_limits<float>::infinity();
+    glm::vec2 best = context.preferred_velocity;
+    int best_side = held_side;
+    for (const auto& [direction, side] : candidates) {
+        const glm::vec2 velocity = direction *
+            std::min(preferred_speed, context.max_speed);
+        float static_clearance = side == 0 ? straight_clearance : 1.f;
+        if (side != 0 && context.map && context.map->valid() && horizon > 0.f)
+            static_clearance = context.map->static_safe_fraction(
+                context.position, context.position + direction * feeler,
+                context.radii);
+
+        float dynamic_penalty = 0.f;
+        float nearest_margin = 4.f;
+        for (const auto& neighbor : context.neighbors) {
+            const glm::vec2 relative_position =
+                neighbor.position - context.position;
+            const glm::vec2 relative_velocity = velocity - neighbor.velocity;
+            const float relative_speed2 = glm::dot(
+                relative_velocity, relative_velocity);
+            const float closest_time = relative_speed2 > Epsilon
+                ? std::clamp(glm::dot(relative_position, relative_velocity) /
+                                 relative_speed2,
+                             0.f, horizon)
+                : 0.f;
+            const glm::vec2 separation = relative_position -
+                relative_velocity * closest_time;
+            const glm::vec2 combined = context.radii + neighbor.radii +
+                glm::vec2(std::max(0.f, context.separation_padding));
+            const float normalized2 =
+                separation.x * separation.x / (combined.x * combined.x) +
+                separation.y * separation.y / (combined.y * combined.y);
+            nearest_margin = std::min(nearest_margin, normalized2);
+            if (normalized2 < 1.f)
+                dynamic_penalty += (1.f - normalized2) * 12.f + 4.f;
+            else if (normalized2 < 4.f)
+                dynamic_penalty += (4.f - normalized2) * .25f;
+        }
+
+        const float progress = glm::dot(direction, preferred);
+        const float continuity = glm::dot(direction, current);
+        float score = progress * 3.f + continuity * .75f +
+                      static_clearance * 8.f +
+                      std::min(nearest_margin, 4.f) * .15f - dynamic_penalty;
+        if (static_clearance <= Epsilon) score -= 100.f;
+        if (side == held_side)
+            score += std::max(0.f, context.side_switch_margin);
+        if (score > best_score) {
+            best_score = score;
+            best = velocity;
+            best_side = side == 0 ? held_side : side;
+        }
+    }
+    return {best, best_side, true};
+}
+
+AoePathResult DirectPathfinderLogic::find(
+    EcsWorld&, const AoePathRequest& request) {
+    if (!std::isfinite(request.start.x) || !std::isfinite(request.start.y))
+        return {AoePathStatus::InvalidStart};
+    if (!std::isfinite(request.goal.x) || !std::isfinite(request.goal.y))
+        return {AoePathStatus::InvalidGoal};
+    return {AoePathStatus::Ready, {request.goal}, 0};
+}
+
+AoePathResult GridAStarPathfinderLogic::find(
+    EcsWorld& world, const AoePathRequest& request) {
+    auto* map = world.try_resource<AoeLogicMap>();
+    if (!map || !map->valid()) return DirectPathfinderLogic::find(world, request);
+    if (!std::isfinite(request.start.x) || !std::isfinite(request.start.y) ||
+        !map->contains(request.start, request.clearance))
+        return {AoePathStatus::InvalidStart, {}, map->static_revision()};
+    if (!std::isfinite(request.goal.x) || !std::isfinite(request.goal.y) ||
+        !map->contains(request.goal, request.clearance) ||
+        map->position_blocked(request.goal, request.clearance))
+        return {AoePathStatus::InvalidGoal, {}, map->static_revision()};
+    const auto start_cell = map->world_to_cell(request.start);
+    const auto goal_cell = map->world_to_cell(request.goal);
+    if (!start_cell || !goal_cell)
+        return {AoePathStatus::NoPath, {}, map->static_revision()};
+
+    const std::size_t width = map->width();
+    const std::size_t count = width * map->height();
+    const auto index_of = [width](int x, int y) {
+        return static_cast<std::size_t>(y) * width +
+               static_cast<std::size_t>(x);
+    };
+    const auto coords = [width](std::size_t index) {
+        return AoeMapCell{static_cast<int>(index % width),
+                          static_cast<int>(index / width)};
+    };
+    const auto heuristic = [](int x, int y, int gx, int gy) {
+        const int dx = std::abs(gx - x);
+        const int dy = std::abs(gy - y);
+        return static_cast<float>(std::max(dx, dy)) +
+               .41421356237f * static_cast<float>(std::min(dx, dy));
+    };
+    const std::size_t start = index_of(start_cell->x, start_cell->y);
+    const std::size_t goal = index_of(goal_cell->x, goal_cell->y);
+    auto& workspace = world.resource_or_add<AStarWorkspace>();
+    workspace.begin(count);
+    workspace.generations[start] = workspace.generation;
+    workspace.costs[start] = 0.f;
+    workspace.parents[start] = start;
+    workspace.open.push_back({start, 0.f,
+        heuristic(start_cell->x, start_cell->y,
+                  goal_cell->x, goal_cell->y)});
+    std::push_heap(workspace.open.begin(), workspace.open.end(),
+                   AStarOpenCompare{});
+
+    const auto* dynamic = request.include_dynamic_obstacles
+        ? world.try_resource<AoeDynamicObstacleIndex>() : nullptr;
+    const auto clear_segment = [&](glm::vec2 from, glm::vec2 to) {
+        if (map->static_safe_fraction(from, to, request.clearance) < 1.f)
+            return false;
+        return !dynamic || dynamic->dynamic_safe_fraction(
+            *map, from, to, request.clearance, request.subject,
+            request.squad) >= 1.f;
+    };
+    const auto traversable = [&](int x, int y, bool is_goal = false) {
+        if (!map->cell_traversable(x, y, request.clearance)) return false;
+        return !dynamic || !dynamic->cell_occupied(
+            *map, x, y, request.clearance, request.subject, request.squad,
+            is_goal ? request.ignored_dynamic_target : entt::null);
+    };
+    constexpr std::array<AoeMapCell, 8> Neighbors{{
+        {1, 0}, {0, 1}, {-1, 0}, {0, -1},
+        {1, 1}, {-1, 1}, {-1, -1}, {1, -1}}};
+    bool found = false;
+    while (!workspace.open.empty()) {
+        std::pop_heap(workspace.open.begin(), workspace.open.end(),
+                      AStarOpenCompare{});
+        const auto current = workspace.open.back();
+        workspace.open.pop_back();
+        if (workspace.closed[current.index] == workspace.generation) continue;
+        if (workspace.generations[current.index] != workspace.generation ||
+            current.cost > workspace.costs[current.index] + Epsilon) continue;
+        workspace.closed[current.index] = workspace.generation;
+        if (current.index == goal) { found = true; break; }
+        const auto cell = coords(current.index);
+        for (const auto offset : Neighbors) {
+            const int nx = cell.x + offset.x;
+            const int ny = cell.y + offset.y;
+            if (nx < 0 || ny < 0 || nx >= static_cast<int>(map->width()) ||
+                ny >= static_cast<int>(map->height())) continue;
+            const std::size_t next = index_of(nx, ny);
+            if (!traversable(nx, ny, next == goal)) continue;
+            const bool diagonal = offset.x != 0 && offset.y != 0;
+            if (diagonal &&
+                (!traversable(cell.x + offset.x, cell.y) ||
+                 !traversable(cell.x, cell.y + offset.y))) continue;
+            const glm::vec2 edge_from = current.index == start
+                ? request.start : map->cell_center(cell.x, cell.y);
+            const glm::vec2 edge_to = next == goal
+                ? request.goal : map->cell_center(nx, ny);
+            if (!clear_segment(edge_from, edge_to)) continue;
+            const float next_cost = workspace.costs[current.index] +
+                (diagonal ? 1.41421356237f : 1.f);
+            if (workspace.generations[next] == workspace.generation &&
+                next_cost + Epsilon >= workspace.costs[next]) continue;
+            workspace.generations[next] = workspace.generation;
+            workspace.costs[next] = next_cost;
+            workspace.parents[next] = current.index;
+            workspace.open.push_back({next, next_cost, next_cost +
+                heuristic(nx, ny, goal_cell->x, goal_cell->y)});
+            std::push_heap(workspace.open.begin(), workspace.open.end(),
+                           AStarOpenCompare{});
+        }
+    }
+    if (!found)
+        return {AoePathStatus::NoPath, {}, map->static_revision()};
+
+    std::vector<glm::vec2> raw;
+    for (std::size_t cursor = goal;; cursor = workspace.parents[cursor]) {
+        const auto cell = coords(cursor);
+        raw.push_back(map->cell_center(cell.x, cell.y));
+        if (cursor == start) break;
+    }
+    std::reverse(raw.begin(), raw.end());
+    if (!raw.empty() && glm::length(raw.front() - request.start) > Epsilon)
+        raw.insert(raw.begin(), request.start);
+    if (!raw.empty()) raw.back() = request.goal;
+    std::vector<glm::vec2> simplified;
+    std::size_t cursor = 0;
+    while (cursor + 1 < raw.size()) {
+        std::size_t next = raw.size() - 1;
+        while (next > cursor + 1 && !clear_segment(raw[cursor], raw[next]))
+            --next;
+        simplified.push_back(raw[next]);
+        cursor = next;
+    }
+    if (raw.size() == 1) simplified.push_back(request.goal);
+    return {AoePathStatus::Ready, std::move(simplified),
+            map->static_revision()};
+}
+
+void aoe_map_static_obstacle_system(EcsWorld& world) {
+    auto* map = world.try_resource<AoeLogicMap>();
+    if (!map || !map->valid()) return;
+    auto& reg = world.reg();
+    auto& bindings = world.resource_or_add<AoeStaticObstacleBindings>();
+    for (auto it = bindings.entities.begin(); it != bindings.entities.end();) {
+        if (!reg.valid(it->first) ||
+            !reg.all_of<AoeMapStaticObstacle, AoePosition>(it->first)) {
+            map->remove_static_obstacle(it->second);
+            it = bindings.entities.erase(it);
+        } else ++it;
+    }
+    for (const auto entity : reg.view<AoeMapStaticObstacle, AoePosition>()) {
+        auto& component = reg.get<AoeMapStaticObstacle>(entity);
+        const auto center = reg.get<AoePosition>(entity).value;
+        AoeStaticObstacleDesc desc;
+        desc.shape = component.shape;
+        desc.center = center;
+        desc.half_extents = component.half_extents;
+        desc.radius = component.radius;
+        const bool changed = component.obstacle_id == 0 ||
+            component.registered_center != center ||
+            component.registered_shape != component.shape ||
+            component.registered_half_extents != component.half_extents ||
+            component.registered_radius != component.radius;
+        if (!changed) continue;
+        if (!component.obstacle_id)
+            component.obstacle_id = map->add_static_obstacle(desc);
+        else if (!map->update_static_obstacle(component.obstacle_id, desc))
+            component.obstacle_id = map->add_static_obstacle(desc);
+        if (!component.obstacle_id) continue;
+        bindings.entities[entity] = component.obstacle_id;
+        component.registered_center = center;
+        component.registered_shape = component.shape;
+        component.registered_half_extents = component.half_extents;
+        component.registered_radius = component.radius;
+    }
+}
+
+void aoe_dynamic_obstacle_index_system(EcsWorld& world) {
+    auto& index = world.resource_or_add<AoeDynamicObstacleIndex>();
+    auto* map = world.try_resource<AoeLogicMap>();
+    if (!map || !map->valid()) { index.clear(); return; }
+    auto& reg = world.reg();
+    const auto view = reg.view<AoePosition, AoeCollider, AoeGameplayIdentity>(
+        entt::exclude<AoePooledUnit, AoeRecyclePending>);
+    index.reset(*map);
+    index.reserve(view.size_hint());
+    for (const auto entity : view) {
+        const auto& collider = reg.get<AoeCollider>(entity);
+        if (!(collider.radius_x > 0.f) || !(collider.radius_y > 0.f)) continue;
+        entt::entity squad = entt::null;
+        if (const auto* member = reg.try_get<AoeSquadMember>(entity))
+            squad = member->squad;
+        index.insert(*map, {entity,
+            reg.get<AoeGameplayIdentity>(entity).instance_id, squad,
+            reg.get<AoePosition>(entity).value,
+            {collider.radius_x, collider.radius_y},
+            reg.all_of<AoeLocomotionState>(entity)
+                ? reg.get<AoeLocomotionState>(entity).velocity
+                : glm::vec2{0.f}});
+    }
+    index.finalize(*map);
 }
 
 void AoeFormationRegistry::bind_erased(
@@ -1402,6 +2510,12 @@ std::optional<AoeUnitTarget> NearestEnemyAcquisitionStrategy::select(
             continue;
         const auto& identity = reg.get<AoeGameplayIdentity>(candidate);
         const AoeUnitTarget target{candidate, identity.instance_id};
+        if (std::find_if(context.excluded.begin(), context.excluded.end(),
+                [&](const AoeUnitTarget& value) {
+                    return value.entity == target.entity &&
+                           value.instance_id == target.instance_id;
+                }) != context.excluded.end())
+            continue;
         if (!target_valid(reg, target)) continue;
         const float gap = aoe_surface_gap(
             seeker_position, seeker_collider,
@@ -1899,6 +3013,7 @@ double aoe_action_elapsed_seconds(const AoeActionState& state,
 
 void clear_aoe_gameplay_events(EcsWorld& world) {
     world.resource_or_add<Events<AoeActionEvent>>().clear();
+    world.resource_or_add<Events<AoeNavigationEvent>>().clear();
 }
 
 void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
@@ -1932,6 +3047,7 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
         reg.emplace_or_replace<AoeCollider>(entity, AoeCollider{
             definition->collision.radius_x, definition->collision.radius_y, definition->collision.height});
         reg.emplace_or_replace<AoeMovement>(entity, AoeMovement{definition->movement.speed});
+        reg.emplace_or_replace<AoeLocomotionState>(entity);
         reg.emplace_or_replace<AoeTeam>(entity, AoeTeam{request.options.team_id});
         const int direction_count = std::max(1, request.options.direction_count);
         reg.emplace_or_replace<AoeFacing>(entity, AoeFacing{
@@ -1984,10 +3100,13 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
         reg.remove<AoeGameplaySpawnRequest, AoeGameplaySpawnError, AoeUnitDefinitionRef,
                    AoeHealth, AoeLevel, AoeCollider, AoePosition,
                    AoePositionHistory, AoeMovement, AoeTeam,
+                   AoeLocomotionState,
                    AoeFacing,
                    AoePresentationOptions, AoeActionState, AoeGameplayIdentity,
                    AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,
-                   AoeNavigationPath, AoeSquadMember, AoeSquadMoveSpeedLimit,
+                   AoeEngagementApproach, AoeNavigationPath, AoeSquadMember,
+                   AoeSquadMoveSpeedLimit,
+                   AoeMapStaticObstacle,
                    Transform>(entity);
         reg.remove<AoeRecyclePending>(entity);
         reg.emplace_or_replace<AoePooledUnit>(entity);
@@ -2002,6 +3121,8 @@ void AoeGameplayPlugin::operator()(App& app) const {
         throw std::invalid_argument("AoeGameplayPlugin requires positive finite fixed_dt and max_catchup_ticks");
     auto& server = app.world.resource<AssetServer>();
     server.register_loader<AoeUnitDefinitionDesc>(std::make_shared<AoeUnitDefinitionLoader>());
+    server.register_loader<AoeMapDefinitionDesc>(
+        std::make_shared<AoeMapDefinitionLoader>());
     auto& manager = app.world.add_resource<AoeUnitDefinitionManager>(server, definitions_root);
     manager.refresh();
     app.world.add_resource<AoeGameplaySettings>(settings);
@@ -2011,7 +3132,20 @@ void AoeGameplayPlugin::operator()(App& app) const {
     app.world.resource_or_add<AoeGameplayCommands>();
     app.world.resource_or_add<AoeSquadCommands>();
     app.world.resource_or_add<Events<AoeActionEvent>>();
+    app.world.resource_or_add<Events<AoeNavigationEvent>>();
     app.world.resource_or_add<AoeGameplayDiagnostics>();
+    app.world.resource_or_add<AoeCrowdSteeringScratch>();
+    app.world.resource_or_add<AoeNavigationSettings>();
+    app.world.resource_or_add<AoeDynamicObstacleIndex>();
+    app.world.resource_or_add<AoeStaticObstacleBindings>();
+    auto& pathfinders = app.world.resource_or_add<AoePathfinderRegistry>();
+    if (!pathfinders.contains("direct"))
+        pathfinders.bind<DirectPathfinderLogic>("direct");
+    if (!pathfinders.contains("grid_astar"))
+        pathfinders.bind<GridAStarPathfinderLogic>("grid_astar");
+    auto& steering = app.world.resource_or_add<AoeSteeringRegistry>();
+    if (!steering.contains("local_default"))
+        steering.bind<DefaultLocalSteeringLogic>("local_default");
     auto& formations = app.world.resource_or_add<AoeFormationRegistry>();
     if (!formations.contains(AoeFormationType::Skirmish))
         formations.bind<AoeFormationType::Skirmish,

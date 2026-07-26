@@ -47,7 +47,7 @@ namespace gld::ecs {
         if (!w) { glfwTerminate(); return; }
         glfwMakeContextCurrent(w);
         gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress));
-        glfwSwapInterval(1);
+        glfwSwapInterval(vsync ? 1 : 0);
 
         auto& win = app.world.resource_or_add<Window>();
         win.handle = w;
@@ -55,6 +55,7 @@ namespace gld::ecs {
         win.height = height;
         win.title = title;
         win.should_close = false;
+        win.vsync = vsync;
 
         // Ensure event resources exist so callbacks can push safely.
         app.world.resource_or_add<Events<KeyEvent>>();
@@ -104,6 +105,13 @@ namespace gld::ecs {
         });
 
         app.add_system(Stage::PreUpdate, window_resize_system);
+    }
+
+    void set_window_vsync(Window& window, bool enabled) {
+        if (!window.handle) return;
+        glfwMakeContextCurrent(window.handle);
+        glfwSwapInterval(enabled ? 1 : 0);
+        window.vsync = enabled;
     }
 
     static void frame_end(EcsWorld& world) {

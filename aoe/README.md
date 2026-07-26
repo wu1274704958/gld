@@ -104,18 +104,170 @@ attack cycles until the target dies or another command replaces the order. Targe
 references include an instance ID so a stale order cannot attack a recycled
 entity's new incarnation.
 
-Attack Move searches while travelling, pauses at an acquired enemy and reuses
-the persistent attack behavior, then resumes its original destination after the
-target dies. An explicit AttackTarget, MoveTo, Stop, or a new Attack Move
-replaces the previous command. `AoeUnitSpawnOptions::team_id` assigns gameplay
+Attack Move checks for enemies already inside the unit's real collider
+surface-to-surface attack range before navigation each fixed tick. Such a target
+defers movement immediately; enemies that are merely inside the wider acquisition
+radius are not chased. The retained destination resumes after the target dies or
+leaves range. Explicit AttackTarget remains the command for pursuing a selected
+enemy. AttackTarget, MoveTo, Stop, or a new Attack Move replaces the previous
+command. `AoeUnitSpawnOptions::team_id` assigns gameplay
 affiliation and is reset when a pooled entity is reused.
 
-The fixed pipeline is commands, Attack Move acquisition, navigation, movement,
-combat, projectile, then lifecycle.
+The fixed pipeline synchronizes map obstacles first, then processes commands,
+Attack Move acquisition, navigation, movement, combat, projectile, and
+lifecycle.
 Navigation writes `AoeNavigationPath`; movement only consumes waypoints. This is
-the extension boundary for later pathfinding, obstacle avoidance, and steering.
+the extension boundary for pathfinding, obstacle avoidance, and steering.
 Range uses the support radii of both elliptical colliders rather than center
 distance alone.
+
+## Logical maps and navigation
+
+`AoeLogicMap` is a finite, renderer-independent rectangular grid. Gameplay X/Y
+positions remain `glm::vec2`; terrain elevation is queried separately with
+`sample_height(position)`. Height values live on the `(width + 1) * (height +
+1)` grid vertices and sampling is bilinear. Points on or beyond the exclusive
+maximum map edge, and all other out-of-bounds points, return `std::nullopt`.
+This version stores height for later combat rules but does not apply slope or
+high-ground bonuses.
+
+A map can be installed programmatically:
+
+```cpp
+AoeMapDefinition definition;
+definition.id = "arena";
+definition.origin = {-16.f, -16.f};
+definition.tile_size = 1.f;
+definition.width = 32;
+definition.height = 32;
+definition.heights.assign(33 * 33, 0.f);
+
+AoeStaticObstacleDesc keep;
+keep.source_id = "keep_01";
+keep.shape = AoeStaticObstacleShape::Aabb;
+keep.center = {0.f, 0.f};
+keep.half_extents = {2.f, 2.f};
+definition.static_obstacles.push_back(keep);
+
+world.add_resource<AoeLogicMap>(definition);
+```
+
+The same data can be loaded as a schema-1 asset (see
+`res/aoe_maps/example.json`):
+
+```json
+{
+  "schema_version": 1,
+  "kind": "aoe_logic_map",
+  "id": "example",
+  "origin": {"x": 0.0, "y": 0.0},
+  "tile_size": 1.0,
+  "width": 4,
+  "height": 4,
+  "heights": [
+    0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0,
+    0, 0, 1, 1, 0,
+    0, 0, 1, 1, 0,
+    0, 0, 0, 0, 0
+  ],
+  "static_obstacles": [
+    {
+      "id": "building_01",
+      "shape": "aabb",
+      "center": {"x": 2.0, "y": 1.0},
+      "half_extents": {"x": 0.5, "y": 0.5}
+    },
+    {
+      "id": "tree_01",
+      "shape": "circle",
+      "center": {"x": 1.0, "y": 3.0},
+      "radius": 0.35
+    }
+  ]
+}
+```
+
+Static obstacles support axis-aligned AABBs and circles. Runtime building-like
+entities can own `AoeMapStaticObstacle` plus `AoePosition`; the fixed map system
+adds, updates, and removes their stable obstacle records automatically. Every
+static change increments `static_revision()`, invalidating paths that were
+planned against older geometry.
+
+All active gameplay units are dynamic obstacles. A reusable uniform-grid index
+is rebuilt once per fixed tick from `AoePosition`, `AoeCollider`, and
+`AoeGameplayIdentity`; pooled and recycle-pending units are excluded. Its
+two-pass count/prefix/fill build keeps cell ranges and memberships contiguous,
+and generation marks deduplicate multi-cell candidates without per-query sets.
+Movement performs swept elliptical collision against the retained nearest
+candidates instead of querying the grid twice or checking every unit. Members
+of the same squad
+ignore one another while following formation slots. During `Engaging` they
+become dynamic obstacles to one another, so occupied front-line space makes
+later members route around the sides instead of overlapping.
+
+The built-in deterministic `grid_astar` uses eight neighbors, prevents diagonal
+corner cutting, respects elliptical clearance, and simplifies the result only
+across collision-free line-of-sight segments. A deterministic local steering
+layer keeps a fixed top-eight set from the dynamic grid without sorting every
+query result. No-threat movement uses one straight feeler; threatened movement
+compares only straight and two lateral candidates. Threatened results are
+cached for two staggered ticks unless contact is imminent. The chosen avoidance
+side receives a six-tick switching margin, and sprite facing must remain in a
+new sector for two fixed ticks. Persistent velocity is constrained by
+acceleration and turn rate, while swept ellipse tests remain the final
+anti-penetration authority. Transient contacts steer locally; sustained
+lack of forward progress triggers a dynamic A* replan after the configured
+blocked threshold. Failed replans retry after a three-tick cooldown with a small
+deterministic per-entity offset. Static no-path results wait until the map
+revision changes. `AoeNavigationEvent` reports `Ready`, `Blocked`, and `NoPath`.
+Without an `AoeLogicMap` resource, navigation deliberately falls back to the
+old direct waypoint behavior. `AoeCrowdSteeringScratch` retains movement scratch
+capacity across fixed ticks, and `AoeGameplayDiagnostics` exposes fast, full,
+cached and imminent solve counts plus side/facing changes and movement timing.
+
+`AoeLocomotionState` exposes actual velocity, actual speed, previous velocity,
+and cumulative travelled distance. The AoE2 presentation bridge advances Move
+loops by `distance_delta / definition movement speed`; blocked units freeze on
+their current walk frame and slowed units animate proportionally. Idle remains
+fixed-clock-driven, while attack/death/disappear timing continues to use action
+ticks.
+
+Custom single-unit or squad planners use the same static registry interface:
+
+```cpp
+struct MyPathfinder {
+    static AoePathResult find(EcsWorld& world,
+                              const AoePathRequest& request);
+};
+
+auto& paths = world.resource_or_add<AoePathfinderRegistry>();
+paths.bind<MyPathfinder>("my_pathfinder");
+auto& settings = world.resource_or_add<AoeNavigationSettings>();
+settings.unit_pathfinder_id = "my_pathfinder";
+settings.squad_pathfinder_id = "my_pathfinder";
+```
+
+Local steering uses the parallel static registry interface:
+
+```cpp
+struct MySteering {
+    static AoeSteeringResult steer(const AoeSteeringContext& context);
+};
+
+auto& steering = world.resource_or_add<AoeSteeringRegistry>();
+steering.bind<MySteering>("my_steering");
+settings.steering_strategy_id = "my_steering";
+```
+
+Squads plan a static-obstacle guide for a moving virtual anchor. Each member
+independently plans toward its moving formation slot, so members can split
+around an obstacle and gradually converge again. A valid guide keeps advancing
+even when individual members temporarily fall behind or cannot reach a moving
+slot; `squad_leash` is retained as a diagnostic threshold rather than a hard
+stop. The anchor enters `Blocked` only when its own guide has no path. This
+release intentionally has no map rendering, flow fields, full ORCA solver,
+formation shrinking, or squad-wide shared path.
 
 ## Squads and formations
 
@@ -167,27 +319,42 @@ and produces a collision-aware square grid.
 `request_aoe_squad_move`, `request_aoe_squad_attack`,
 `request_aoe_squad_attack_move`, and `request_aoe_squad_stop` apply orders to
 the whole squad. Squad movement is capped to the slowest living member. Attack
-Move acquires one shared enemy, gives every capable member the same focus-fire
-target, and immediately chains to another enemy in range when that target dies.
-Only after no target remains does the squad resume its original destination;
-survivors recover their formation while moving instead of waiting to regroup.
+Move uses the squad search as an engagement trigger, then lets each capable
+member select its nearest unclaimed enemy with the strategy configured by that
+unit definition. Members leave their travel slots, use deterministic
+target-relative approach directions, and form an inner melee ring or an outer
+projectile ring derived from their attack range. A dead target is replaced only
+for the members that owned it; after no target remains the squad rebuilds its
+formation while resuming the original destination. Explicit Squad AttackTarget
+keeps focus-fire semantics while still spreading approach directions.
 Issuing an order-bearing unit command directly to a member
 automatically detaches that member. `set_aoe_squad_formation` changes formation;
 `disband_aoe_gameplay_squad` detaches all living members and destroys only the
 squad entity.
 
-Run `aoe_gameplay_squad_preview` for the two-squad demo. Each side contains
-three Camel Scouts and five Archers and automatically Attack Moves toward the
-other side. Space reissues mutual Attack Move, S stops both squads, R respawns
-the battle, P toggles white crosses at each rendered unit's SLD foot/world
-origin, L traces the lowest-ordinal live blue Archer's fixed-tick history,
-interpolated logical foot, raw SLD hotspot, and final render origin to the
-console, F5 rescans unit definitions and respawns, and Escape exits. The HUD
-shows squad spawn/phase state plus every live member's tags, summed priority,
-and assigned slot. Unit presentation interpolates between the previous and
-current authoritative 30 Hz positions with one fixed-tick of latency; movement,
-collision, targeting, combat, and projectiles continue to use current gameplay
-positions without interpolation.
+Run `aoe_gameplay_squad_preview` for the mapped two-squad stress demo. It
+installs a `36 x 16` logic map with two AABB barriers and a circular obstacle,
+so both virtual anchors and their members use `grid_astar` instead of the direct
+fallback. Keys 1/2/3 rebuild each side with 16/64/128 mixed Camel Scouts and
+Archers; 64 per side is the default. Space reissues mutual Attack Move, S stops
+both squads, and R respawns the current preset. G toggles map boundaries and
+obstacles, N toggles anchor/member paths and formation slots, P toggles rendered
+SLD foot markers, C toggles the interpolated gameplay collision ellipses, and L
+traces one blue Archer to the console. Collision, navigation, foot, and trace
+diagnostics are disabled when comparing performance because they add
+intentional debug work. F5 rescans unit definitions and respawns, and Escape
+exits. The stress preview disables VSync by default so its FPS reflects actual
+throughput; V toggles VSync at runtime. Set `GLD_AOE_STRESS_PRESET=1|2|3` to
+select the initial load and `GLD_AOE_PROFILE=1` to append HUD snapshots to
+`aoe_gameplay_squad_profile.log`. The aggregate HUD reports squad state plus fixed-clock, dynamic-index,
+steering-tier, live entity category/high-water, AoE2 batch, upload, and render
+timing diagnostics without listing every member. `aoe_map_benchmark` also runs a
+headless 30,000-unit, 30-tick crowd workload so rendering cost cannot be
+mistaken for gameplay steering cost.
+Unit presentation interpolates between the previous and current authoritative
+30 Hz positions with one fixed-tick of latency; movement, collision, targeting,
+combat, and projectiles continue to use current gameplay positions without
+interpolation.
 
 ## AoE2 presentation bridge
 
