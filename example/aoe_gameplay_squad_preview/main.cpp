@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -21,6 +22,7 @@
 #include <ecs/assets/AssetServer.hpp>
 #include <ecs/assets/FileSystem.hpp>
 #include <ecs/render/BatchSystem.hpp>
+#include <ecs/render/Gizmo.hpp>
 #include <ecs/render/RenderComponents.hpp>
 #include <ecs/render/RenderSystem.hpp>
 #include <ecs/systems/TransformSystem.hpp>
@@ -48,6 +50,13 @@ struct PreviewState {
     entt::entity red{entt::null};
     entt::entity hud{entt::null};
     bool orders_issued = false;
+    bool draw_unit_feet = false;
+    bool trace_unit_foot = false;
+    entt::entity trace_entity{entt::null};
+    std::uint64_t trace_instance_id = 0;
+    int trace_direction = -1;
+    glm::vec2 trace_raw_foot{0.f};
+    bool trace_has_previous = false;
     std::string latest = "waiting for both squads";
     double hud_elapsed = 0.0;
 };
@@ -83,6 +92,17 @@ const char* phase_name(AoeSquadPhase value) {
     return "?";
 }
 
+const char* action_name(UnitState value) {
+    switch (value) {
+    case UnitState::Idle: return "idle";
+    case UnitState::Moving: return "moving";
+    case UnitState::Attacking: return "attacking";
+    case UnitState::Dying: return "dying";
+    case UnitState::Disappearing: return "disappearing";
+    }
+    return "?";
+}
+
 glm::vec3 project_logical_position(glm::vec2 logical) {
     const float depth = logical.x + logical.y;
     return {(logical.x - logical.y) * TileWidth * .5f,
@@ -92,10 +112,14 @@ glm::vec3 project_logical_position(glm::vec2 logical) {
 
 void projection_system(EcsWorld& world) {
     auto& reg = world.reg();
+    const auto& clock = world.resource<AoeGameplayClock>();
+    const auto& settings = world.resource<AoeGameplaySettings>();
     for (const auto entity : reg.view<AoePosition, Transform>(
              entt::exclude<AoePooledUnit>)) {
-        const auto screen = project_logical_position(
-            reg.get<AoePosition>(entity).value);
+        const auto logical = aoe_interpolated_position(
+            reg.get<AoePosition>(entity),
+            reg.try_get<AoePositionHistory>(entity), clock, settings);
+        const auto screen = project_logical_position(logical);
         patch_transform(world, entity, [&](TransformEditor& transform) {
             transform.set_translation(screen);
             transform.set_scale({SpriteScale, SpriteScale, 1.f});
@@ -156,6 +180,10 @@ void reset_scene(EcsWorld& world) {
     state.blue = spawn_squad(world, {-6.f, 0.f}, {1.f, 0.f}, 1, 1);
     state.red = spawn_squad(world, {6.f, 0.f}, {-1.f, 0.f}, 2, 2);
     state.orders_issued = false;
+    state.trace_entity = entt::null;
+    state.trace_instance_id = 0;
+    state.trace_direction = -1;
+    state.trace_has_previous = false;
     state.latest = "spawned two mixed squads";
 }
 
@@ -195,12 +223,151 @@ void input_system(EcsWorld& world) {
         state->orders_issued = true;
         state->latest = "both squads stopped";
     }
+    if (keyboard->just_now_pressed(GLFW_KEY_P)) {
+        state->draw_unit_feet = !state->draw_unit_feet;
+        state->latest = state->draw_unit_feet
+            ? "unit foot markers enabled" : "unit foot markers disabled";
+    }
+    if (keyboard->just_now_pressed(GLFW_KEY_L)) {
+        state->trace_unit_foot = !state->trace_unit_foot;
+        state->trace_entity = entt::null;
+        state->trace_instance_id = 0;
+        state->trace_direction = -1;
+        state->trace_has_previous = false;
+        state->latest = state->trace_unit_foot
+            ? "blue Archer foot trace enabled"
+            : "blue Archer foot trace disabled";
+    }
     if (keyboard->just_now_pressed(GLFW_KEY_R)) reset_scene(world);
     if (keyboard->just_now_pressed(GLFW_KEY_F5)) {
         world.resource<AoeUnitDefinitionManager>().refresh();
         reset_scene(world);
         state->latest = "definitions rescanned and squads rebuilt";
     }
+}
+
+void submit_unit_foot_gizmos(EcsWorld& world) {
+    const auto& preview = world.resource<PreviewState>();
+    if (!preview.draw_unit_feet) return;
+
+    auto& reg = world.reg();
+    auto& gizmos = world.resource<Gizmos>();
+    for (const auto gameplay : reg.view<Aoe2PresentationLink>(
+             entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
+        const auto child = reg.get<Aoe2PresentationLink>(gameplay).render;
+        if (!reg.valid(child)) continue;
+        const auto* render = reg.try_get<Aoe2UnitRender>(child);
+        const auto* global = reg.try_get<GlobalTransform>(child);
+        if (!render || !global || !render->visible || !render->has_main) continue;
+
+        // Every exported frame has a crop-local SLD foot. The AoE2 vertex
+        // shader subtracts that foot from the quad, so its final world-space
+        // location is exactly the render child's transformed local origin.
+        const glm::vec3 foot = glm::vec3(global->world[3]);
+        gizmos.cross(foot, 6.f, {1.f, 1.f, 1.f, 1.f}, UnitLayer);
+    }
+}
+
+void trace_blue_archer_foot(EcsWorld& world) {
+    auto& preview = world.resource<PreviewState>();
+    if (!preview.trace_unit_foot) return;
+
+    auto& reg = world.reg();
+    entt::entity selected{entt::null};
+    std::uint64_t selected_instance = 0;
+    std::uint32_t selected_ordinal = std::numeric_limits<std::uint32_t>::max();
+    if (reg.valid(preview.blue)) {
+        if (const auto* members = reg.try_get<AoeSquadMembers>(preview.blue)) {
+            for (const auto& member : members->active) {
+                if (!reg.valid(member.entity) ||
+                    reg.any_of<AoePooledUnit, AoeRecyclePending>(member.entity) ||
+                    !reg.all_of<AoeGameplayIdentity, AoeUnitDefinitionRef,
+                                AoeSquadMember, AoePosition,
+                                Aoe2PresentationLink>(member.entity))
+                    continue;
+                const auto& identity = reg.get<AoeGameplayIdentity>(member.entity);
+                if (identity.instance_id != member.instance_id) continue;
+                const auto* definition = reg.get<AoeUnitDefinitionRef>(
+                    member.entity).value.get();
+                if (!definition || definition->id != "archer") continue;
+                const auto ordinal = reg.get<AoeSquadMember>(member.entity).ordinal;
+                if (ordinal < selected_ordinal) {
+                    selected = member.entity;
+                    selected_instance = identity.instance_id;
+                    selected_ordinal = ordinal;
+                }
+            }
+        }
+    }
+
+    if (selected == entt::null) {
+        if (preview.trace_entity != entt::null)
+            std::printf("[aoe-foot] no valid blue Archer\n");
+        preview.trace_entity = entt::null;
+        preview.trace_instance_id = 0;
+        preview.trace_direction = -1;
+        preview.trace_has_previous = false;
+        std::fflush(stdout);
+        return;
+    }
+    if (selected != preview.trace_entity ||
+        selected_instance != preview.trace_instance_id) {
+        preview.trace_entity = selected;
+        preview.trace_instance_id = selected_instance;
+        preview.trace_direction = -1;
+        preview.trace_has_previous = false;
+    }
+
+    const auto child = reg.get<Aoe2PresentationLink>(selected).render;
+    if (!reg.valid(child)) return;
+    const auto* render = reg.try_get<Aoe2UnitRender>(child);
+    const auto* global = reg.try_get<GlobalTransform>(child);
+    const auto* facing = reg.try_get<AoeFacing>(selected);
+    const auto* action = reg.try_get<AoeActionState>(selected);
+    const auto* history = reg.try_get<AoePositionHistory>(selected);
+    if (!render || !global || !facing || !action || !render->visible ||
+        !render->has_main)
+        return;
+
+    const auto& position = reg.get<AoePosition>(selected);
+    const auto& clock = world.resource<AoeGameplayClock>();
+    const auto& settings = world.resource<AoeGameplaySettings>();
+    const glm::vec2 interpolated = aoe_interpolated_position(
+        position, history, clock, settings);
+    const glm::vec3 expected = project_logical_position(interpolated);
+    const glm::vec3 origin = glm::vec3(global->world[3]);
+    const glm::vec3 error = origin - expected;
+    const bool turned = preview.trace_has_previous &&
+                        render->direction != preview.trace_direction;
+    const glm::vec2 hotspot_delta = turned
+        ? render->main_frame.foot - preview.trace_raw_foot
+        : glm::vec2(0.f);
+    const glm::vec2 previous = history ? history->previous : position.value;
+    const auto& time = world.resource<Time>();
+
+    std::printf(
+        "[aoe-foot] frame=%llu tick=%llu entity=%u instance=%llu "
+        "state=%s facing=%d/%d resolved=%d animation=%s anim_frame=%d "
+        "crop=%dx%d raw_foot=(%.1f,%.1f) history=(%.4f,%.4f) "
+        "authoritative=(%.4f,%.4f) interpolated=(%.4f,%.4f) "
+        "origin=(%.3f,%.3f,%.3f) expected=(%.3f,%.3f,%.3f) "
+        "origin_error=(%.5f,%.5f,%.5f) turn=%d hotspot_delta=(%.1f,%.1f)\n",
+        static_cast<unsigned long long>(time.frame),
+        static_cast<unsigned long long>(clock.tick),
+        static_cast<unsigned>(selected),
+        static_cast<unsigned long long>(selected_instance),
+        action_name(action->state), facing->direction, facing->direction_count,
+        render->direction, render->animation.c_str(), render->current_frame,
+        render->main_frame.width, render->main_frame.height,
+        render->main_frame.foot.x, render->main_frame.foot.y,
+        previous.x, previous.y, position.value.x, position.value.y,
+        interpolated.x, interpolated.y, origin.x, origin.y, origin.z,
+        expected.x, expected.y, expected.z, error.x, error.y, error.z,
+        turned ? 1 : 0, hotspot_delta.x, hotspot_delta.y);
+    std::fflush(stdout);
+    preview.trace_direction = render->direction;
+    preview.trace_raw_foot = render->main_frame.foot;
+    preview.trace_has_previous = true;
 }
 
 std::string tags_text(const std::vector<std::string>& tags) {
@@ -270,7 +437,11 @@ void diagnostics_system(EcsWorld& world) {
     std::ostringstream out;
     out << std::fixed << std::setprecision(2)
         << "AoE gameplay squad preview\n"
-        << "Space mutual AttackMove | S stop | R reset | F5 rescan | Esc quit\n"
+        << "Space AttackMove | S stop | P feet | L trace | R reset | F5 rescan | Esc quit\n"
+        << "Foot markers: " << (preview.draw_unit_feet ? "ON" : "OFF")
+        << " (white cross = rendered SLD foot/world origin)\n"
+        << "Blue Archer trace: " << (preview.trace_unit_foot ? "ON" : "OFF")
+        << " (console, every render frame)\n"
         << "Skirmish priority: cavalry 200 + scout 100; archer -100\n\n";
     append_squad(out, world, "BLUE", preview.blue);
     append_squad(out, world, "RED ", preview.red);
@@ -307,6 +478,7 @@ int main() {
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(AoeGameplayPlugin{"aoe_units"});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
+    app.add_plugin(GizmoPlugin);
     app.add_plugin(RenderPlugin);
     app.world.add_resource<PreviewState>();
 
@@ -317,11 +489,17 @@ int main() {
         camera.layers = UnitLayer;
         camera.clear_color = {.12f, .14f, .17f, 1.f};
         world.reg().emplace<Camera>(camera_entity, camera);
-        auto& pass = emplace_registered_render_passes(world, camera_entity)
-            .add(Aoe2UnitPassId);
+        auto& passes = emplace_registered_render_passes(world, camera_entity);
+        auto& pass = passes.add(Aoe2UnitPassId);
         pass.state.depth_test = RenderStateValue::Enabled;
         pass.state.depth_write = RenderStateValue::Enabled;
         pass.state.blend = RenderStateValue::Enabled;
+        auto& gizmo_pass = passes.add(GizmoPassId);
+        gizmo_pass.state.depth_test = RenderStateValue::Disabled;
+        gizmo_pass.state.depth_write = RenderStateValue::Disabled;
+        gizmo_pass.state.blend = RenderStateValue::Enabled;
+        gizmo_pass.state.blend_src = BlendFactor::SrcAlpha;
+        gizmo_pass.state.blend_dst = BlendFactor::OneMinusSrcAlpha;
 
         const auto hud_camera = world.spawn();
         Camera overlay;
@@ -348,10 +526,14 @@ int main() {
             {-window.width * .5f + 14.f, window.height * .5f - 14.f, 0.f}));
         world.reg().emplace<RenderLayer>(preview.hud, RenderLayer{HudLayer});
         reset_scene(world);
+        std::printf("Controls: Space mutual AttackMove, S stop, P unit feet, "
+                    "L blue Archer foot trace, R reset, F5 rescan, Escape quit\n");
     });
     app.add_system(Stage::Update, input_system);
     app.add_system(Stage::Update, projection_system);
+    app.add_system(Stage::PostUpdate, submit_unit_foot_gizmos);
     app.add_system(Stage::Last, diagnostics_system);
+    app.add_system(Stage::Last, trace_blue_archer_foot);
     run_app(app);
     return 0;
 }

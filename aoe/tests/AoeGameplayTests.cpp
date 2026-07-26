@@ -276,6 +276,81 @@ int main() {
     assert(std::abs(aoe_surface_gap({{0.f, 0.f}}, ellipse,
                                     {{5.f, 0.f}}, {1.f, 1.f, 1.f}) - 2.f) < 1e-5f);
 
+    // Presentation interpolation stays a pure read of authoritative fixed-tick
+    // state. Missing history falls back to current and alpha is clamped.
+    const AoePosition interpolation_current{{4.f, 2.f}};
+    const AoePositionHistory interpolation_history{{0.f, -2.f}};
+    AoeGameplaySettings interpolation_settings{0.1, 8, 1};
+    AoeGameplayClock interpolation_clock;
+    assert(aoe_interpolated_position(interpolation_current, nullptr,
+                                     interpolation_clock,
+                                     interpolation_settings) ==
+           interpolation_current.value);
+    assert(aoe_interpolated_position(interpolation_current,
+                                     &interpolation_history,
+                                     interpolation_clock,
+                                     interpolation_settings) ==
+           interpolation_history.previous);
+    interpolation_clock.accumulator = .05;
+    assert(glm::length(aoe_interpolated_position(
+               interpolation_current, &interpolation_history,
+               interpolation_clock, interpolation_settings) -
+           glm::vec2(2.f, 0.f)) < 1e-5f);
+    interpolation_clock.accumulator = .2;
+    assert(aoe_interpolated_position(interpolation_current,
+                                     &interpolation_history,
+                                     interpolation_clock,
+                                     interpolation_settings) ==
+           interpolation_current.value);
+    const AoePositionHistory static_history{interpolation_current.value};
+    interpolation_clock.accumulator = .05;
+    assert(aoe_interpolated_position(interpolation_current, &static_history,
+                                     interpolation_clock,
+                                     interpolation_settings) ==
+           interpolation_current.value);
+
+    // Spawn and pool reuse initialize history from the new incarnation rather
+    // than allowing a presentation blend from stale storage.
+    Fixture history_fixture;
+    AoeUnitSpawnOptions history_spawn;
+    history_spawn.definition_id = "test";
+    history_spawn.position = {3.f, -4.f};
+    const auto history_spawned = spawn_aoe_gameplay_unit(
+        history_fixture.world, history_spawn);
+    assert(history_fixture.world.reg().get<AoePositionHistory>(
+               history_spawned).previous == history_spawn.position);
+
+    // A fixed tick captures the tick-start position. Catch-up keeps the start
+    // of the last fixed tick, never the previous render-frame position.
+    const auto interpolated_mover = history_fixture.unit({0.f, 0.f}, 50.f, 1);
+    history_fixture.world.reg().emplace<Transform>(
+        interpolated_mover, Transform{});
+    assert(request_aoe_move(history_fixture.world, interpolated_mover,
+                            {10.f, 0.f}));
+    history_fixture.advance_ticks(1);
+    assert(glm::length(history_fixture.world.reg()
+               .get<AoePositionHistory>(interpolated_mover).previous) < 1e-5f);
+    assert(glm::length(history_fixture.world.reg()
+               .get<AoePosition>(interpolated_mover).value -
+           glm::vec2(.2f, 0.f)) < 1e-5f);
+    history_fixture.world.resource<AoeGameplayClock>().accumulator = .05;
+    assert(glm::length(aoe_interpolated_position(
+               history_fixture.world.reg().get<AoePosition>(interpolated_mover),
+               history_fixture.world.reg().try_get<AoePositionHistory>(
+                   interpolated_mover),
+               history_fixture.world.resource<AoeGameplayClock>(),
+               history_fixture.world.resource<AoeGameplaySettings>()) -
+           glm::vec2(.1f, 0.f)) < 1e-5f);
+    history_fixture.world.resource<AoeGameplayClock>().accumulator = 0.0;
+    history_fixture.world.resource<Time>().dt = .3f;
+    aoe_gameplay_fixed_system(history_fixture.world);
+    assert(glm::length(history_fixture.world.reg()
+               .get<AoePositionHistory>(interpolated_mover).previous -
+           glm::vec2(.6f, 0.f)) < 1e-5f);
+    assert(glm::length(history_fixture.world.reg()
+               .get<AoePosition>(interpolated_mover).value -
+           glm::vec2(.8f, 0.f)) < 1e-5f);
+
     // The default strategy ignores self/allies/terminal units, compares
     // collider surface gaps, and returns a stable incarnation-aware target.
     Fixture acquisition_fixture;
@@ -339,6 +414,22 @@ int main() {
             AoeSquadMoveSpeedLimit>(member.entity));
         assert(squad_fixture.world.reg().get<AoeTeam>(member.entity).id == 1);
     }
+
+    Fixture formation_history_fixture;
+    AoeSquadSpawnOptions formation_history_options;
+    formation_history_options.composition = {{"test", 4, 1}};
+    formation_history_options.center = {5.f, -3.f};
+    const auto formation_history_squad = spawn_aoe_gameplay_squad(
+        formation_history_fixture.world, formation_history_options);
+    spawn_aoe_gameplay_unit_system(formation_history_fixture.world);
+    formation_history_fixture.advance_ticks(1);
+    const auto& formation_history_members = formation_history_fixture.world.reg()
+        .get<AoeSquadMembers>(formation_history_squad);
+    for (const auto& member : formation_history_members.active)
+        assert(formation_history_fixture.world.reg().get<AoePositionHistory>(
+                   member.entity).previous ==
+               formation_history_fixture.world.reg().get<AoePosition>(
+                   member.entity).value);
 
     const auto slow_member = squad_members.active.front().entity;
     squad_fixture.world.reg().get<AoeMovement>(slow_member).speed = 1.f;
@@ -786,6 +877,7 @@ int main() {
     assert(lifecycle_events[recycle_index].tick - lifecycle_events[disappear_index].tick == 2);
     aoe_gameplay_recycle_system(fixture.world);
     assert(fixture.world.reg().valid(target) && fixture.world.reg().all_of<AoePooledUnit>(target));
+    assert(!fixture.world.reg().all_of<AoePositionHistory>(target));
     assert(fixture.world.resource<AoeGameplayPool>().available.size() == 1);
 
     AoeUnitSpawnOptions reuse_options;
@@ -797,6 +889,8 @@ int main() {
     spawn_aoe_gameplay_unit_system(fixture.world);
     assert(!fixture.world.reg().all_of<AoeGameplaySpawnRequest>(reused));
     assert(fixture.world.reg().get<AoePosition>(reused).value == glm::vec2(3.f, -2.f));
+    assert(fixture.world.reg().get<AoePositionHistory>(reused).previous ==
+           glm::vec2(3.f, -2.f));
     assert(fixture.world.reg().get<AoeTeam>(reused).id == 7);
     assert(fixture.world.reg().get<AoeGameplayIdentity>(reused).instance_id != old_identity);
 

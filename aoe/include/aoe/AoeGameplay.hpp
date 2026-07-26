@@ -142,6 +142,9 @@ struct AoeHealth { float current = 0.f; float maximum = 0.f; };
 struct AoeLevel { std::uint32_t value = 1; };
 struct AoeCollider { float radius_x = 0.f; float radius_y = 0.f; float height = 0.f; };
 struct AoePosition { glm::vec2 value{0.f}; };
+// Tick-start authoritative position used only to interpolate presentation.
+// Gameplay systems always read AoePosition directly.
+struct AoePositionHistory { glm::vec2 previous{0.f}; };
 struct AoeMovement { float speed = 1.f; };
 struct AoeTeam { std::uint32_t id = 0; };
 struct AoeFacing { int direction = 0; int direction_count = 16; };
@@ -589,6 +592,10 @@ bool set_aoe_unit_level(EcsWorld&, entt::entity, std::uint32_t);
 
 double aoe_action_elapsed_seconds(const AoeActionState&, const AoeGameplayClock&,
                                   const AoeGameplaySettings&);
+glm::vec2 aoe_interpolated_position(const AoePosition& current,
+                                    const AoePositionHistory* history,
+                                    const AoeGameplayClock& clock,
+                                    const AoeGameplaySettings& settings);
 float aoe_collider_support_radius(const AoeCollider&, glm::vec2 direction);
 float aoe_surface_gap(const AoePosition&, const AoeCollider&,
                       const AoePosition&, const AoeCollider&);

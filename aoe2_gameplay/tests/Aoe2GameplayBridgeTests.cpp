@@ -13,6 +13,12 @@ using namespace gld::ecs::aoe2_gameplay;
 #undef assert
 #define assert(...) do { if (!(__VA_ARGS__)) std::abort(); } while (false)
 
+namespace {
+bool near(float actual, float expected, float epsilon = 1e-5f) {
+    return std::abs(actual - expected) <= epsilon;
+}
+}
+
 int main() {
     EcsWorld world;
     register_transform_lifecycle(world);
@@ -57,59 +63,151 @@ int main() {
     assert(request.options.layers == 0x4u);
     assert(request.options.playback_mode == Aoe2PlaybackMode::External);
     assert(!request.options.playing && !request.options.loop);
-    assert(request.options.playback_time == 0.2f);
+    assert(near(request.options.playback_time, 0.2f));
 
     // A missing critical mapping falls back to the normal attack semantic.
     definition->presentation.animations.erase("critical_attack");
     aoe2_gameplay_presentation_system(world);
     assert(world.reg().get<Aoe2SpawnRequest>(first_child).options.animation == "attackA");
+    assert(near(world.reg().get<Aoe2SpawnRequest>(first_child)
+                    .options.playback_time, 0.2f));
 
-    // With no death asset the bridge freezes the first idle pose.
-    definition->presentation.animations.erase("death");
+    // Direction is presentation-only. Advancing one gameplay tick while only
+    // changing direction must continue the same authored action at 0.3 s.
     auto& action = world.reg().get<AoeActionState>(gameplay);
+    world.resource<AoeGameplayClock>().tick = 13;
+    world.reg().get<AoeFacing>(gameplay).direction = 6;
+    aoe2_gameplay_presentation_system(world);
+    const auto& turned = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(turned.direction == 6);
+    assert(turned.animation == "attackA");
+    assert(near(turned.playback_time, 0.3f));
+
+    // Locomotion transitions retain the presentation cursor instead of
+    // restarting each atlas. Its fixed-clock progression is independent of
+    // the state's action-relative timer.
+    action.state = UnitState::Moving;
+    action.sequence = 4;
+    action.state_started_tick = 13;
+    aoe2_gameplay_presentation_system(world);
+    const auto& moving_start = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(moving_start.animation == "walkA");
+    assert(near(moving_start.playback_time, 0.3f));
+    assert(moving_start.loop && !moving_start.playing);
+
+    world.resource<AoeGameplayClock>().tick = 14;
+    aoe2_gameplay_presentation_system(world);
+    const auto& moving = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(moving.playback_mode == Aoe2PlaybackMode::External);
+    assert(near(moving.playback_time, 0.4f));
+
+    action.state = UnitState::Idle;
+    action.sequence = 5;
+    action.state_started_tick = 14;
+    aoe2_gameplay_presentation_system(world);
+    const auto& idle = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(idle.animation == "idleA");
+    assert(near(idle.playback_time, 0.4f));
+
+    // Authored combat starts immediately at frame zero; the bridge does not
+    // wait for the current idle/walk loop to finish.
+    action.state = UnitState::Attacking;
+    action.sequence = 6;
+    action.state_started_tick = 14;
+    aoe2_gameplay_presentation_system(world);
+    const auto& attack_start = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(attack_start.animation == "attackA");
+    assert(near(attack_start.playback_time, 0.f) && !attack_start.loop);
+
+    world.resource<AoeGameplayClock>().tick = 15;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(first_child)
+                    .options.playback_time, 0.1f));
+
+    // Returning to locomotion inherits the attack-end cursor. A one-second
+    // attack therefore lands near idle frame 30 at 30 FPS, rather than frame 0.
+    world.resource<AoeGameplayClock>().tick = 24;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(first_child)
+                    .options.playback_time, 1.f));
+    action.state = UnitState::Idle;
+    action.sequence = 7;
+    action.state_started_tick = 24;
+    aoe2_gameplay_presentation_system(world);
+    const auto& after_attack = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(near(after_attack.playback_time, 1.f));
+    assert(std::lround(after_attack.playback_time * 30.f) == 30);
+
+    // A new authored action resets even when it resolves to the same attack
+    // animation used by an earlier sequence.
+    action.state = UnitState::Attacking;
+    action.sequence = 8;
+    action.state_started_tick = 24;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(first_child)
+                    .options.playback_time, 0.f));
+
     action.state = UnitState::Dying;
+    action.sequence = 9;
+    action.state_started_tick = 24;
+    aoe2_gameplay_presentation_system(world);
+    const auto& death = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(death.animation == "deathA");
+    assert(near(death.playback_time, 0.f) && !death.loop);
+
+    action.state = UnitState::Disappearing;
+    action.sequence = 10;
+    action.state_started_tick = 24;
+    aoe2_gameplay_presentation_system(world);
+    const auto& disappear_start = world.reg().get<Aoe2SpawnRequest>(first_child).options;
+    assert(disappear_start.animation == "decayA");
+    assert(near(disappear_start.playback_time, 0.f) && !disappear_start.loop);
+
+    // A missing terminal asset deliberately freezes the first idle frame and
+    // never fabricates elapsed playback for that fallback.
+    definition->presentation.animations.erase("death");
+    action.state = UnitState::Dying;
+    action.sequence = 11;
+    action.state_started_tick = 24;
     aoe2_gameplay_presentation_system(world);
     const auto& death_fallback = world.reg().get<Aoe2SpawnRequest>(first_child).options;
     assert(death_fallback.animation == "idleA");
-    assert(death_fallback.playback_time == 0.f && !death_fallback.loop);
-    action.state = UnitState::Disappearing;
-    action.state_started_tick = 11;
-    aoe2_gameplay_presentation_system(world);
-    const auto& disappear = world.reg().get<Aoe2SpawnRequest>(first_child).options;
-    assert(disappear.animation == "decayA");
-    assert(disappear.playback_time == 0.1f && !disappear.loop);
+    assert(near(death_fallback.playback_time, 0.f) && !death_fallback.loop);
 
-    // Moving selects the authored walk semantic and advances it from the
-    // deterministic gameplay clock through external looping playback.
-    action.state = UnitState::Moving;
-    action.state_started_tick = 10;
+    // Re-enter disappear with its real animation, then let it advance once.
+    // Destroying the render child must not destroy the presentation cursor.
+    action.state = UnitState::Disappearing;
+    action.sequence = 12;
+    action.state_started_tick = 24;
     aoe2_gameplay_presentation_system(world);
-    const auto& moving = world.reg().get<Aoe2SpawnRequest>(first_child).options;
-    assert(moving.animation == "walkA");
-    assert(moving.playback_mode == Aoe2PlaybackMode::External);
-    assert(moving.playback_time == 0.2f && moving.loop && !moving.playing);
-    action.state = UnitState::Attacking;
+    world.resource<AoeGameplayClock>().tick = 25;
+    aoe2_gameplay_presentation_system(world);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(first_child)
+                    .options.playback_time, 0.1f));
 
     // Gameplay and SLD use the same +X direction-zero convention, so initial,
     // pending, and loaded render children receive the gameplay slot unchanged.
     world.reg().remove<Aoe2SpawnRequest>(first_child);
     world.reg().emplace<Aoe2UnitRender>(first_child);
-    world.reg().get<AoeFacing>(gameplay).direction = 6;
+    world.reg().get<AoeFacing>(gameplay).direction = 7;
     aoe2_gameplay_presentation_system(world);
-    assert(world.reg().get<Aoe2UnitRender>(first_child).direction_slot == 6);
+    assert(world.reg().get<Aoe2UnitRender>(first_child).direction_slot == 7);
     assert(world.reg().get<Aoe2UnitRender>(first_child).direction_slot_count == 16);
 
-    // A destroyed presentation child is recreated without replacing gameplay.
+    // A destroyed presentation child is recreated without replacing gameplay
+    // or resetting the non-looping disappear cursor.
     world.reg().destroy(first_child);
     aoe2_gameplay_presentation_system(world);
     const auto second_child = world.reg().get<Aoe2PresentationLink>(gameplay).render;
     assert(world.reg().valid(second_child) && second_child != first_child);
+    assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
+                    .options.playback_time, 0.1f));
 
     // Presentation errors are attached to the parent and do not mutate its action.
     definition->presentation.backend = "unsupported";
     aoe2_gameplay_presentation_system(world);
     assert(world.reg().all_of<AoePresentationError>(gameplay));
-    assert(world.reg().get<AoeActionState>(gameplay).state == UnitState::Attacking);
+    assert(world.reg().get<AoeActionState>(gameplay).state == UnitState::Disappearing);
 
     // Recycle pending is a gameplay-owned terminal state: the bridge removes
     // its child and all presentation bookkeeping before the pool strips data.

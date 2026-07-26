@@ -179,19 +179,31 @@ squad entity.
 Run `aoe_gameplay_squad_preview` for the two-squad demo. Each side contains
 three Camel Scouts and five Archers and automatically Attack Moves toward the
 other side. Space reissues mutual Attack Move, S stops both squads, R respawns
-the battle, F5 rescans unit definitions and respawns, and Escape exits. The HUD
+the battle, P toggles white crosses at each rendered unit's SLD foot/world
+origin, L traces the lowest-ordinal live blue Archer's fixed-tick history,
+interpolated logical foot, raw SLD hotspot, and final render origin to the
+console, F5 rescans unit definitions and respawns, and Escape exits. The HUD
 shows squad spawn/phase state plus every live member's tags, summed priority,
-and assigned slot.
+and assigned slot. Unit presentation interpolates between the previous and
+current authoritative 30 Hz positions with one fixed-tick of latency; movement,
+collision, targeting, combat, and projectiles continue to use current gameplay
+positions without interpolation.
 
 ## AoE2 presentation bridge
 
 `gld_aoe2_gameplay_bridge` is the optional renderer-specific adapter. It creates
 a separate AoE2 child entity, attaches it to the gameplay parent, selects the
-configured semantic animation, and synchronizes facing, player color, and action
-elapsed time. Critical attacks prefer `critical_attack` and fall back to
-`attack`. Dying and disappearing select non-looping `death` and `disappear`
-animations. Gameplay time drives their external playback; the bridge removes the
-render child before the gameplay entity enters the pool.
+configured semantic animation, and synchronizes facing, player color, and a
+fixed-clock presentation cursor. Direction changes and transitions between
+`idle` and `moving` preserve that cursor, so switching an atlas does not jump
+back to frame zero. Entering `attack`/`critical_attack`, `death`, or `disappear`
+starts the authored action immediately at frame zero; returning from an attack
+to locomotion retains the attack-end cursor. Critical attacks prefer
+`critical_attack` and fall back to `attack`. Dying and disappearing select
+non-looping `death` and `disappear` animations. Damage, projectile release, and
+lifecycle timing remain authoritative gameplay fixed-clock events and do not
+depend on render loading or frame selection. The bridge removes the render
+child before the gameplay entity enters the pool.
 
 AoE2 SLD direction 0 represents screen-facing `(1, 0)`, and its slots increase
 clockwise. Gameplay first projects a logical map delta through the same 2:1

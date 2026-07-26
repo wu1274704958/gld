@@ -497,8 +497,11 @@ bool rebuild_squad_layout(EcsWorld& world, entt::entity squad) {
             std::max(collider.radius_x, collider.radius_y));
         height = std::max(height, collider.height);
         if (formation.teleport_on_next_layout) {
-            reg.get<AoePosition>(slot.unit.entity).value = squad_slot_world(
+            const glm::vec2 position = squad_slot_world(
                 reg.get<AoePosition>(squad), formation, slot);
+            reg.get<AoePosition>(slot.unit.entity).value = position;
+            reg.get_or_emplace<AoePositionHistory>(
+                slot.unit.entity).previous = position;
             set_facing_toward(reg.get<AoeFacing>(slot.unit.entity), formation.forward);
         }
     }
@@ -1277,9 +1280,19 @@ void lifecycle_tick(EcsWorld& world, std::uint64_t tick) {
     }
 }
 
+void capture_position_history_tick(EcsWorld& world) {
+    auto& reg = world.reg();
+    for (const auto entity : reg.view<AoePosition, Transform>(
+             entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
+        const auto current = reg.get<AoePosition>(entity).value;
+        reg.get_or_emplace<AoePositionHistory>(entity).previous = current;
+    }
+}
+
 void fixed_tick(EcsWorld& world) {
     auto& clock = world.resource<AoeGameplayClock>();
     ++clock.tick;
+    capture_position_history_tick(world);
     squad_spawn_resolution_tick(world);
     squad_command_tick(world, clock.tick);
     command_tick(world, clock.tick);
@@ -1297,6 +1310,17 @@ void fixed_tick(EcsWorld& world) {
 std::string PresentationDefinition::animation(const std::string& semantic) const {
     const auto it = animations.find(semantic);
     return it == animations.end() ? std::string{} : it->second;
+}
+
+glm::vec2 aoe_interpolated_position(
+    const AoePosition& current, const AoePositionHistory* history,
+    const AoeGameplayClock& clock, const AoeGameplaySettings& settings) {
+    if (!history || !(settings.fixed_dt > 0.0) ||
+        !std::isfinite(settings.fixed_dt))
+        return current.value;
+    const float alpha = static_cast<float>(std::clamp(
+        clock.accumulator / settings.fixed_dt, 0.0, 1.0));
+    return history->previous + (current.value - history->previous) * alpha;
 }
 
 void AoeFormationRegistry::bind_erased(
@@ -1677,6 +1701,8 @@ entt::entity spawn_aoe_gameplay_unit(EcsWorld& world, const AoeUnitSpawnOptions&
     else world.reg().remove<AoePooledUnit>(entity);
     world.reg().emplace_or_replace<Transform>(entity, Transform{});
     world.reg().emplace_or_replace<AoePosition>(entity, AoePosition{options.position});
+    world.reg().emplace_or_replace<AoePositionHistory>(
+        entity, AoePositionHistory{options.position});
     world.reg().emplace_or_replace<AoeGameplaySpawnRequest>(entity, AoeGameplaySpawnRequest{options});
     world.reg().remove<AoeGameplaySpawnError>(entity);
     return entity;
@@ -1956,7 +1982,8 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
     for (auto entity : pending) {
         if (!reg.valid(entity)) continue;
         reg.remove<AoeGameplaySpawnRequest, AoeGameplaySpawnError, AoeUnitDefinitionRef,
-                   AoeHealth, AoeLevel, AoeCollider, AoePosition, AoeMovement, AoeTeam,
+                   AoeHealth, AoeLevel, AoeCollider, AoePosition,
+                   AoePositionHistory, AoeMovement, AoeTeam,
                    AoeFacing,
                    AoePresentationOptions, AoeActionState, AoeGameplayIdentity,
                    AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,

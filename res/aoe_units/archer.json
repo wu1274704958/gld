@@ -17,7 +17,7 @@
   },
   "lifecycle": {
     "death_duration_seconds": 1.0,
-    "disappear_duration_seconds": 0.0
+    "disappear_duration_seconds": 1.0
   },
   "attack": {
     "mode": "projectile",
@@ -41,7 +41,8 @@
       "idle": "idleA",
       "moving": "walkA",
       "attack": "attackA",
-      "death": "idleA"
+      "death": "deathA",
+      "disappear": "decayA"
     }
   }
 }

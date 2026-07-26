@@ -40,6 +40,50 @@ bool looping(aoe::UnitState state) {
     return state == aoe::UnitState::Idle || state == aoe::UnitState::Moving;
 }
 
+bool starts_authored_action(aoe::UnitState state) {
+    return state == aoe::UnitState::Attacking ||
+           state == aoe::UnitState::Dying ||
+           state == aoe::UnitState::Disappearing;
+}
+
+float update_presentation_playback(
+    Aoe2PresentationSnapshot& snapshot, const aoe::AoeActionState& state,
+    const aoe::AoeGameplayClock& clock,
+    const aoe::AoeGameplaySettings& settings,
+    std::string_view animation, float action_elapsed) {
+    const bool changed = snapshot.state != state.state ||
+        snapshot.sequence != state.sequence ||
+        snapshot.critical != state.critical ||
+        snapshot.requested_animation != animation;
+    if (clock.tick >= snapshot.last_gameplay_tick) {
+        snapshot.playback_time += static_cast<double>(
+            clock.tick - snapshot.last_gameplay_tick) * settings.fixed_dt;
+    }
+    if (changed && starts_authored_action(state.state))
+        snapshot.playback_time = action_elapsed;
+    snapshot.state = state.state;
+    snapshot.sequence = state.sequence;
+    snapshot.critical = state.critical;
+    snapshot.requested_animation = animation;
+    snapshot.last_gameplay_tick = clock.tick;
+    return static_cast<float>(std::max(0.0, snapshot.playback_time));
+}
+
+float normalize_loop_playback(Aoe2PresentationSnapshot& snapshot,
+                              const Aoe2UnitAppearance* appearance,
+                              std::string_view animation) {
+    const auto* clip = appearance
+        ? appearance->find_animation(std::string(animation)) : nullptr;
+    if (clip && clip->fps > 0.f && clip->frames_per_direction > 0) {
+        const double duration = static_cast<double>(clip->frames_per_direction) /
+            static_cast<double>(clip->fps);
+        if (duration > 0.0)
+            snapshot.playback_time = std::fmod(
+                std::max(0.0, snapshot.playback_time), duration);
+    }
+    return static_cast<float>(std::max(0.0, snapshot.playback_time));
+}
+
 void sync_pending_request(Aoe2SpawnRequest& request, const std::string& animation,
                           int direction, int direction_count,
                           const aoe::AoePresentationOptions& options,
@@ -237,9 +281,26 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
              definition->presentation.animation("death").empty()) ||
             (state.state == aoe::UnitState::Disappearing &&
              definition->presentation.animation("disappear").empty());
-        const float elapsed = frozen_idle_terminal ? 0.f : static_cast<float>(
+        const float action_elapsed = frozen_idle_terminal ? 0.f : static_cast<float>(
             aoe::aoe_action_elapsed_seconds(state, clock, settings));
         const bool should_loop = looping(state.state);
+        auto* snapshot = reg.try_get<Aoe2PresentationSnapshot>(entity);
+        if (!snapshot) {
+            snapshot = &reg.emplace<Aoe2PresentationSnapshot>(entity,
+                Aoe2PresentationSnapshot{
+                    .state = state.state,
+                    .sequence = state.sequence,
+                    .last_gameplay_tick = clock.tick,
+                    .playback_time = action_elapsed,
+                    .critical = state.critical,
+                    .direction = render_direction,
+                    .direction_count = facing.direction_count,
+                    .player_color = options.player_color,
+                    .requested_animation = animation});
+        }
+        float playback_time = update_presentation_playback(
+            *snapshot, state, clock, settings, animation, action_elapsed);
+        if (frozen_idle_terminal) playback_time = 0.f;
 
         auto* link = reg.try_get<Aoe2PresentationLink>(entity);
         if (!link || !reg.valid(link->render)) {
@@ -251,24 +312,24 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
             spawn.player_color = options.player_color;
             spawn.layers = options.layers;
             spawn.playback_mode = Aoe2PlaybackMode::External;
-            spawn.playback_time = elapsed;
+            spawn.playback_time = playback_time;
             spawn.playing = false;
             spawn.loop = should_loop;
             const auto child = spawn_aoe2_unit(world, spawn, Transform{});
             reg.emplace<AoeGameplayOwner>(child, AoeGameplayOwner{entity});
             set_parent(world, child, entity);
             reg.emplace_or_replace<Aoe2PresentationLink>(entity, Aoe2PresentationLink{child});
-            reg.emplace_or_replace<Aoe2PresentationSnapshot>(entity,
-                Aoe2PresentationSnapshot{state.state, state.sequence, state.critical,
-                    render_direction, facing.direction_count, options.player_color, animation});
             reg.remove<AoePresentationError>(entity);
             continue;
         }
 
         const entt::entity child = link->render;
         if (auto* pending = reg.try_get<Aoe2SpawnRequest>(child)) {
+            if (should_loop && !frozen_idle_terminal)
+                playback_time = normalize_loop_playback(
+                    *snapshot, pending->appearance.get(), animation);
             sync_pending_request(*pending, animation, render_direction,
-                                 facing.direction_count, options, elapsed, should_loop);
+                                 facing.direction_count, options, playback_time, should_loop);
             continue;
         }
         if (const auto* error = reg.try_get<Aoe2SpawnError>(child)) {
@@ -278,9 +339,14 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         }
         auto* render = reg.try_get<Aoe2UnitRender>(child);
         if (!render) continue;
-        auto& snapshot = reg.get_or_emplace<Aoe2PresentationSnapshot>(entity);
-        if (snapshot.requested_animation != animation || snapshot.sequence != state.sequence ||
-            snapshot.state != state.state || snapshot.critical != state.critical) {
+        const bool target_already_active =
+            render->animation == animation &&
+            render->animation_slot != AnimationSlot::Invalid;
+        const bool target_already_pending =
+            render->transition == AnimationTransitionState::Waiting &&
+            render->pending_animation == animation &&
+            render->pending_animation_slot != AnimationSlot::Invalid;
+        if (!target_already_active && !target_already_pending) {
             if (!request_aoe2_animation(world, child, animation)) {
                 const std::string fallback = state.state == aoe::UnitState::Attacking
                     ? definition->presentation.animation("attack")
@@ -289,25 +355,24 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
                     reg.emplace_or_replace<AoePresentationError>(entity,
                         AoePresentationError{"animation unavailable: " + animation});
             }
-            snapshot.requested_animation = animation;
-            snapshot.sequence = state.sequence;
-            snapshot.state = state.state;
-            snapshot.critical = state.critical;
         }
-        if (snapshot.direction != render_direction ||
-            snapshot.direction_count != facing.direction_count) {
+        if (snapshot->direction != render_direction ||
+            snapshot->direction_count != facing.direction_count) {
             set_aoe2_direction(world, child, render_direction, facing.direction_count);
-            snapshot.direction = render_direction;
-            snapshot.direction_count = facing.direction_count;
+            snapshot->direction = render_direction;
+            snapshot->direction_count = facing.direction_count;
         }
-        if (snapshot.player_color != options.player_color) {
+        if (snapshot->player_color != options.player_color) {
             set_aoe2_player_color(world, child, options.player_color, 0);
-            snapshot.player_color = options.player_color;
+            snapshot->player_color = options.player_color;
         }
+        if (should_loop && !frozen_idle_terminal)
+            playback_time = normalize_loop_playback(
+                *snapshot, render->appearance.get(), animation);
         set_aoe2_playback_mode(world, child, Aoe2PlaybackMode::External);
         set_aoe2_playing(world, child, false);
         set_aoe2_looping(world, child, should_loop);
-        set_aoe2_playback_time(world, child, elapsed);
+        set_aoe2_playback_time(world, child, playback_time);
     }
 }
 
