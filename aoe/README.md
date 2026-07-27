@@ -201,25 +201,29 @@ two-pass count/prefix/fill build keeps cell ranges and memberships contiguous,
 and generation marks deduplicate multi-cell candidates without per-query sets.
 Movement performs swept elliptical collision against the retained nearest
 candidates instead of querying the grid twice or checking every unit. Members
-of the same squad
-ignore one another while following formation slots. During `Engaging` they
-become dynamic obstacles to one another, so occupied front-line space makes
-later members route around the sides instead of overlapping.
+of the same squad ignore formation followers during route planning even when
+the squad is globally `Engaging`; only members with an independent active
+attack approach leave that shared flow. Final swept collision remains active,
+so this planning rule does not permit overlap.
 
 The built-in deterministic `grid_astar` uses eight neighbors, prevents diagonal
 corner cutting, respects elliptical clearance, and simplifies the result only
 across collision-free line-of-sight segments. A deterministic local steering
 layer keeps a fixed top-eight set from the dynamic grid without sorting every
-query result. No-threat movement uses one straight feeler; threatened movement
-compares only straight and two lateral candidates. Threatened results are
-cached for two staggered ticks unless contact is imminent. The chosen avoidance
+query result. No-threat movement uses one straight feeler. Threatened movement
+samples a deterministic forward fan through 45 degrees, widening through 90
+degrees after sustained low progress; no backward candidate is enabled yet.
+Threatened results are cached for two staggered ticks unless contact is imminent.
+The chosen avoidance
 side receives a six-tick switching margin, and sprite facing must remain in a
 new sector for two fixed ticks. Persistent velocity is constrained by
 acceleration and turn rate, while swept ellipse tests remain the final
 anti-penetration authority. Transient contacts steer locally; sustained
 lack of forward progress triggers a dynamic A* replan after the configured
-blocked threshold. Failed replans retry after a three-tick cooldown with a small
-deterministic per-entity offset. Static no-path results wait until the map
+blocked threshold. A failed optional dynamic replan retains a usable static
+route and continues local steering instead of stopping the unit. Failed replans
+retry after a three-tick cooldown with a small deterministic per-entity offset.
+Static no-path results wait until the map
 revision changes. `AoeNavigationEvent` reports `Ready`, `Blocked`, and `NoPath`.
 Without an `AoeLogicMap` resource, navigation deliberately falls back to the
 old direct waypoint behavior. `AoeCrowdSteeringScratch` retains movement scratch
@@ -227,11 +231,16 @@ capacity across fixed ticks, and `AoeGameplayDiagnostics` exposes fast, full,
 cached and imminent solve counts plus side/facing changes and movement timing.
 
 `AoeLocomotionState` exposes actual velocity, actual speed, previous velocity,
-and cumulative travelled distance. The AoE2 presentation bridge advances Move
-loops by `distance_delta / definition movement speed`; blocked units freeze on
-their current walk frame and slowed units animate proportionally. Idle remains
-fixed-clock-driven, while attack/death/disappear timing continues to use action
-ticks.
+cumulative travelled distance, and `effective_max_speed`. The latter is the
+base movement speed after persistent gameplay limits such as a mixed squad's
+slowest-member cap, but before transient arrive, steering, and collision
+reductions. The AoE2 presentation bridge advances Move loops by
+`distance_delta / effective_max_speed`; reaching the commanded squad speed is
+therefore 1x playback, while genuinely blocked or locally slowed units still
+animate proportionally. Attack Move target scans that find no enemy preserve
+formation velocity instead of restarting acceleration every fixed tick. Idle
+remains fixed-clock-driven, while attack/death/disappear timing continues to use
+action ticks.
 
 Custom single-unit or squad planners use the same static registry interface:
 
@@ -332,6 +341,14 @@ automatically detaches that member. `set_aoe_squad_formation` changes formation;
 `disband_aoe_gameplay_squad` detaches all living members and destroys only the
 squad entity.
 
+Moving squads run a deterministic traffic-coordination layer before member
+steering. Same-direction squads follow the leading flow, head-on squads negotiate
+complementary right-hand lanes, and crossing squads use a stable entity priority
+for yielding. The decision supplies a shared speed scale and lateral corridor to
+all formation followers. A slot that temporarily falls inside static geometry is
+resolved to a bounded elastic target biased along that corridor; the original
+slot remains intact and is recovered after it becomes valid again.
+
 Run `aoe_gameplay_squad_preview` for the mapped two-squad stress demo. It
 installs a `36 x 16` logic map with two AABB barriers and a circular obstacle,
 so both virtual anchors and their members use `grid_astar` instead of the direct
@@ -351,6 +368,16 @@ steering-tier, live entity category/high-water, AoE2 batch, upload, and render
 timing diagnostics without listing every member. `aoe_map_benchmark` also runs a
 headless 30,000-unit, 30-tick crowd workload so rendering cost cannot be
 mistaken for gameplay steering cost.
+
+With `GLD_ENABLE_PERFORMANCE_MONITORING=ON`, set
+`GLD_AOE_SYSTEM_PROFILE=<csv-path>` to make the squad preview wait for the
+default scene to become resident, warm up for three seconds, capture system
+timings for 15 seconds, write one buffered CSV, and exit. Override the capture
+length with `GLD_AOE_SYSTEM_PROFILE_SECONDS=<seconds>`. The trace splits every
+gameplay fixed-tick phase, the AoE2 spawn/animation/batch systems, presentation
+bridge, transform, render, GPU and present work. The HUD's `render_fps` and
+frame-time statistics use wall-clock windows; `fixed_hz` and `pose_change_hz`
+separately report simulation and atlas-pose cadence.
 Unit presentation interpolates between the previous and current authoritative
 30 Hz positions with one fixed-tick of latency; movement, collision, targeting,
 combat, and projectiles continue to use current gameplay positions without

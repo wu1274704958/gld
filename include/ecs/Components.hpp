@@ -116,6 +116,8 @@ namespace gld::ecs {
     struct TimeClock {
         using Clock = std::chrono::steady_clock;
         Clock::time_point previous{};
+        double fps_window_elapsed = 0.0;
+        std::uint32_t fps_window_frames = 0;
         bool initialized = false;
     };
 }

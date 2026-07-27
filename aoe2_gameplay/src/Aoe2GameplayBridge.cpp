@@ -1,4 +1,5 @@
 #include <aoe2_gameplay/Aoe2GameplayBridge.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -11,10 +12,13 @@ using namespace gld::ecs::aoe2;
 
 namespace {
 std::string desired_animation(const aoe::AoeUnitDefinition& definition,
-                              const aoe::AoeActionState& state) {
+                              const aoe::AoeActionState& state,
+                              const aoe::AoeLocomotionState* locomotion) {
     const auto& presentation = definition.presentation;
     switch (state.state) {
     case aoe::UnitState::Moving: {
+        if (locomotion && locomotion->escape_steering)
+            return presentation.animation("idle");
         const auto moving = presentation.animation("moving");
         return moving.empty() ? presentation.animation("idle") : moving;
     }
@@ -50,21 +54,23 @@ float update_presentation_playback(
     Aoe2PresentationSnapshot& snapshot, const aoe::AoeActionState& state,
     const aoe::AoeGameplayClock& clock,
     const aoe::AoeGameplaySettings& settings,
-    const aoe::AoeLocomotionState* locomotion, float nominal_speed,
+    const aoe::AoeLocomotionState* locomotion,
     std::string_view animation, float action_elapsed) {
     const bool changed = snapshot.state != state.state ||
         snapshot.sequence != state.sequence ||
         snapshot.critical != state.critical ||
         snapshot.requested_animation != animation;
-    if (state.state == aoe::UnitState::Moving) {
-        if (locomotion && nominal_speed > 0.f &&
+    const bool visually_moving = state.state == aoe::UnitState::Moving &&
+        (!locomotion || !locomotion->escape_steering);
+    if (visually_moving) {
+        if (locomotion && locomotion->effective_max_speed > 0.f &&
             std::isfinite(locomotion->distance_travelled)) {
             const double distance = std::max(
                 snapshot.locomotion_distance,
                 locomotion->distance_travelled);
             snapshot.playback_time +=
                 (distance - snapshot.locomotion_distance) /
-                static_cast<double>(nominal_speed);
+                static_cast<double>(locomotion->effective_max_speed);
         }
     } else if (clock.tick >= snapshot.last_gameplay_tick) {
         snapshot.playback_time += static_cast<double>(
@@ -143,6 +149,10 @@ int aoe2_projectile_pitch_frame(glm::vec3 velocity, int frame_count) {
 }
 
 void aoe2_gameplay_orphan_cleanup_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
+    GLD_PERF_MONITOR(
+        world.resource_or_add<Aoe2GameplayBridgePerformanceDiagnostics>().begin_frame();
+    );
     auto& reg = world.reg();
     std::vector<entt::entity> orphaned;
     for (auto child : reg.view<AoeGameplayOwner>()) {
@@ -182,9 +192,15 @@ void aoe2_gameplay_orphan_cleanup_system(EcsWorld& world) {
         reg.remove<Aoe2PresentationLink, Aoe2PresentationSnapshot,
                    AoePresentationError>(owner);
     }
+    GLD_PERF_MONITOR(
+        world.resource<Aoe2GameplayBridgePerformanceDiagnostics>().orphan_cleanup_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void aoe2_projectile_presentation_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto& reg = world.reg();
     for (const auto entity : reg.view<aoe::AoeProjectile>()) {
         const auto& projectile = reg.get<aoe::AoeProjectile>(entity);
@@ -266,9 +282,16 @@ void aoe2_projectile_presentation_system(EcsWorld& world) {
         set_aoe2_playing(world, child, false);
         set_aoe2_looping(world, child, false);
     }
+    GLD_PERF_MONITOR(
+        world.resource_or_add<Aoe2GameplayBridgePerformanceDiagnostics>()
+            .projectile_presentation_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void aoe2_gameplay_presentation_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto& reg = world.reg();
     const auto& clock = world.resource<aoe::AoeGameplayClock>();
     const auto& settings = world.resource<aoe::AoeGameplaySettings>();
@@ -288,7 +311,9 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         const auto& facing = reg.get<aoe::AoeFacing>(entity);
         const int render_direction = facing.direction;
         const auto& options = reg.get<aoe::AoePresentationOptions>(entity);
-        const std::string animation = desired_animation(*definition, state);
+        const auto* locomotion = reg.try_get<aoe::AoeLocomotionState>(entity);
+        const std::string animation = desired_animation(
+            *definition, state, locomotion);
         const bool frozen_idle_terminal =
             (state.state == aoe::UnitState::Dying &&
              definition->presentation.animation("death").empty()) ||
@@ -299,8 +324,6 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         const bool should_loop = looping(state.state);
         auto* snapshot = reg.try_get<Aoe2PresentationSnapshot>(entity);
         if (!snapshot) {
-            const auto* locomotion =
-                reg.try_get<aoe::AoeLocomotionState>(entity);
             snapshot = &reg.emplace<Aoe2PresentationSnapshot>(entity,
                 Aoe2PresentationSnapshot{
                     .state = state.state,
@@ -315,10 +338,9 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
                     .player_color = options.player_color,
                     .requested_animation = animation});
         }
-        const auto* locomotion = reg.try_get<aoe::AoeLocomotionState>(entity);
         float playback_time = update_presentation_playback(
             *snapshot, state, clock, settings, locomotion,
-            definition->movement.speed, animation, action_elapsed);
+            animation, action_elapsed);
         if (frozen_idle_terminal) playback_time = 0.f;
 
         auto* link = reg.try_get<Aoe2PresentationLink>(entity);
@@ -393,9 +415,18 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         set_aoe2_looping(world, child, should_loop);
         set_aoe2_playback_time(world, child, playback_time);
     }
+    GLD_PERF_MONITOR(
+        world.resource_or_add<Aoe2GameplayBridgePerformanceDiagnostics>()
+            .unit_presentation_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void Aoe2GameplayBridgePlugin::operator()(App& app) const {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    app.world.resource_or_add<Aoe2GameplayBridgePerformanceDiagnostics>();
+#endif
     app.add_system(Stage::PreUpdate, aoe2_gameplay_orphan_cleanup_system);
     app.add_system(Stage::PreUpdate, aoe2_gameplay_presentation_system);
     app.add_system(Stage::PreUpdate, aoe2_projectile_presentation_system);

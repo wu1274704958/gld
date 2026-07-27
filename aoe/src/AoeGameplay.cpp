@@ -10,11 +10,25 @@
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
+#include <ecs/PerformanceMonitoring.hpp>
 
 namespace gld::ecs::aoe {
 namespace {
 using json = nlohmann::json;
 constexpr float Epsilon = 1e-5f;
+void squad_traffic_tick(EcsWorld& world, std::uint64_t tick);
+
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+#define GLD_AOE_GAMEPLAY_PHASE(world_value, field_name, function) do { \
+    const auto phase_started = std::chrono::steady_clock::now(); \
+    function(); \
+    (world_value).resource_or_add<AoeGameplayPerformanceDiagnostics>().field_name += \
+        std::chrono::duration<double, std::milli>( \
+            std::chrono::steady_clock::now() - phase_started).count(); \
+} while (false)
+#else
+#define GLD_AOE_GAMEPLAY_PHASE(world_value, field_name, function) do { function(); } while (false)
+#endif
 
 float steering_dynamic_safe_fraction(
     glm::vec2 from, glm::vec2 to, glm::vec2 radii,
@@ -500,7 +514,8 @@ bool is_order_command(AoeCommandType type) {
 }
 
 void reset_member_action(entt::registry& reg, entt::entity entity,
-                         std::uint64_t tick) {
+                         std::uint64_t tick,
+                         bool reset_locomotion = true) {
     auto* state = reg.try_get<AoeActionState>(entity);
     if (!state || is_terminal(state->state)) return;
     const bool changed = state->state != UnitState::Idle;
@@ -508,9 +523,11 @@ void reset_member_action(entt::registry& reg, entt::entity entity,
     state->state_started_tick = tick;
     state->critical = false;
     state->release_emitted = false;
-    if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
-        locomotion->velocity = {0.f, 0.f};
-        locomotion->actual_speed = 0.f;
+    if (reset_locomotion) {
+        if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
+            locomotion->velocity = {0.f, 0.f};
+            locomotion->actual_speed = 0.f;
+        }
     }
     if (changed) ++state->sequence;
 }
@@ -584,8 +601,12 @@ entt::entity ignored_formation_squad(const entt::registry& reg,
                                      entt::entity entity) {
     const auto* member = reg.try_get<AoeSquadMember>(entity);
     if (!member || !reg.valid(member->squad)) return entt::null;
-    const auto* state = reg.try_get<AoeSquadState>(member->squad);
-    return state && state->phase == AoeSquadPhase::Engaging
+    // A squad may be globally Engaging while some members still follow their
+    // formation slots. Only independently approaching attackers stop ignoring
+    // their formation flow; a global phase switch must not turn every follower
+    // into a dynamic wall for every other follower.
+    const auto* attack = reg.try_get<AoeAttackOrder>(entity);
+    return attack && target_valid(reg, attack->target)
         ? entt::null : member->squad;
 }
 
@@ -699,20 +720,99 @@ void handle_squad_layout_failure(EcsWorld& world, entt::entity squad,
     state.phase = AoeSquadPhase::Failed;
 }
 
-void drive_squad_slots(entt::registry& reg, entt::entity squad,
+bool slot_destination_valid(const AoeLogicMap* map, glm::vec2 destination,
+                            glm::vec2 clearance) {
+    return !map || !map->valid() ||
+        (map->contains(destination, clearance) &&
+         !map->position_blocked(destination, clearance));
+}
+
+glm::vec2 resolve_elastic_slot_destination(
+    EcsWorld& world, entt::entity squad, entt::entity entity,
+    const AoeFormationSlot& slot, glm::vec2 original) {
+    auto& reg = world.reg();
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto& center = reg.get<AoePosition>(squad);
+    const auto& collider = reg.get<AoeCollider>(entity);
+    const glm::vec2 clearance{collider.radius_x, collider.radius_y};
+    glm::vec2 forward = formation.forward;
+    if (glm::length(forward) <= Epsilon) forward = {1.f, 0.f};
+    else forward = glm::normalize(forward);
+    const glm::vec2 right{forward.y, -forward.x};
+    const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad);
+    const float lateral = traffic ? traffic->lateral_offset : 0.f;
+    const glm::vec2 desired = original + right * lateral;
+    auto& follow = reg.get_or_emplace<AoeSquadSlotFollowState>(entity);
+    follow.original_destination = original;
+
+    if (slot_destination_valid(map, desired, clearance)) {
+        if (follow.elastic) {
+            const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+            if (++follow.recovery_ticks < settings.formation_slot_recovery_ticks)
+                return follow.navigation_destination;
+        }
+        follow.elastic = false;
+        follow.recovery_ticks = 0;
+        follow.navigation_destination = desired;
+        return desired;
+    }
+
+    // Keep slot ordering, first looking ahead along the common squad flow,
+    // then progressively compressing only the lateral formation offset.
+    // The fixed candidate set keeps the hot path allocation-free.
+    const float probe = std::max(.5f, std::max(clearance.x, clearance.y) * 2.f);
+    const std::array<glm::vec2, 10> candidates{{
+        desired + forward * probe,
+        desired + forward * probe * 2.f,
+        desired + forward * probe * 3.f,
+        center.value + right * (slot.local_offset.x * .75f + lateral) +
+            forward * slot.local_offset.y,
+        center.value + right * (slot.local_offset.x * .5f + lateral) +
+            forward * slot.local_offset.y,
+        center.value + right * (slot.local_offset.x * .25f + lateral) +
+            forward * slot.local_offset.y,
+        center.value + right * lateral + forward * slot.local_offset.y,
+        desired - forward * probe,
+        center.value + right * lateral,
+        center.value
+    }};
+    for (const auto candidate : candidates)
+        if (slot_destination_valid(map, candidate, clearance)) {
+            follow.elastic = true;
+            follow.recovery_ticks = 0;
+            follow.navigation_destination = candidate;
+            ++world.resource_or_add<AoeGameplayDiagnostics>().elastic_slot_uses;
+            return candidate;
+        }
+
+    follow.elastic = true;
+    follow.recovery_ticks = 0;
+    follow.navigation_destination = original;
+    ++world.resource_or_add<AoeGameplayDiagnostics>().elastic_slot_uses;
+    return original;
+}
+
+void drive_squad_slots(EcsWorld& world, entt::entity squad,
                        float speed_limit, std::uint64_t tick) {
+    auto& reg = world.reg();
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad);
+    const float traffic_speed = traffic
+        ? std::clamp(traffic->speed_scale, 0.f, 1.f) : 1.f;
     for (const auto& slot : formation.slots) {
         if (!squad_member_valid(reg, slot.unit)) continue;
         const auto entity = slot.unit.entity;
         if (const auto* attack = reg.try_get<AoeAttackOrder>(entity);
             attack && target_valid(reg, attack->target))
             continue;
-        const glm::vec2 destination = squad_slot_world(center, formation, slot);
+        const glm::vec2 original = squad_slot_world(center, formation, slot);
+        const glm::vec2 destination = resolve_elastic_slot_destination(
+            world, squad, entity, slot, original);
         reg.remove<AoeAttackOrder, AoeAttackMoveOrder>(entity);
         reg.emplace_or_replace<AoeSquadMoveSpeedLimit>(entity,
-            AoeSquadMoveSpeedLimit{speed_limit});
+            AoeSquadMoveSpeedLimit{speed_limit * traffic_speed});
         auto& goal = reg.emplace_or_replace<AoeMoveGoal>(entity,
             AoeMoveGoal{destination, 0.f, {}});
         (void)goal;
@@ -1097,7 +1197,6 @@ bool update_squad_attack_move_engagement(
                 (!definition || !definition->attack ||
                  gap > definition->attack->range + Epsilon)) {
                 clear_active_engagement(reg, member.entity);
-                reset_member_action(reg, member.entity, tick);
             } else {
                 const auto* approach = reg.try_get<AoeEngagementApproach>(
                     member.entity);
@@ -1119,7 +1218,9 @@ bool update_squad_attack_move_engagement(
         auto target = select_member_target(
             world, member.entity, acquisition, claimed);
         if (!target || !target_valid(reg, *target)) {
-            reset_member_action(reg, member.entity, tick);
+            if (reg.get<AoeActionState>(member.entity).state ==
+                UnitState::Attacking)
+                reset_member_action(reg, member.entity, tick, false);
             continue;
         }
         attack_with_squad_member(reg, member.entity, *target, tick);
@@ -1228,7 +1329,7 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
         }
 
         if (state.phase == AoeSquadPhase::Regrouping) {
-            drive_squad_slots(reg, squad, state.movement_speed, tick);
+            drive_squad_slots(world, squad, state.movement_speed, tick);
             if (!squad_slots_arrived(reg, squad)) continue;
             state.phase = (order.type == AoeSquadOrderType::MoveTo ||
                            order.type == AoeSquadOrderType::AttackMove)
@@ -1300,7 +1401,7 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             }
             if (guide->no_path) {
                 state.phase = AoeSquadPhase::Blocked;
-                drive_squad_slots(reg, squad, state.movement_speed, tick);
+                drive_squad_slots(world, squad, state.movement_speed, tick);
                 continue;
             }
 
@@ -1309,6 +1410,9 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             // freezing the anchor made every other slot stop as well and left
             // the slowest member unable to catch a moving slot.
             if (state.movement_speed > 0.f) {
+                const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad);
+                const float traffic_speed_scale = traffic
+                    ? std::clamp(traffic->speed_scale, 0.f, 1.f) : 1.f;
                 while (guide->current < guide->waypoints.size()) {
                     const glm::vec2 delta = guide->waypoints[guide->current] -
                                             center.value;
@@ -1316,13 +1420,13 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
                     if (distance <= Epsilon) { ++guide->current; continue; }
                     formation.forward = delta / distance;
                     center.value += formation.forward * std::min(
-                        distance, state.movement_speed * dt);
+                        distance, state.movement_speed * traffic_speed_scale * dt);
                     break;
                 }
             }
             state.phase = attack_move_active
                 ? AoeSquadPhase::Engaging : AoeSquadPhase::Moving;
-            drive_squad_slots(reg, squad, state.movement_speed, tick);
+            drive_squad_slots(world, squad, state.movement_speed, tick);
             if (guide->current >= guide->waypoints.size() &&
                 glm::length(order.destination - center.value) <= Epsilon &&
                 squad_slots_arrived(reg, squad)) {
@@ -1378,6 +1482,8 @@ bool plan_navigation_path(EcsWorld& world, entt::entity entity,
         registry.bind<GridAStarPathfinderLogic>("grid_astar");
     const std::string& id = world.try_resource<AoeLogicMap>()
         ? settings.unit_pathfinder_id : std::string("direct");
+    const bool had_usable_path = !path.no_path &&
+        path.current < path.waypoints.size();
     const auto result = registry.find(id, world, {
         reg.get<AoePosition>(entity).value, goal,
         {collider.radius_x, collider.radius_y}, entity, squad,
@@ -1387,11 +1493,24 @@ bool plan_navigation_path(EcsWorld& world, entt::entity entity,
     path.map_revision = result.map_revision;
     path.last_repath_tick = tick;
     path.include_dynamic_obstacles = include_dynamic;
+    path.dynamic_repath_requested = false;
     path.blocked_ticks = 0;
+    const bool failed = result.status != AoePathStatus::Ready ||
+                        result.waypoints.empty();
+    if (failed && include_dynamic && had_usable_path) {
+        path.no_path = false;
+        path.dynamic_repath_failed = true;
+        ++world.resource_or_add<AoeGameplayDiagnostics>()
+              .dynamic_repath_failures;
+        world.resource_or_add<Events<AoeNavigationEvent>>().emit(
+            entity, path.request_sequence, AoeNavigationEventStatus::Blocked,
+            tick);
+        return true;
+    }
     path.current = 0;
     path.waypoints = result.waypoints;
-    path.no_path = result.status != AoePathStatus::Ready ||
-                   path.waypoints.empty();
+    path.no_path = failed;
+    path.dynamic_repath_failed = false;
     world.resource_or_add<Events<AoeNavigationEvent>>().emit(
         entity, path.request_sequence,
         path.no_path ? AoeNavigationEventStatus::NoPath
@@ -1471,18 +1590,27 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
             (!path->no_path &&
              (path->waypoints.empty() || path->current >= path->waypoints.size())) ||
             (path && glm::length(path->requested_goal - goal.destination) > threshold) ||
-            (path && path->map_revision != map_revision);
+            (path && path->map_revision != map_revision) ||
+            (path && path->dynamic_repath_requested);
         bool include_dynamic = path && path->include_dynamic_obstacles;
+        const auto repath_cooldown = [&] {
+            const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
+            return nav_settings.repath_cooldown_ticks +
+                static_cast<std::uint32_t>(
+                    identity ? identity->instance_id % 3u : 0u);
+        };
+        if (path && path->dynamic_repath_failed &&
+            tick - path->last_repath_tick >= repath_cooldown())
+            needs_path = true;
         if (path && path->no_path) {
             if (path->map_revision != map_revision) needs_path = true;
+            else if (reg.all_of<AoeSquadMember>(entity) &&
+                     glm::length(path->requested_goal - goal.destination) >
+                         Epsilon &&
+                     tick - path->last_repath_tick >= repath_cooldown())
+                needs_path = true;
             else if (path->include_dynamic_obstacles &&
-                     tick - path->last_repath_tick >= [&] {
-                         const auto* identity =
-                             reg.try_get<AoeGameplayIdentity>(entity);
-                         return nav_settings.repath_cooldown_ticks +
-                             static_cast<std::uint32_t>(
-                                 identity ? identity->instance_id % 3u : 0u);
-                     }())
+                     tick - path->last_repath_tick >= repath_cooldown())
                 needs_path = true;
         }
         if (path && !path->no_path && !needs_path &&
@@ -1519,7 +1647,7 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
 }
 
 void movement_tick(EcsWorld& world, std::uint64_t tick) {
-    const auto movement_started = std::chrono::steady_clock::now();
+    GLD_PERF_TIME_POINT(movement_started);
     auto& reg = world.reg();
     const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
     {
@@ -1535,9 +1663,14 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
     world.resource_or_add<AoeCrowdSteeringScratch>();
     const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
     const auto& steering = world.resource<AoeSteeringRegistry>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    auto& performance =
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
+#endif
     for (const auto entity : reg.view<AoeLocomotionState>()) {
         auto& locomotion = reg.get<AoeLocomotionState>(entity);
         locomotion.previous_velocity = locomotion.velocity;
+        locomotion.effective_max_speed = 0.f;
         locomotion.actual_speed = 0.f;
     }
     auto& scratch = world.resource<AoeCrowdSteeringScratch>();
@@ -1552,12 +1685,17 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         auto& state = reg.get<AoeActionState>(entity);
         if (state.state == UnitState::Attacking || is_terminal(state.state)) {
             locomotion.velocity = {0.f, 0.f};
+            locomotion.stalled_ticks = 0;
+            locomotion.escape_steering = false;
             continue;
         }
         auto& goal = reg.get<AoeMoveGoal>(entity);
         auto& path = reg.get<AoeNavigationPath>(entity);
         if (path.no_path) {
             locomotion.velocity = {0.f, 0.f};
+            ++locomotion.stalled_ticks;
+            locomotion.escape_steering = locomotion.stalled_ticks >=
+                std::max(1u, navigation.steering_escape_stalled_ticks);
             continue;
         }
         if (goal.target.entity != entt::null) {
@@ -1584,21 +1722,43 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         }
         if (!reached) {
             const glm::vec2 preferred_direction = delta / distance;
-            float speed = reg.get<AoeMovement>(entity).speed;
-            if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity))
-                speed = std::min(speed, limit->value);
+            const float base_speed = reg.get<AoeMovement>(entity).speed;
+            float speed = base_speed;
+            const auto* squad_limit =
+                reg.try_get<AoeSquadMoveSpeedLimit>(entity);
+            if (squad_limit) speed = std::min(speed, squad_limit->value);
+            locomotion.effective_max_speed = speed;
+            GLD_PERF_MONITOR(
+                ++performance.movement_speed_samples;
+                performance.movement_base_speed_sum += base_speed;
+                performance.movement_effective_speed_sum += speed;
+                if (squad_limit && speed + Epsilon < base_speed)
+                    ++performance.movement_squad_limited;
+            );
             // Arrive instead of orbiting a final point. With a persistent
             // heading, full speed all the way to an epsilon-sized target can
             // repeatedly overshoot it, especially after a sharp A* corner.
             float desired_speed = std::min(speed, remaining / .25f);
+            GLD_PERF_MONITOR(
+                if (desired_speed + Epsilon < speed)
+                    ++performance.movement_arrive_limited;
+            );
             if (glm::length(locomotion.velocity) > Epsilon) {
                 const float alignment = glm::dot(
                     glm::normalize(locomotion.velocity), preferred_direction);
                 // Turn in place at a reduced pace instead of carrying full
                 // tangential speed around a sharp waypoint indefinitely.
-                desired_speed *= std::clamp(
+                const float turn_scale = std::clamp(
                     (alignment + .25f) / 1.25f, .1f, 1.f);
+                desired_speed *= turn_scale;
+                GLD_PERF_MONITOR(
+                    if (turn_scale < 1.f - Epsilon)
+                        ++performance.movement_turn_limited;
+                );
             }
+            GLD_PERF_MONITOR(
+                performance.movement_desired_speed_sum += desired_speed;
+            );
             const glm::vec2 preferred_velocity =
                 preferred_direction * desired_speed;
             const auto& collider = reg.get<AoeCollider>(entity);
@@ -1706,8 +1866,8 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 ((tick + identity->instance_id) % interval == 0);
             const bool signature_changed =
                 threat_signature != locomotion.threat_signature;
-            const bool full_solve = !threatened || imminent || !cache_valid ||
-                signature_changed || cadence_due;
+            const bool full_solve = locomotion.escape_steering || !threatened ||
+                imminent || !cache_valid || signature_changed || cadence_due;
             if (!full_solve) {
                 steering_result.target_velocity =
                     locomotion.cached_target_velocity;
@@ -1715,6 +1875,13 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 steering_result.threatened = true;
                 ++diagnostics.steering_cached_solves;
             } else if (steering.contains(navigation.steering_strategy_id)) {
+                int preferred_side = locomotion.avoidance_side;
+                if (const auto* member = reg.try_get<AoeSquadMember>(entity);
+                    member && reg.valid(member->squad))
+                    if (const auto* traffic =
+                            reg.try_get<AoeSquadTrafficState>(member->squad);
+                        traffic && traffic->negotiated_side != 0)
+                        preferred_side = traffic->negotiated_side;
                 steering_result = steering.steer(
                     navigation.steering_strategy_id,
                     {entity, identity ? identity->instance_id : 0,
@@ -1723,10 +1890,17 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                      navigation.steering_prediction_seconds,
                      navigation.steering_separation_padding,
                      map && map->valid() ? map : nullptr, neighbors,
-                     locomotion.avoidance_side,
+                     preferred_side,
                      navigation.steering_side_switch_margin +
                          (locomotion.avoidance_side_hold_ticks > 0 && !imminent
-                              ? 2.f : 0.f)});
+                              ? 2.f : 0.f),
+                     navigation.steering_candidate_angle_step,
+                     locomotion.escape_steering
+                         ? navigation.steering_escape_max_angle
+                         : navigation.steering_normal_max_angle,
+                     navigation.steering_minimum_safe_fraction});
+                if (locomotion.escape_steering)
+                    ++diagnostics.steering_escape_solves;
                 locomotion.cached_target_velocity =
                     steering_result.target_velocity;
                 locomotion.last_steering_tick = tick;
@@ -1758,6 +1932,11 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 ++diagnostics.steering_fallbacks;
             }
             const float target_speed = std::min(speed, glm::length(target_velocity));
+            GLD_PERF_MONITOR(
+                performance.movement_steering_speed_sum += target_speed;
+                if (target_speed + Epsilon < desired_speed)
+                    ++performance.movement_steering_limited;
+            );
             glm::vec2 target_direction = target_speed > Epsilon
                 ? target_velocity / glm::length(target_velocity)
                 : preferred_direction;
@@ -1807,6 +1986,12 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             locomotion.velocity = dt > 0.f ? displacement / dt : glm::vec2{0.f};
             locomotion.actual_speed = glm::length(locomotion.velocity);
             locomotion.distance_travelled += glm::length(displacement);
+            GLD_PERF_MONITOR(
+                performance.movement_actual_speed_sum +=
+                    locomotion.actual_speed;
+                if (safe < 1.f - Epsilon)
+                    ++performance.movement_safe_limited;
+            );
             if (locomotion.actual_speed > navigation.steering_stalled_speed)
                 set_locomotion_facing(reg.get<AoeFacing>(entity), locomotion,
                     locomotion.velocity, navigation, diagnostics);
@@ -1815,6 +2000,9 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             if (forward_progress + Epsilon <
                 navigation.steering_stalled_speed * dt) {
                 ++path.blocked_ticks;
+                ++locomotion.stalled_ticks;
+                locomotion.escape_steering = locomotion.stalled_ticks >=
+                    std::max(1u, navigation.steering_escape_stalled_ticks);
                 const std::uint32_t repath_trigger = std::max(
                     1u, navigation.blocked_repath_ticks);
                 if (path.blocked_ticks == repath_trigger)
@@ -1823,14 +2011,14 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                         AoeNavigationEventStatus::Blocked, tick);
                 if (path.blocked_ticks >= repath_trigger) {
                     path.include_dynamic_obstacles = true;
-                    path.waypoints.clear();
-                    path.current = 0;
-                    path.no_path = false;
+                    path.dynamic_repath_requested = true;
                     path.blocked_ticks = 0;
                 }
                 state.state = UnitState::Moving;
             } else {
                 path.blocked_ticks = 0;
+                locomotion.stalled_ticks = 0;
+                locomotion.escape_steering = false;
                 state.state = UnitState::Moving;
             }
         } else if (!final_waypoint) {
@@ -1866,13 +2054,17 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         auto& locomotion = reg.get<AoeLocomotionState>(entity);
         locomotion.velocity = {0.f, 0.f};
         locomotion.actual_speed = 0.f;
+        locomotion.stalled_ticks = 0;
+        locomotion.escape_steering = false;
     }
-    auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
-    diagnostics.movement_last_ms =
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - movement_started).count();
-    diagnostics.movement_peak_ms = std::max(
-        diagnostics.movement_peak_ms, diagnostics.movement_last_ms);
+    GLD_PERF_MONITOR(
+        auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
+        diagnostics.movement_last_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - movement_started).count();
+        diagnostics.movement_peak_ms = std::max(
+            diagnostics.movement_peak_ms, diagnostics.movement_last_ms);
+    );
 }
 
 void combat_tick(EcsWorld& world, std::uint64_t tick) {
@@ -2032,20 +2224,231 @@ void capture_position_history_tick(EcsWorld& world) {
 void fixed_tick(EcsWorld& world) {
     auto& clock = world.resource<AoeGameplayClock>();
     ++clock.tick;
-    capture_position_history_tick(world);
-    squad_spawn_resolution_tick(world);
-    aoe_map_static_obstacle_system(world);
-    aoe_dynamic_obstacle_index_system(world);
-    squad_command_tick(world, clock.tick);
-    command_tick(world, clock.tick);
-    squad_membership_cleanup_tick(world);
-    squad_control_tick(world, clock.tick);
-    attack_move_acquisition_tick(world, clock.tick);
-    navigation_tick(world, clock.tick);
-    movement_tick(world, clock.tick);
-    combat_tick(world, clock.tick);
-    aoe_projectile_tick(world, clock.tick);
-    lifecycle_tick(world, clock.tick);
+    GLD_AOE_GAMEPLAY_PHASE(world, position_history_ms,
+        [&] { capture_position_history_tick(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, squad_spawn_resolution_ms,
+        [&] { squad_spawn_resolution_tick(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, static_obstacle_index_ms,
+        [&] { aoe_map_static_obstacle_system(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, dynamic_obstacle_index_ms,
+        [&] { aoe_dynamic_obstacle_index_system(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, squad_command_ms,
+        [&] { squad_command_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, command_ms,
+        [&] { command_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, membership_cleanup_ms,
+        [&] { squad_membership_cleanup_tick(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, squad_traffic_ms,
+        [&] { squad_traffic_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, squad_control_ms,
+        [&] { squad_control_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, attack_move_acquisition_ms,
+        [&] { attack_move_acquisition_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, navigation_ms,
+        [&] { navigation_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, movement_ms,
+        [&] { movement_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, combat_ms,
+        [&] { combat_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, projectile_ms,
+        [&] { aoe_projectile_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, lifecycle_ms,
+        [&] { lifecycle_tick(world, clock.tick); });
+}
+
+void squad_traffic_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
+    auto& index = world.resource_or_add<AoeSquadTrafficIndex>();
+    index.records.clear();
+    index.maximum_reach = 0.f;
+
+    for (const auto squad : reg.view<AoeSquadMembers, AoeSquadSpawnState,
+                                     AoeSquadFormation, AoeSquadOrder,
+                                     AoeSquadState, AoePosition, AoeCollider>()) {
+        const auto& spawn = reg.get<AoeSquadSpawnState>(squad);
+        const auto& order = reg.get<AoeSquadOrder>(squad);
+        const auto& state = reg.get<AoeSquadState>(squad);
+        auto& traffic = reg.get_or_emplace<AoeSquadTrafficState>(squad);
+        if ((spawn.status != AoeSquadSpawnStatus::Ready &&
+             spawn.status != AoeSquadSpawnStatus::Partial) ||
+            (order.type != AoeSquadOrderType::MoveTo &&
+             order.type != AoeSquadOrderType::AttackMove) ||
+            state.phase == AoeSquadPhase::Idle) {
+            traffic.mode = AoeSquadTrafficMode::Clear;
+            traffic.peer = entt::null;
+            traffic.speed_scale = 1.f;
+            traffic.target_lateral_offset = 0.f;
+            continue;
+        }
+        glm::vec2 direction = reg.get<AoeSquadFormation>(squad).forward;
+        if (const auto* guide = reg.try_get<AoeNavigationPath>(squad);
+            guide && !guide->no_path && guide->current < guide->waypoints.size())
+            direction = guide->waypoints[guide->current] -
+                        reg.get<AoePosition>(squad).value;
+        if (glm::length(direction) <= Epsilon) continue;
+        direction = glm::normalize(direction);
+        traffic.desired_velocity = direction * state.movement_speed;
+        const bool hold_decision =
+            traffic.mode != AoeSquadTrafficMode::Clear &&
+            traffic.mode != AoeSquadTrafficMode::Recovering &&
+            tick >= traffic.last_conflict_tick &&
+            tick - traffic.last_conflict_tick <=
+                settings.squad_traffic_hold_ticks;
+        if (!hold_decision) {
+            traffic.mode = traffic.mode == AoeSquadTrafficMode::Clear
+                ? AoeSquadTrafficMode::Clear : AoeSquadTrafficMode::Recovering;
+            traffic.peer = entt::null;
+            traffic.speed_scale = 1.f;
+            traffic.target_lateral_offset = 0.f;
+        }
+        float member_radius = Epsilon;
+        if (const auto* members = reg.try_get<AoeSquadMembers>(squad))
+            for (const auto& member : members->active)
+                if (squad_member_valid(reg, member)) {
+                    const auto& collider = reg.get<AoeCollider>(member.entity);
+                    member_radius = std::max(member_radius,
+                        std::max(collider.radius_x, collider.radius_y));
+                    break;
+                }
+        index.records.push_back({squad, reg.get<AoePosition>(squad).value,
+            direction, state.movement_speed,
+            std::max(reg.get<AoeCollider>(squad).radius_x,
+                     reg.get<AoeCollider>(squad).radius_y),
+            member_radius,
+            static_cast<std::uint64_t>(entt::to_integral(squad))});
+        index.maximum_reach = std::max(index.maximum_reach,
+            index.records.back().radius + index.records.back().speed *
+                settings.squad_traffic_prediction_seconds);
+    }
+
+    std::sort(index.records.begin(), index.records.end(),
+        [](const AoeSquadTrafficRecord& a, const AoeSquadTrafficRecord& b) {
+            if (std::abs(a.center.x - b.center.x) > Epsilon)
+                return a.center.x < b.center.x;
+            return a.stable_id < b.stable_id;
+        });
+
+    const auto set_passing = [&](const AoeSquadTrafficRecord& value,
+                                 const AoeSquadTrafficRecord& peer,
+                                 int side) {
+        auto& traffic = reg.get<AoeSquadTrafficState>(value.squad);
+        traffic.mode = side < 0 ? AoeSquadTrafficMode::PassingRight
+                                : AoeSquadTrafficMode::PassingLeft;
+        traffic.peer = peer.squad;
+        // Steering angles use positive for left/CCW, while formation lateral
+        // offsets use positive for the local right axis.
+        traffic.negotiated_side = static_cast<std::int8_t>(side);
+        traffic.target_lateral_offset = side < 0
+            ? settings.squad_traffic_lateral_clearance
+            : -settings.squad_traffic_lateral_clearance;
+        ++traffic.conflict_ticks;
+        traffic.last_conflict_tick = tick;
+    };
+    const auto corridor_open = [&](const AoeSquadTrafficRecord& value,
+                                   int side) {
+        const auto* map = world.try_resource<AoeLogicMap>();
+        if (!map || !map->valid()) return true;
+        const glm::vec2 right{value.direction.y, -value.direction.x};
+        const glm::vec2 offset = right *
+            (side < 0 ? settings.squad_traffic_lateral_clearance
+                      : -settings.squad_traffic_lateral_clearance);
+        return map->static_safe_fraction(value.center, value.center + offset,
+            glm::vec2(value.member_radius)) >= 1.f - Epsilon;
+    };
+    for (std::size_t i = 0; i < index.records.size(); ++i)
+        for (std::size_t j = i + 1; j < index.records.size(); ++j) {
+            const auto& a = index.records[i];
+            const auto& b = index.records[j];
+            const float a_reach = a.radius + a.speed *
+                settings.squad_traffic_prediction_seconds;
+            if (b.center.x - a.center.x > a_reach + index.maximum_reach)
+                break;
+            const glm::vec2 relative = b.center - a.center;
+            const float range = a.radius + b.radius +
+                (a.speed + b.speed) * settings.squad_traffic_prediction_seconds;
+            if (glm::length(relative) > range) continue;
+            const float alignment = glm::dot(a.direction, b.direction);
+            const glm::vec2 relative_velocity =
+                a.direction * a.speed - b.direction * b.speed;
+            const float relative_speed2 = glm::dot(relative_velocity, relative_velocity);
+            const float closest_time = relative_speed2 > Epsilon
+                ? std::clamp(glm::dot(relative, relative_velocity) /
+                                 relative_speed2,
+                             0.f, settings.squad_traffic_prediction_seconds)
+                : 0.f;
+            const glm::vec2 closest = relative - relative_velocity * closest_time;
+            if (glm::length(closest) > a.radius + b.radius +
+                                      settings.squad_traffic_follow_gap)
+                continue;
+            ++world.resource_or_add<AoeGameplayDiagnostics>()
+                  .squad_traffic_conflicts;
+            if (alignment >= settings.squad_traffic_same_direction_dot) {
+                const bool a_behind = glm::dot(relative, a.direction) > 0.f;
+                const auto& follower = a_behind ? a : b;
+                const auto& leader = a_behind ? b : a;
+                auto& traffic = reg.get<AoeSquadTrafficState>(follower.squad);
+                traffic.mode = AoeSquadTrafficMode::Following;
+                traffic.peer = leader.squad;
+                const float speed_scale =
+                    leader.speed > Epsilon && follower.speed > Epsilon
+                    ? std::clamp(leader.speed / follower.speed, 0.f, 1.f) : 0.f;
+                const float surface_gap = std::max(0.f,
+                    glm::length(leader.center - follower.center) -
+                    leader.radius - follower.radius);
+                const float gap_scale = settings.squad_traffic_follow_gap > Epsilon
+                    ? std::clamp(surface_gap /
+                                     settings.squad_traffic_follow_gap,
+                                 0.f, 1.f)
+                    : 1.f;
+                traffic.speed_scale = std::min(speed_scale, gap_scale);
+                ++traffic.conflict_ticks;
+                traffic.last_conflict_tick = tick;
+            } else if (alignment <= settings.squad_traffic_head_on_dot) {
+                int side = -1;
+                if (!corridor_open(a, side) || !corridor_open(b, side))
+                    side = 1;
+                if (corridor_open(a, side) && corridor_open(b, side)) {
+                    set_passing(a, b, side);
+                    set_passing(b, a, side);
+                } else {
+                    const auto& yielding = a.stable_id > b.stable_id ? a : b;
+                    const auto& priority = a.stable_id > b.stable_id ? b : a;
+                    auto& traffic = reg.get<AoeSquadTrafficState>(yielding.squad);
+                    traffic.mode = AoeSquadTrafficMode::Yielding;
+                    traffic.peer = priority.squad;
+                    traffic.speed_scale = settings.squad_traffic_yield_speed_scale;
+                    ++traffic.conflict_ticks;
+                    traffic.last_conflict_tick = tick;
+                }
+            } else {
+                const auto& yielding = a.stable_id > b.stable_id ? a : b;
+                const auto& priority = a.stable_id > b.stable_id ? b : a;
+                auto& traffic = reg.get<AoeSquadTrafficState>(yielding.squad);
+                traffic.mode = AoeSquadTrafficMode::Yielding;
+                traffic.peer = priority.squad;
+                traffic.speed_scale = settings.squad_traffic_yield_speed_scale;
+                ++traffic.conflict_ticks;
+                traffic.last_conflict_tick = tick;
+            }
+        }
+
+    const float offset_step = std::max(0.f,
+        settings.squad_traffic_offset_rate) * dt;
+    for (const auto& record : index.records) {
+        auto& traffic = reg.get<AoeSquadTrafficState>(record.squad);
+        const float delta = traffic.target_lateral_offset - traffic.lateral_offset;
+        traffic.lateral_offset += std::clamp(delta, -offset_step, offset_step);
+        if (std::abs(traffic.lateral_offset) <= Epsilon &&
+            traffic.mode == AoeSquadTrafficMode::Recovering) {
+            traffic.lateral_offset = 0.f;
+            traffic.mode = AoeSquadTrafficMode::Clear;
+            traffic.conflict_ticks = 0;
+        }
+        if (glm::length(traffic.desired_velocity) > Epsilon)
+            traffic.last_progress_tick = tick;
+    }
 }
 } // namespace
 
@@ -2153,27 +2556,41 @@ AoeSteeringResult DefaultLocalSteeringLogic::steer(
         return {context.preferred_velocity, context.preferred_avoidance_side,
                 false};
 
-    // The common case compares only straight, cached-side lateral and the
-    // opposite lateral candidate. This replaces the old nine trigonometric
-    // candidates while retaining an escape for wall/crowd conflicts.
-    constexpr float Diagonal = .7071067811865475f;
-    const glm::vec2 left{
-        (preferred.x - preferred.y) * Diagonal,
-        (preferred.x + preferred.y) * Diagonal};
-    const glm::vec2 right{
-        (preferred.x + preferred.y) * Diagonal,
-        (-preferred.x + preferred.y) * Diagonal};
+    const std::uint64_t initial_side_seed = context.neighbors.empty()
+        ? context.instance_id
+        : (context.instance_id ^ context.neighbors.front().instance_id);
     const int held_side = context.preferred_avoidance_side == 0
-        ? 1 : (context.preferred_avoidance_side > 0 ? 1 : -1);
-    const std::array<std::pair<glm::vec2, int>, 3> candidates{{
-        {preferred, 0},
-        {held_side > 0 ? left : right, held_side},
-        {held_side > 0 ? right : left, -held_side}}};
+        ? ((initial_side_seed & 1u) != 0u ? 1 : -1)
+        : (context.preferred_avoidance_side > 0 ? 1 : -1);
+    const float angle_step = std::clamp(
+        context.candidate_angle_step, .0872664626f, .78539816339f);
+    const float max_angle = std::clamp(
+        context.candidate_max_angle, angle_step, 1.57079632679f);
+    const int steps = std::clamp(
+        static_cast<int>(std::ceil(max_angle / angle_step)), 1, 4);
 
     float best_score = -std::numeric_limits<float>::infinity();
     glm::vec2 best = context.preferred_velocity;
     int best_side = held_side;
-    for (const auto& [direction, side] : candidates) {
+    // Test the negotiated/held side first so numerically equal candidates are
+    // deterministic. The widest escape fan reaches the wall tangent (90 deg)
+    // but deliberately contains no backward direction.
+    for (int candidate = 0; candidate <= steps * 2; ++candidate) {
+        int signed_step = 0;
+        if (candidate > 0) {
+            const int magnitude = (candidate + 1) / 2;
+            signed_step = (candidate & 1) ? held_side * magnitude
+                                          : -held_side * magnitude;
+        }
+        const float angle = std::clamp(
+            static_cast<float>(signed_step) * angle_step,
+            -max_angle, max_angle);
+        const float cosine = std::cos(angle);
+        const float sine = std::sin(angle);
+        const glm::vec2 direction{
+            preferred.x * cosine - preferred.y * sine,
+            preferred.x * sine + preferred.y * cosine};
+        const int side = signed_step == 0 ? 0 : (signed_step > 0 ? 1 : -1);
         const glm::vec2 velocity = direction *
             std::min(preferred_speed, context.max_speed);
         float static_clearance = side == 0 ? straight_clearance : 1.f;
@@ -2211,10 +2628,13 @@ AoeSteeringResult DefaultLocalSteeringLogic::steer(
 
         const float progress = glm::dot(direction, preferred);
         const float continuity = glm::dot(direction, current);
+        const float usable_distance = static_clearance * feeler;
         float score = progress * 3.f + continuity * .75f +
-                      static_clearance * 8.f +
+                      static_clearance * 8.f + usable_distance * 2.f +
                       std::min(nearest_margin, 4.f) * .15f - dynamic_penalty;
-        if (static_clearance <= Epsilon) score -= 100.f;
+        if (static_clearance < std::clamp(
+                context.minimum_safe_fraction, 0.f, 1.f))
+            score -= 100.f;
         if (side == held_side)
             score += std::max(0.f, context.side_switch_margin);
         if (score > best_score) {
@@ -3012,11 +3432,21 @@ double aoe_action_elapsed_seconds(const AoeActionState& state,
 }
 
 void clear_aoe_gameplay_events(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
+    GLD_PERF_MONITOR(
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>().begin_frame();
+    );
     world.resource_or_add<Events<AoeActionEvent>>().clear();
     world.resource_or_add<Events<AoeNavigationEvent>>().clear();
+    GLD_PERF_MONITOR(
+        world.resource<AoeGameplayPerformanceDiagnostics>().clear_events_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto& reg = world.reg();
     auto& manager = world.resource<AoeUnitDefinitionManager>();
     std::vector<entt::entity> completed;
@@ -3068,13 +3498,26 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
     for (auto entity : completed)
         if (reg.valid(entity) && reg.all_of<AoeGameplaySpawnRequest>(entity))
             reg.remove<AoeGameplaySpawnRequest>(entity);
+    GLD_PERF_MONITOR(
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>().spawn_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void aoe_gameplay_fixed_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto& clock = world.resource<AoeGameplayClock>();
     const auto& settings = world.resource<AoeGameplaySettings>();
     const auto* time = world.try_resource<Time>();
-    if (!time || !(settings.fixed_dt > 0.0)) return;
+    if (!time || !(settings.fixed_dt > 0.0)) {
+        GLD_PERF_MONITOR(
+            world.resource_or_add<AoeGameplayPerformanceDiagnostics>().fixed_total_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count();
+        );
+        return;
+    }
     clock.accumulator += std::max(0.f, time->dt);
     clock.ticks_this_frame = 0;
     while (clock.accumulator + 1e-12 >= settings.fixed_dt &&
@@ -3088,9 +3531,15 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
         clock.dropped_seconds += clock.accumulator - kept;
         clock.accumulator = kept;
     }
+    GLD_PERF_MONITOR(
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>().fixed_total_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void aoe_gameplay_recycle_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto& reg = world.reg();
     auto& pool = world.resource<AoeGameplayPool>();
     const auto view = reg.view<AoeRecyclePending>();
@@ -3113,6 +3562,11 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
         pool.available.push_back(entity);
         ++pool.recycled;
     }
+    GLD_PERF_MONITOR(
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>().recycle_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 void AoeGameplayPlugin::operator()(App& app) const {
@@ -3134,7 +3588,11 @@ void AoeGameplayPlugin::operator()(App& app) const {
     app.world.resource_or_add<Events<AoeActionEvent>>();
     app.world.resource_or_add<Events<AoeNavigationEvent>>();
     app.world.resource_or_add<AoeGameplayDiagnostics>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    app.world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
+#endif
     app.world.resource_or_add<AoeCrowdSteeringScratch>();
+    app.world.resource_or_add<AoeSquadTrafficIndex>();
     app.world.resource_or_add<AoeNavigationSettings>();
     app.world.resource_or_add<AoeDynamicObstacleIndex>();
     app.world.resource_or_add<AoeStaticObstacleBindings>();

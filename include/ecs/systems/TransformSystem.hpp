@@ -287,8 +287,19 @@ namespace gld::ecs {
         time.elapsed += time.dt;
         ++time.frame;
         if (raw > 0.f) {
-            const float instant = 1.f / raw;
-            time.fps = time.fps <= 0.f ? instant : time.fps + (instant - time.fps) * 0.08f;
+            clock.fps_window_elapsed += raw;
+            ++clock.fps_window_frames;
+            // FPS is throughput over wall-clock time, not an average of
+            // reciprocal frame times. Averaging 1/dt badly overstates FPS
+            // when slow frames are interleaved with a few very fast frames.
+            if (time.fps <= 0.f || clock.fps_window_elapsed >= 0.5) {
+                time.fps = static_cast<float>(clock.fps_window_frames /
+                    clock.fps_window_elapsed);
+                if (clock.fps_window_elapsed >= 0.5) {
+                    clock.fps_window_elapsed = 0.0;
+                    clock.fps_window_frames = 0;
+                }
+            }
         }
     }
     inline void time_system(EcsWorld& w) {

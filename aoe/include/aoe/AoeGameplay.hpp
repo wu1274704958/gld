@@ -152,12 +152,19 @@ struct AoeLocomotionState {
     glm::vec2 velocity{0.f};
     glm::vec2 previous_velocity{0.f};
     glm::vec2 cached_target_velocity{0.f};
+    // Maximum speed after persistent gameplay limits (for example a squad's
+    // slowest-member cap), but before transient arrive/steering/collision
+    // reductions. Presentation uses this to distinguish commanded slow travel
+    // from genuinely obstructed movement.
+    float effective_max_speed = 0.f;
     float actual_speed = 0.f;
     double distance_travelled = 0.0;
     std::uint64_t last_steering_tick = 0;
     std::uint64_t threat_signature = 0;
     std::int8_t avoidance_side = 0;
     std::uint8_t avoidance_side_hold_ticks = 0;
+    std::uint32_t stalled_ticks = 0;
+    bool escape_steering = false;
     int pending_facing_direction = -1;
     std::uint8_t pending_facing_ticks = 0;
 };
@@ -192,6 +199,11 @@ struct AoeNavigationPath {
     std::uint32_t blocked_ticks = 0;
     bool no_path = false;
     bool include_dynamic_obstacles = false;
+    bool dynamic_repath_requested = false;
+    // A failed optional dynamic replan must not invalidate a still-usable
+    // static route. This flag is diagnostic and is cleared by the next
+    // successful plan.
+    bool dynamic_repath_failed = false;
 };
 struct AoeMapStaticObstacle {
     AoeStaticObstacleShape shape = AoeStaticObstacleShape::Aabb;
@@ -293,6 +305,9 @@ struct AoeSteeringContext {
     std::span<const AoeSteeringNeighbor> neighbors{};
     int preferred_avoidance_side = 0;
     float side_switch_margin = .35f;
+    float candidate_angle_step = .39269908169f;
+    float candidate_max_angle = .78539816339f;
+    float minimum_safe_fraction = .05f;
 };
 
 struct AoeSteeringResult {
@@ -578,6 +593,30 @@ struct AoeSquadMember {
 };
 struct AoeSquadMoveSpeedLimit { float value = 0.f; };
 
+enum class AoeSquadTrafficMode {
+    Clear, Following, PassingLeft, PassingRight, Yielding, Recovering
+};
+
+struct AoeSquadTrafficState {
+    AoeSquadTrafficMode mode = AoeSquadTrafficMode::Clear;
+    entt::entity peer{entt::null};
+    glm::vec2 desired_velocity{0.f};
+    float speed_scale = 1.f;
+    float lateral_offset = 0.f;
+    float target_lateral_offset = 0.f;
+    std::int8_t negotiated_side = 0;
+    std::uint32_t conflict_ticks = 0;
+    std::uint64_t last_conflict_tick = 0;
+    std::uint64_t last_progress_tick = 0;
+};
+
+struct AoeSquadSlotFollowState {
+    glm::vec2 original_destination{0.f};
+    glm::vec2 navigation_destination{0.f};
+    bool elastic = false;
+    std::uint32_t recovery_ticks = 0;
+};
+
 enum class AoeSquadCommandType {
     MoveTo, AttackTarget, AttackMove, Stop, SetFormation
 };
@@ -714,6 +753,20 @@ struct AoeNavigationSettings {
     float steering_stalled_speed = .05f;
     float squad_leash = 3.f;
     float slot_repath_distance = .5f;
+    std::uint32_t steering_escape_stalled_ticks = 4;
+    std::uint32_t formation_slot_recovery_ticks = 4;
+    std::uint32_t squad_traffic_hold_ticks = 6;
+    float steering_candidate_angle_step = .39269908169f;
+    float steering_normal_max_angle = .78539816339f;
+    float steering_escape_max_angle = 1.57079632679f;
+    float steering_minimum_safe_fraction = .05f;
+    float squad_traffic_prediction_seconds = 1.5f;
+    float squad_traffic_same_direction_dot = .65f;
+    float squad_traffic_head_on_dot = -.5f;
+    float squad_traffic_follow_gap = .75f;
+    float squad_traffic_yield_speed_scale = .35f;
+    float squad_traffic_lateral_clearance = .75f;
+    float squad_traffic_offset_rate = 2.f;
 };
 
 struct AoeStaticObstacleBindings {
@@ -751,8 +804,49 @@ struct AoeGameplayDiagnostics {
     std::uint64_t steering_side_switches = 0;
     std::uint64_t facing_changes_suppressed = 0;
     std::uint64_t facing_changes_committed = 0;
+    std::uint64_t steering_escape_solves = 0;
+    std::uint64_t dynamic_repath_failures = 0;
+    std::uint64_t elastic_slot_uses = 0;
+    std::uint64_t squad_traffic_conflicts = 0;
     double movement_last_ms = 0.0;
     double movement_peak_ms = 0.0;
+};
+
+// Per-frame CPU timings. The resource and all clock reads are compiled in only
+// when GLD_ENABLE_PERFORMANCE_MONITORING is enabled.
+struct AoeGameplayPerformanceDiagnostics {
+    double clear_events_ms = 0.0;
+    double spawn_ms = 0.0;
+    double fixed_total_ms = 0.0;
+    double recycle_ms = 0.0;
+    double position_history_ms = 0.0;
+    double squad_spawn_resolution_ms = 0.0;
+    double static_obstacle_index_ms = 0.0;
+    double dynamic_obstacle_index_ms = 0.0;
+    double squad_command_ms = 0.0;
+    double command_ms = 0.0;
+    double membership_cleanup_ms = 0.0;
+    double squad_control_ms = 0.0;
+    double squad_traffic_ms = 0.0;
+    double attack_move_acquisition_ms = 0.0;
+    double navigation_ms = 0.0;
+    double movement_ms = 0.0;
+    double combat_ms = 0.0;
+    double projectile_ms = 0.0;
+    double lifecycle_ms = 0.0;
+    std::uint64_t movement_speed_samples = 0;
+    double movement_base_speed_sum = 0.0;
+    double movement_effective_speed_sum = 0.0;
+    double movement_desired_speed_sum = 0.0;
+    double movement_steering_speed_sum = 0.0;
+    double movement_actual_speed_sum = 0.0;
+    std::uint64_t movement_squad_limited = 0;
+    std::uint64_t movement_arrive_limited = 0;
+    std::uint64_t movement_turn_limited = 0;
+    std::uint64_t movement_steering_limited = 0;
+    std::uint64_t movement_safe_limited = 0;
+
+    void begin_frame() { *this = {}; }
 };
 
 // Fixed-tick scratch is a world resource so its high-water capacities are
@@ -760,6 +854,21 @@ struct AoeGameplayDiagnostics {
 struct AoeCrowdSteeringScratch {
     std::vector<entt::entity> arrived;
     std::vector<AoeSteeringNeighbor> nearest_neighbors;
+};
+
+struct AoeSquadTrafficRecord {
+    entt::entity squad{entt::null};
+    glm::vec2 center{0.f};
+    glm::vec2 direction{0.f};
+    float speed = 0.f;
+    float radius = 0.f;
+    float member_radius = 0.f;
+    std::uint64_t stable_id = 0;
+};
+
+struct AoeSquadTrafficIndex {
+    std::vector<AoeSquadTrafficRecord> records;
+    float maximum_reach = 0.f;
 };
 
 struct AoeGameplayPlugin {

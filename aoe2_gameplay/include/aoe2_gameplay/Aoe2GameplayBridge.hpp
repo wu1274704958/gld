@@ -13,6 +13,14 @@ struct Aoe2ProjectilePresentationLink { entt::entity render{entt::null}; };
 struct AoeProjectileOwner { entt::entity gameplay{entt::null}; };
 struct AoePresentationError { std::string message; };
 
+struct Aoe2GameplayBridgePerformanceDiagnostics {
+    double orphan_cleanup_ms = 0.0;
+    double unit_presentation_ms = 0.0;
+    double projectile_presentation_ms = 0.0;
+
+    void begin_frame() { *this = {}; }
+};
+
 struct Aoe2PresentationSnapshot {
     aoe::UnitState state = aoe::UnitState::Idle;
     std::uint64_t sequence = 0;

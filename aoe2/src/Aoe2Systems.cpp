@@ -226,8 +226,16 @@ entt::entity spawn_aoe2_graphic(EcsWorld& world, const SpawnOptions& source,
 }
 
 void spawn_aoe2_unit_system(EcsWorld& world) {
+    GLD_PERF_TIME_POINT(started);
     auto* manager = world.try_resource<Aoe2ResourceManager>();
-    if (!manager) return;
+    if (!manager) {
+        GLD_PERF_MONITOR(
+            world.resource_or_add<Aoe2PerformanceDiagnostics>().spawn_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count();
+        );
+        return;
+    }
     auto& reg = world.reg();
     std::vector<entt::entity> completed;
     for (auto entity : reg.view<Aoe2SpawnRequest>()) {
@@ -288,6 +296,11 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
     }
     for (auto entity : completed)
         if (reg.valid(entity) && reg.all_of<Aoe2SpawnRequest>(entity)) reg.remove<Aoe2SpawnRequest>(entity);
+    GLD_PERF_MONITOR(
+        world.resource_or_add<Aoe2PerformanceDiagnostics>().spawn_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    );
 }
 
 static const Frame* nearest_present(const Animation& animation, const Layer& layer,

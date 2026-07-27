@@ -290,6 +290,31 @@ int main() {
     assert(held_side_result.avoidance_side ==
            head_on_result.avoidance_side);
 
+    // Escape steering expands the candidate fan to a wall tangent without
+    // introducing a backward direction.
+    AoeLogicMap tangent_map(flat_map());
+    AoeStaticObstacleDesc tangent_wall;
+    tangent_wall.shape = AoeStaticObstacleShape::Aabb;
+    tangent_wall.center = {2.65f, 6.f};
+    tangent_wall.half_extents = {.25f, 1.2f};
+    tangent_map.add_static_obstacle(tangent_wall);
+    AoeSteeringContext tangent_context{
+        .instance_id = 7,
+        .position = {2.f, 6.f},
+        .radii = {.2f, .2f},
+        .current_velocity = {1.f, 0.f},
+        .preferred_velocity = {1.f, 0.f},
+        .goal = {8.f, 6.f},
+        .max_speed = 1.f,
+        .prediction_seconds = 1.f,
+        .map = &tangent_map,
+        .candidate_angle_step = .39269908169f,
+        .candidate_max_angle = 1.57079632679f};
+    const auto tangent_result = steering_registry.steer(
+        "local_default", tangent_context);
+    assert(std::abs(tangent_result.target_velocity.y) > .5f);
+    assert(tangent_result.target_velocity.x >= -1e-5f);
+
     auto explicit_acquisition = definition_json();
     explicit_acquisition["target_acquisition"] = {
         {"strategy_id", "empty"}, {"radius", 2.5}};
@@ -663,13 +688,54 @@ int main() {
     assert(squad_fixture.world.reg().get<AoePosition>(squad).value.x >
            center_before);
     assert(squad_fixture.world.reg().get<AoeSquadState>(squad).movement_speed == 1.f);
+    for (const auto& member : squad_members.active) {
+        const auto entity = member.entity;
+        const auto& locomotion = squad_fixture.world.reg()
+            .get<AoeLocomotionState>(entity);
+        assert(std::abs(locomotion.effective_max_speed - 1.f) < 1e-5f);
+        // The faster members retain their base capability while obeying the
+        // squad's slowest-member cap.
+        if (entity != slow_member)
+            assert(std::abs(squad_fixture.world.reg()
+                                .get<AoeMovement>(entity).speed - 2.f) < 1e-5f);
+    }
 
     const auto detached = squad_fixture.world.reg()
         .get<AoeSquadMembers>(squad).active.back().entity;
     assert(request_aoe_move(squad_fixture.world, detached, {-2.f, 1.f}));
     squad_fixture.advance_ticks(1);
     assert(!squad_fixture.world.reg().all_of<AoeSquadMember>(detached));
+    assert(!squad_fixture.world.reg().all_of<AoeSquadMoveSpeedLimit>(detached));
+    assert(std::abs(squad_fixture.world.reg()
+                        .get<AoeLocomotionState>(detached).effective_max_speed -
+                    2.f) < 1e-5f);
     assert(squad_fixture.world.reg().get<AoeSquadMembers>(squad).active.size() == 3);
+
+    // Attack-move target acquisition runs every fixed tick. Finding no target
+    // must not reset formation locomotion and force every member to repeat the
+    // first acceleration step forever.
+    Fixture attack_move_speed_fixture;
+    attack_move_speed_fixture.world.resource<AoeNavigationSettings>()
+        .steering_max_acceleration = 4.f;
+    AoeSquadSpawnOptions attack_move_speed_options;
+    attack_move_speed_options.composition = {{"test", 4, 1}};
+    attack_move_speed_options.center = {0.f, 0.f};
+    attack_move_speed_options.forward = {1.f, 0.f};
+    const auto attack_move_speed_squad = spawn_aoe_gameplay_squad(
+        attack_move_speed_fixture.world, attack_move_speed_options);
+    assert(request_aoe_squad_attack_move(attack_move_speed_fixture.world,
+                                         attack_move_speed_squad,
+                                         {10.f, 0.f}));
+    spawn_aoe_gameplay_unit_system(attack_move_speed_fixture.world);
+    attack_move_speed_fixture.advance_ticks(6);
+    const auto& accelerating_members = attack_move_speed_fixture.world.reg()
+        .get<AoeSquadMembers>(attack_move_speed_squad);
+    for (const auto& member : accelerating_members.active) {
+        const auto& locomotion = attack_move_speed_fixture.world.reg()
+            .get<AoeLocomotionState>(member.entity);
+        assert(std::abs(locomotion.effective_max_speed - 2.f) < 1e-5f);
+        assert(locomotion.actual_speed > .4f + 1e-5f);
+    }
 
     // A squad guide routes the virtual anchor around static geometry while
     // every member independently follows its moving formation slot.
@@ -742,6 +808,39 @@ int main() {
                .phase == AoeSquadPhase::Idle);
     assert(glm::length(stress_squad_fixture.world.reg()
                .get<AoePosition>(stress_squad).value - glm::vec2(11.f, 0.f)) < .05f);
+
+    // Two head-on squads negotiate the same relative (right-hand) passing
+    // rule, which produces complementary world-space lanes.
+    Fixture traffic_fixture;
+    traffic_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    AoeSquadSpawnOptions traffic_a;
+    traffic_a.composition = {{"test", 4, 1}};
+    traffic_a.center = {5.f, 6.f};
+    traffic_a.forward = {1.f, 0.f};
+    traffic_a.team_id = 1;
+    AoeSquadSpawnOptions traffic_b = traffic_a;
+    traffic_b.center = {11.f, 6.f};
+    traffic_b.forward = {-1.f, 0.f};
+    traffic_b.team_id = 2;
+    const auto squad_a = spawn_aoe_gameplay_squad(
+        traffic_fixture.world, traffic_a);
+    const auto squad_b = spawn_aoe_gameplay_squad(
+        traffic_fixture.world, traffic_b);
+    spawn_aoe_gameplay_unit_system(traffic_fixture.world);
+    traffic_fixture.advance_ticks(1);
+    assert(request_aoe_squad_move(traffic_fixture.world, squad_a, {15.f, 6.f}));
+    assert(request_aoe_squad_move(traffic_fixture.world, squad_b, {1.f, 6.f}));
+    traffic_fixture.advance_ticks(3);
+    const auto& traffic_state_a = traffic_fixture.world.reg()
+        .get<AoeSquadTrafficState>(squad_a);
+    const auto& traffic_state_b = traffic_fixture.world.reg()
+        .get<AoeSquadTrafficState>(squad_b);
+    assert(traffic_state_a.mode == AoeSquadTrafficMode::PassingRight);
+    assert(traffic_state_b.mode == AoeSquadTrafficMode::PassingRight);
+    assert(traffic_state_a.negotiated_side == -1 &&
+           traffic_state_b.negotiated_side == -1);
+    assert(traffic_state_a.lateral_offset > 0.f &&
+           traffic_state_b.lateral_offset > 0.f);
 
     // A sealed map produces a stable Blocked state. Changing the static map
     // revision invalidates the guide and lets the same order resume.

@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <array>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -13,6 +15,8 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <FindPath.hpp>
 #include <resource_mgr.hpp>
@@ -90,12 +94,72 @@ struct PreviewState {
     bool trace_has_previous = false;
     std::string latest = "waiting for both squads";
     double hud_elapsed = 0.0;
+    double frame_stats_elapsed = 0.0;
+    std::vector<float> frame_stats_samples;
+    std::uint32_t frame_stats_fixed_ticks = 0;
+    std::uint32_t frame_stats_pose_change_frames = 0;
+    std::uint64_t frame_stats_pose_changes = 0;
+    float displayed_fps = 0.f;
+    float displayed_frame_dt_ms = 0.f;
+    float displayed_frame_p95_ms = 0.f;
+    float displayed_frame_max_ms = 0.f;
+    float displayed_fixed_hz = 0.f;
+    float displayed_pose_change_hz = 0.f;
+    float displayed_pose_changes_per_second = 0.f;
 };
+
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+struct SystemProfileState {
+    bool enabled = false;
+    bool frame_started = false;
+    bool capturing = false;
+    fs::path output;
+    std::chrono::steady_clock::time_point frame_start{};
+    double stable_seconds = 0.0;
+    double capture_seconds = 0.0;
+    double capture_target_seconds = 15.0;
+    std::ostringstream csv;
+};
+#endif
 
 const StressPreset& active_stress_preset(const PreviewState& state) {
     const auto it = std::find_if(StressPresets.begin(), StressPresets.end(),
         [&](const StressPreset& value) { return value.key == state.stress_preset; });
     return it == StressPresets.end() ? StressPresets[1] : *it;
+}
+
+void update_frame_statistics(PreviewState& preview, const Time& time,
+                             std::uint32_t fixed_ticks,
+                             std::uint32_t animation_frame_changes) {
+    if (!(time.raw_dt > 0.f) || !std::isfinite(time.raw_dt)) return;
+    preview.frame_stats_elapsed += time.raw_dt;
+    preview.frame_stats_samples.push_back(time.raw_dt);
+    preview.frame_stats_fixed_ticks += fixed_ticks;
+    preview.frame_stats_pose_change_frames += animation_frame_changes > 0 ? 1u : 0u;
+    preview.frame_stats_pose_changes += animation_frame_changes;
+    if (preview.frame_stats_elapsed < 1.0) return;
+
+    std::sort(preview.frame_stats_samples.begin(), preview.frame_stats_samples.end());
+    double total = 0.0;
+    for (const float sample : preview.frame_stats_samples) total += sample;
+    const auto count = preview.frame_stats_samples.size();
+    const std::size_t p95_index = std::min(count - 1,
+        static_cast<std::size_t>(std::ceil(static_cast<double>(count) * .95)) - 1);
+    preview.displayed_fps = static_cast<float>(count / total);
+    preview.displayed_frame_dt_ms = static_cast<float>(total / count * 1000.0);
+    preview.displayed_frame_p95_ms = preview.frame_stats_samples[p95_index] * 1000.f;
+    preview.displayed_frame_max_ms = preview.frame_stats_samples.back() * 1000.f;
+    preview.displayed_fixed_hz = static_cast<float>(
+        preview.frame_stats_fixed_ticks / total);
+    preview.displayed_pose_change_hz = static_cast<float>(
+        preview.frame_stats_pose_change_frames / total);
+    preview.displayed_pose_changes_per_second = static_cast<float>(
+        preview.frame_stats_pose_changes / total);
+    preview.frame_stats_elapsed = 0.0;
+    preview.frame_stats_samples.clear();
+    preview.frame_stats_fixed_ticks = 0;
+    preview.frame_stats_pose_change_frames = 0;
+    preview.frame_stats_pose_changes = 0;
 }
 
 AoeMapDefinition make_preview_map() {
@@ -157,6 +221,18 @@ const char* phase_name(AoeSquadPhase value) {
     case AoeSquadPhase::Idle: return "idle";
     case AoeSquadPhase::Empty: return "empty";
     case AoeSquadPhase::Failed: return "failed";
+    }
+    return "?";
+}
+
+const char* traffic_name(AoeSquadTrafficMode value) {
+    switch (value) {
+    case AoeSquadTrafficMode::Clear: return "clear";
+    case AoeSquadTrafficMode::Following: return "following";
+    case AoeSquadTrafficMode::PassingLeft: return "passing-left";
+    case AoeSquadTrafficMode::PassingRight: return "passing-right";
+    case AoeSquadTrafficMode::Yielding: return "yielding";
+    case AoeSquadTrafficMode::Recovering: return "recovering";
     }
     return "?";
 }
@@ -652,7 +728,11 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
     std::uint32_t disappearing = 0;
     std::uint32_t render_ready = 0;
     std::uint32_t no_path = 0;
+    std::uint32_t dynamic_repath_failed = 0;
     std::uint32_t beyond_leash = 0;
+    std::uint32_t stalled = 0;
+    std::uint32_t escaping = 0;
+    std::uint32_t elastic = 0;
     float current_hp = 0.f;
     float max_hp = 0.f;
     const float leash = world.resource_or_add<AoeNavigationSettings>().squad_leash;
@@ -677,9 +757,19 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
         const auto& health = reg.get<AoeHealth>(member.entity);
         current_hp += health.current;
         max_hp += health.maximum;
-        if (const auto* path = reg.try_get<AoeNavigationPath>(member.entity);
-            path && path->no_path)
-            ++no_path;
+        if (const auto* path = reg.try_get<AoeNavigationPath>(member.entity); path) {
+            if (path->no_path) ++no_path;
+            if (path->dynamic_repath_failed) ++dynamic_repath_failed;
+        }
+        if (const auto* locomotion =
+                reg.try_get<AoeLocomotionState>(member.entity)) {
+            if (locomotion->stalled_ticks > 0) ++stalled;
+            if (locomotion->escape_steering) ++escaping;
+        }
+        if (const auto* follow =
+                reg.try_get<AoeSquadSlotFollowState>(member.entity);
+            follow && follow->elastic)
+            ++elastic;
         if (const auto* link = reg.try_get<Aoe2PresentationLink>(member.entity);
             link && reg.valid(link->render) &&
             reg.all_of<Aoe2UnitRender>(link->render))
@@ -717,13 +807,20 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
         << " hp=" << current_hp << '/' << max_hp << '\n'
         << "  states I=" << idle << " M=" << moving << " A=" << attacking
         << " D=" << dying << " X=" << disappearing
-        << " no-path=" << no_path << " beyond-leash=" << beyond_leash << '\n'
+        << " no-path=" << no_path << " dyn-repath-failed="
+        << dynamic_repath_failed << " beyond-leash=" << beyond_leash << '\n'
+        << "  locomotion stalled=" << stalled << " escape=" << escaping
+        << " elastic-slot=" << elastic << '\n'
         << "  guide=";
     if (guide) {
         out << guide->current << '/' << guide->waypoints.size()
             << " no-path=" << (guide->no_path ? "yes" : "no")
             << " dynamic=" << (guide->include_dynamic_obstacles ? "yes" : "no");
     } else out << "none";
+    if (const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad))
+        out << " traffic=" << traffic_name(traffic->mode)
+            << " speed-scale=" << traffic->speed_scale
+            << " lateral=" << traffic->lateral_offset;
     out << '\n';
     const std::size_t error_limit = std::min<std::size_t>(spawn.errors.size(), 3);
     for (std::size_t i = 0; i < error_limit; ++i)
@@ -736,6 +833,10 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
 void diagnostics_system(EcsWorld& world) {
     auto& preview = world.resource<PreviewState>();
     const auto& time = world.resource<Time>();
+    const auto& clock = world.resource<AoeGameplayClock>();
+    const auto* aoe2_performance = world.try_resource<Aoe2PerformanceDiagnostics>();
+    update_frame_statistics(preview, time, clock.ticks_this_frame,
+        aoe2_performance ? aoe2_performance->animation_frame_changes : 0u);
     preview.hud_elapsed += time.raw_dt;
     if (preview.hud_elapsed < .25 || !world.reg().valid(preview.hud)) return;
     preview.hud_elapsed = 0.0;
@@ -750,10 +851,8 @@ void diagnostics_system(EcsWorld& world) {
         preview.last_dynamic_queries = value.queries;
         preview.last_dynamic_candidates = value.candidates;
     }
-    const auto& clock = world.resource<AoeGameplayClock>();
     const auto& preset = active_stress_preset(preview);
     const auto* render = world.try_resource<RenderDiagnostics>();
-    const auto* aoe2_performance = world.try_resource<Aoe2PerformanceDiagnostics>();
     const auto& gameplay = world.resource<AoeGameplayDiagnostics>();
     const auto* pool = world.try_resource<AoeGameplayPool>();
     std::size_t active_units = 0;
@@ -795,10 +894,19 @@ void diagnostics_system(EcsWorld& world) {
         << "map=squad_preview grid=36x16 pathfinder=grid_astar\n\n";
     append_squad(out, world, "BLUE", preview.blue);
     append_squad(out, world, "RED ", preview.red);
-    out << "\nPERFORMANCE fps=" << time.fps
-        << " frame_dt_ms=" << time.raw_dt * 1000.f
+    const float displayed_fps = preview.displayed_fps > 0.f
+        ? preview.displayed_fps : time.fps;
+    const float displayed_frame_dt = preview.displayed_frame_dt_ms > 0.f
+        ? preview.displayed_frame_dt_ms : time.raw_dt * 1000.f;
+    out << "\nPERFORMANCE render_fps=" << displayed_fps
+        << " frame_dt_ms=" << displayed_frame_dt
+        << " p95_ms=" << preview.displayed_frame_p95_ms
+        << " max_ms=" << preview.displayed_frame_max_ms
         << " fixed_ticks=" << clock.ticks_this_frame
         << " dropped_s=" << clock.dropped_seconds << '\n'
+        << "cadence fixed_hz=" << preview.displayed_fixed_hz
+        << " pose_change_hz=" << preview.displayed_pose_change_hz
+        << " pose_changes_s=" << preview.displayed_pose_changes_per_second << '\n'
         << "entities live=" << total_entities
         << " peak=" << preview.entity_high_water
         << " gameplay=" << active_units
@@ -856,6 +964,163 @@ void diagnostics_system(EcsWorld& world) {
         profile << out.str() << '\n';
     }
 }
+
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+void system_profile_begin(EcsWorld& world) {
+    auto* profile = world.try_resource<SystemProfileState>();
+    if (!profile || !profile->enabled) return;
+    profile->frame_start = std::chrono::steady_clock::now();
+    profile->frame_started = true;
+}
+
+std::size_t active_gameplay_units(EcsWorld& world) {
+    std::size_t result = 0;
+    for ([[maybe_unused]] const auto entity :
+         world.reg().view<AoeGameplayIdentity>(
+             entt::exclude<AoePooledUnit, AoeRecyclePending>))
+        ++result;
+    return result;
+}
+
+void write_system_profile(SystemProfileState& profile, EcsWorld& world) {
+    const auto parent = profile.output.parent_path();
+    if (!parent.empty()) fs::create_directories(parent);
+    std::ofstream output(profile.output, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        std::fprintf(stderr, "[aoe_squad_profile] cannot write %s\n",
+                     profile.output.string().c_str());
+    } else {
+        output << profile.csv.str();
+        std::printf("[aoe_squad_profile] wrote %s\n",
+                    profile.output.string().c_str());
+    }
+    profile.enabled = false;
+    world.resource<Window>().should_close = true;
+}
+
+void system_profile_end(EcsWorld& world) {
+    auto* profile = world.try_resource<SystemProfileState>();
+    if (!profile || !profile->enabled || !profile->frame_started) return;
+    const double frame_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - profile->frame_start).count();
+    profile->frame_started = false;
+
+    const auto& time = world.resource<Time>();
+    const auto& preview = world.resource<PreviewState>();
+    const auto& aoe2 = world.resource<Aoe2PerformanceDiagnostics>();
+    const bool no_gameplay_spawns =
+        world.reg().view<AoeGameplaySpawnRequest>().size() == 0;
+    const bool no_aoe2_spawns = world.reg().view<Aoe2SpawnRequest>().size() == 0;
+    const std::size_t gameplay_units = active_gameplay_units(world);
+    const std::size_t render_units = world.reg().view<AoeGameplayOwner>().size();
+    const std::size_t expected_units =
+        static_cast<std::size_t>(active_stress_preset(preview).total) * 2u;
+    const bool stable = preview.orders_issued && no_gameplay_spawns && no_aoe2_spawns &&
+        gameplay_units >= expected_units && render_units >= expected_units;
+    if (!profile->capturing) {
+        profile->stable_seconds = stable
+            ? profile->stable_seconds + std::max(0.f, time.raw_dt) : 0.0;
+        if (profile->stable_seconds < 3.0) return;
+        profile->capturing = true;
+        profile->csv
+            << "frame,capture_s,frame_ms,preceding_raw_dt_ms,time_fps,hud_fps,hud_avg_ms,"
+               "hud_p95_ms,hud_max_ms,fixed_ticks,dropped_s,gameplay_units,"
+               "render_units,projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
+               "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
+               "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
+               "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,"
+               "g_acquisition_ms,g_navigation_ms,"
+               "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
+               "move_speed_samples,move_base_avg,move_effective_avg,move_desired_avg,"
+               "move_steering_avg,move_actual_avg,move_actual_base_ratio,"
+               "move_actual_effective_ratio,move_squad_limited,move_arrive_limited,"
+               "move_turn_limited,move_steering_limited,move_safe_limited,"
+               "aoe2_spawn_ms,aoe2_animation_ms,aoe2_batch_ms,aoe2_membership_ms,"
+               "aoe2_instance_ms,bridge_orphan_ms,bridge_unit_ms,bridge_projectile_ms,"
+               "transform_ms,render_prepare_ms,render_upload_ms,render_submit_ms,"
+               "render_gpu_ms,present_ms,animation_frame_changes,frame_dirty_instances,"
+               "transform_dirty_instances,unchanged_instances,transform_changed,"
+               "known_cpu_ms,residual_ms\n";
+        profile->csv << std::fixed << std::setprecision(6);
+        std::printf("[aoe_squad_profile] stable; capturing %.1f seconds\n",
+                    profile->capture_target_seconds);
+        return;
+    }
+
+    const auto& gameplay = world.resource<AoeGameplayPerformanceDiagnostics>();
+    const auto& bridge = world.resource<Aoe2GameplayBridgePerformanceDiagnostics>();
+    const auto& transform = world.resource<TransformDiagnostics>();
+    const auto& render = world.resource<RenderDiagnostics>();
+    const auto& clock = world.resource<AoeGameplayClock>();
+    const double speed_samples = static_cast<double>(
+        gameplay.movement_speed_samples);
+    const double base_average = speed_samples > 0.0
+        ? gameplay.movement_base_speed_sum / speed_samples : 0.0;
+    const double effective_average = speed_samples > 0.0
+        ? gameplay.movement_effective_speed_sum / speed_samples : 0.0;
+    const double desired_average = speed_samples > 0.0
+        ? gameplay.movement_desired_speed_sum / speed_samples : 0.0;
+    const double steering_average = speed_samples > 0.0
+        ? gameplay.movement_steering_speed_sum / speed_samples : 0.0;
+    const double actual_average = speed_samples > 0.0
+        ? gameplay.movement_actual_speed_sum / speed_samples : 0.0;
+    const std::size_t projectiles = world.reg().view<AoeProjectile>().size();
+    const double gameplay_total = gameplay.clear_events_ms + gameplay.spawn_ms +
+        gameplay.fixed_total_ms + gameplay.recycle_ms;
+    const double aoe2_total = aoe2.spawn_ms + aoe2.animation_ms +
+        aoe2.batch_total_ms;
+    const double bridge_total = bridge.orphan_cleanup_ms +
+        bridge.unit_presentation_ms + bridge.projectile_presentation_ms;
+    // render_upload_ms is a subset of render_submit_ms and is not added twice.
+    const double known_cpu = gameplay_total + aoe2_total + bridge_total +
+        transform.cpu_ms + aoe2.render_prepare_ms + aoe2.render_submit_ms +
+        render.present_ms;
+    const double residual = std::max(0.0, frame_ms - known_cpu);
+    // Time::raw_dt is measured at the beginning of this tick, so it describes
+    // the preceding start-to-start interval. Use it for wall-clock capture
+    // length, while frame_ms and all named system timings describe this row's
+    // current frame.
+    profile->capture_seconds += std::max(0.f, time.raw_dt);
+    profile->csv
+        << time.frame << ',' << profile->capture_seconds << ',' << frame_ms << ','
+        << time.raw_dt * 1000.f << ',' << time.fps << ',' << preview.displayed_fps << ','
+        << preview.displayed_frame_dt_ms << ',' << preview.displayed_frame_p95_ms << ','
+        << preview.displayed_frame_max_ms << ',' << clock.ticks_this_frame << ','
+        << clock.dropped_seconds << ',' << gameplay_units << ',' << render_units << ','
+        << projectiles << ',' << gameplay.clear_events_ms << ',' << gameplay.spawn_ms << ','
+        << gameplay.fixed_total_ms << ',' << gameplay.recycle_ms << ','
+        << gameplay.position_history_ms << ',' << gameplay.squad_spawn_resolution_ms << ','
+        << gameplay.static_obstacle_index_ms << ',' << gameplay.dynamic_obstacle_index_ms << ','
+        << gameplay.squad_command_ms << ',' << gameplay.command_ms << ','
+        << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
+        << gameplay.squad_control_ms << ','
+        << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
+        << gameplay.movement_ms << ',' << gameplay.combat_ms << ','
+        << gameplay.projectile_ms << ',' << gameplay.lifecycle_ms << ','
+        << gameplay.movement_speed_samples << ',' << base_average << ','
+        << effective_average << ',' << desired_average << ','
+        << steering_average << ',' << actual_average << ','
+        << (base_average > 0.0 ? actual_average / base_average : 0.0) << ','
+        << (effective_average > 0.0 ? actual_average / effective_average : 0.0) << ','
+        << gameplay.movement_squad_limited << ','
+        << gameplay.movement_arrive_limited << ','
+        << gameplay.movement_turn_limited << ','
+        << gameplay.movement_steering_limited << ','
+        << gameplay.movement_safe_limited << ','
+        << aoe2.spawn_ms << ',' << aoe2.animation_ms << ',' << aoe2.batch_total_ms << ','
+        << aoe2.membership_sync_ms << ',' << aoe2.instance_update_ms << ','
+        << bridge.orphan_cleanup_ms << ',' << bridge.unit_presentation_ms << ','
+        << bridge.projectile_presentation_ms << ',' << transform.cpu_ms << ','
+        << aoe2.render_prepare_ms << ',' << aoe2.render_upload_ms << ','
+        << aoe2.render_submit_ms << ',' << aoe2.render_gpu_ms << ',' << render.present_ms << ','
+        << aoe2.animation_frame_changes << ',' << aoe2.frame_dirty_instances << ','
+        << aoe2.transform_dirty_instances << ',' << aoe2.unchanged_instances << ','
+        << transform.changed << ','
+        << known_cpu << ',' << residual << '\n';
+    if (profile->capture_seconds >= profile->capture_target_seconds)
+        write_system_profile(*profile, world);
+}
+#endif
 } // namespace
 
 int main() {
@@ -889,6 +1154,21 @@ int main() {
             initial_preview.stress_preset = static_cast<int>(preset);
     }
     app.world.add_resource<PreviewState>(std::move(initial_preview));
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    SystemProfileState profile;
+    if (const char* value = std::getenv("GLD_AOE_SYSTEM_PROFILE")) {
+        profile.enabled = true;
+        profile.output = *value && std::string_view(value) != "1"
+            ? fs::path(value)
+            : fs::path("build/profile/aoe_gameplay_squad_systems.csv");
+        if (const char* seconds = std::getenv("GLD_AOE_SYSTEM_PROFILE_SECONDS")) {
+            const double requested = std::strtod(seconds, nullptr);
+            if (std::isfinite(requested) && requested > 0.0)
+                profile.capture_target_seconds = requested;
+        }
+    }
+    app.world.add_resource<SystemProfileState>(std::move(profile));
+#endif
 
     app.add_system(Stage::Startup, [](EcsWorld& world) {
         const auto camera_entity = world.spawn();
@@ -949,6 +1229,10 @@ int main() {
     app.add_system(Stage::PostUpdate, submit_unit_foot_gizmos);
     app.add_system(Stage::Last, diagnostics_system);
     app.add_system(Stage::Last, trace_blue_archer_foot);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    app.add_system(Stage::First, system_profile_begin);
+    app.add_system(Stage::Last, system_profile_end);
+#endif
     run_app(app);
     return 0;
 }

@@ -259,6 +259,29 @@ int main() {
     assert(std::abs(time.raw_dt - 0.250f) < 0.0001f);
     assert(std::abs(time.dt - 0.100f) < 0.0001f);
 
+    Time steady_time;
+    TimeClock steady_clock;
+    update_time(steady_time, steady_clock, settings, start);
+    for (int frame = 1; frame <= 10; ++frame)
+        update_time(steady_time, steady_clock, settings,
+            start + std::chrono::milliseconds(frame * 100));
+    assert(std::abs(steady_time.fps - 10.f) < 0.001f);
+
+    // A few fast frames must not dominate slow frames. The twelve frames
+    // below take 1.2 seconds in total, so wall-clock throughput is 10 FPS;
+    // averaging the reciprocal samples would incorrectly report ~52.6 FPS.
+    Time uneven_time;
+    TimeClock uneven_clock;
+    update_time(uneven_time, uneven_clock, settings, start);
+    auto uneven_now = start;
+    for (int frame = 0; frame < 12; ++frame) {
+        uneven_now += std::chrono::milliseconds(frame % 2 == 0 ? 10 : 190);
+        update_time(uneven_time, uneven_clock, settings, uneven_now);
+    }
+    assert(std::abs(uneven_time.fps - 10.f) < 0.001f);
+    assert(std::abs(uneven_time.raw_dt - 0.190f) < 0.0001f);
+    assert(std::abs(uneven_time.dt - 0.100f) < 0.0001f);
+
     BatchKey one;
     one.texture_count = 1;
     one.textures[0] = 11;

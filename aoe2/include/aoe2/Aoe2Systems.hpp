@@ -185,6 +185,7 @@ struct Aoe2RenderResources {
 };
 
 struct Aoe2PerformanceDiagnostics {
+    double spawn_ms = 0.0;
     double animation_ms = 0.0;
     double batch_total_ms = 0.0;
     double batch_group_ms = 0.0;
