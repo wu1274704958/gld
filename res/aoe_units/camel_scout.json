@@ -12,7 +12,8 @@
   "movement": { "speed": 1.45 },
   "target_acquisition": {
     "strategy_id": "nearest_enemy",
-    "radius": 6.0
+    "radius": 6.0,
+    "disengage_radius": 9.0
   },
   "lifecycle": {
     "death_duration_seconds": 1.5,

@@ -40,13 +40,6 @@ struct MemoryFileSystem final : IFileSystem {
     }
 };
 
-struct EmptyAcquisitionStrategy {
-    static std::optional<AoeUnitTarget> select(
-        const EcsWorld&, const AoeTargetAcquisitionContext&) {
-        return std::nullopt;
-    }
-};
-
 inline constexpr auto InvalidFormationType =
     static_cast<AoeFormationType>(99);
 
@@ -161,8 +154,6 @@ struct Fixture {
         // Most legacy tests assert exact constant-speed positions. Dedicated
         // steering tests below exercise the production acceleration defaults.
         navigation.steering_max_acceleration = 1000.f;
-        world.resource_or_add<AoeTargetAcquisitionRegistry>()
-            .bind<NearestEnemyAcquisitionStrategy>("nearest_enemy");
         world.resource_or_add<AoeFormationRegistry>()
             .bind<AoeFormationType::Skirmish, DefaultSkirmishFormation>();
         world.resource_or_add<AoeProjectileRegistry>()
@@ -210,8 +201,10 @@ int main() {
     assert(parsed->lifecycle.recycle_after_death);
     assert(parsed->lifecycle.death_duration_seconds == 0.2f);
     assert(parsed->presentation.animation("disappear") == "decayA");
-    assert(parsed->target_acquisition.strategy_id == "nearest_enemy");
+    assert(parsed->target_acquisition.strategy ==
+           AoeTargetAcquisitionType::NearestEnemy);
     assert(parsed->target_acquisition.radius == 6.f);
+    assert(parsed->target_acquisition.disengage_radius == 9.f);
     assert(parsed->attack->projectile_launch_offset ==
            std::optional<glm::vec3>(glm::vec3(0.f, .5f, 1.5f)));
 
@@ -223,19 +216,14 @@ int main() {
     catch (const std::invalid_argument&) { duplicate_binding_rejected = true; }
     assert(duplicate_binding_rejected);
 
-    AoeTargetAcquisitionRegistry acquisition_registry;
-    acquisition_registry.bind<NearestEnemyAcquisitionStrategy>("nearest_enemy");
-    acquisition_registry.bind<EmptyAcquisitionStrategy>("empty");
-    assert(acquisition_registry.contains("nearest_enemy"));
-    assert(acquisition_registry.contains("empty"));
-    assert(!acquisition_registry.contains("missing"));
-    bool duplicate_acquisition_rejected = false;
-    try {
-        acquisition_registry.bind<EmptyAcquisitionStrategy>("empty");
-    } catch (const std::invalid_argument&) {
-        duplicate_acquisition_rejected = true;
-    }
-    assert(duplicate_acquisition_rejected);
+    static_assert(AoeTargetAcquisitionStrategy<
+                  NearestEnemyAcquisitionStrategy>);
+    static_assert(std::same_as<
+        AoeTargetAcquisitionBinding<
+            AoeTargetAcquisitionType::NearestEnemy>::type,
+        NearestEnemyAcquisitionStrategy>);
+    assert(aoe_target_acquisition_name(
+               AoeTargetAcquisitionType::NearestEnemy) == "nearest_enemy");
 
     AoeSteeringRegistry steering_registry;
     steering_registry.bind<DefaultLocalSteeringLogic>("local_default");
@@ -317,13 +305,16 @@ int main() {
 
     auto explicit_acquisition = definition_json();
     explicit_acquisition["target_acquisition"] = {
-        {"strategy_id", "empty"}, {"radius", 2.5}};
+        {"strategy_id", "nearest_enemy"}, {"radius", 2.5},
+        {"disengage_radius", 3.5}};
     const auto explicit_parsed = parse(explicit_acquisition);
-    assert(explicit_parsed->target_acquisition.strategy_id == "empty");
+    assert(explicit_parsed->target_acquisition.strategy ==
+           AoeTargetAcquisitionType::NearestEnemy);
     assert(explicit_parsed->target_acquisition.radius == 2.5f);
-    auto empty_acquisition_id = explicit_acquisition;
-    empty_acquisition_id["target_acquisition"]["strategy_id"] = "";
-    assert(!parse(empty_acquisition_id));
+    assert(explicit_parsed->target_acquisition.disengage_radius == 3.5f);
+    auto unknown_acquisition_id = explicit_acquisition;
+    unknown_acquisition_id["target_acquisition"]["strategy_id"] = "missing";
+    assert(!parse(unknown_acquisition_id));
     auto negative_acquisition_radius = explicit_acquisition;
     negative_acquisition_radius["target_acquisition"]["radius"] = -1.0;
     assert(!parse(negative_acquisition_radius));
@@ -331,6 +322,9 @@ int main() {
     infinite_acquisition_radius["target_acquisition"]["radius"] =
         std::numeric_limits<double>::infinity();
     assert(!parse(infinite_acquisition_radius));
+    auto short_disengage_radius = explicit_acquisition;
+    short_disengage_radius["target_acquisition"]["disengage_radius"] = 2.0;
+    assert(!parse(short_disengage_radius));
     auto duplicate_tags = definition_json();
     duplicate_tags["tags"] = nlohmann::json::array({"archer", "archer"});
     assert(!parse(duplicate_tags));
@@ -604,18 +598,18 @@ int main() {
     const auto center_near = acquisition_fixture.unit({4.f, 0.f}, 50.f, 2);
     const auto surface_near = acquisition_fixture.unit({4.5f, 0.f}, 50.f, 2);
     acquisition_fixture.world.reg().get<AoeCollider>(surface_near).radius_x = 2.f;
-    auto acquired = acquisition_fixture.world.resource<AoeTargetAcquisitionRegistry>().select(
-        "nearest_enemy", acquisition_fixture.world,
+    auto acquired = dispatch_aoe_target(
+        AoeTargetAcquisitionType::NearestEnemy, acquisition_fixture.world,
         {seeker, {0.f, 0.f}, 10.f, 1});
     assert(acquired && acquired->entity == surface_near);
     acquisition_fixture.world.reg().get<AoeHealth>(surface_near).current = 0.f;
-    acquired = acquisition_fixture.world.resource<AoeTargetAcquisitionRegistry>().select(
-        "nearest_enemy", acquisition_fixture.world,
+    acquired = dispatch_aoe_target(
+        AoeTargetAcquisitionType::NearestEnemy, acquisition_fixture.world,
         {seeker, {0.f, 0.f}, 10.f, 1});
     assert(acquired && acquired->entity == center_near);
     assert(acquired->entity != ally);
-    acquired = acquisition_fixture.world.resource<AoeTargetAcquisitionRegistry>().select(
-        "nearest_enemy", acquisition_fixture.world,
+    acquired = dispatch_aoe_target(
+        AoeTargetAcquisitionType::NearestEnemy, acquisition_fixture.world,
         {seeker, {0.f, 0.f}, .1f, 1});
     assert(!acquired);
 
@@ -623,8 +617,8 @@ int main() {
     const auto tie_seeker = tie_fixture.unit({0.f, 0.f}, 50.f, 1);
     const auto first_tie = tie_fixture.unit({3.f, 0.f}, 50.f, 2);
     tie_fixture.unit({3.f, 0.f}, 50.f, 2);
-    acquired = tie_fixture.world.resource<AoeTargetAcquisitionRegistry>().select(
-        "nearest_enemy", tie_fixture.world,
+    acquired = dispatch_aoe_target(
+        AoeTargetAcquisitionType::NearestEnemy, tie_fixture.world,
         {tie_seeker, {0.f, 0.f}, 6.f, 1});
     assert(acquired && acquired->entity == first_tie);
 
@@ -951,20 +945,16 @@ int main() {
     squad_combat_fixture.advance_ticks(1);
     assert(squad_combat_fixture.world.reg().get<AoeSquadOrder>(attackers)
                .target.entity == entt::null);
-    std::vector<entt::entity> distributed_targets;
     for (const auto& member : squad_combat_fixture.world.reg()
              .get<AoeSquadMembers>(attackers).active) {
         assert(squad_combat_fixture.world.reg().all_of<AoeAttackOrder>(member.entity));
-        distributed_targets.push_back(squad_combat_fixture.world.reg()
-            .get<AoeAttackOrder>(member.entity).target.entity);
+        assert(squad_combat_fixture.world.reg()
+            .get<AoeAttackOrder>(member.entity).target.entity == shared_enemy);
         assert(squad_combat_fixture.world.reg()
             .all_of<AoeEngagementApproach>(member.entity));
         assert(std::abs(squad_combat_fixture.world.reg()
             .get<AoeEngagementApproach>(member.entity).desired_gap - 3.2f) < 1e-5f);
     }
-    std::sort(distributed_targets.begin(), distributed_targets.end());
-    assert(distributed_targets ==
-           std::vector<entt::entity>({shared_enemy, next_shared_enemy}));
     for (int i = 0; i < 100 &&
          (squad_combat_fixture.world.reg().get<AoeHealth>(shared_enemy).current > 0.f ||
           squad_combat_fixture.world.reg().get<AoeHealth>(next_shared_enemy).current > 0.f);
@@ -998,21 +988,53 @@ int main() {
                                          {8.f, 0.f}));
     partial_engagement_fixture.advance_ticks(1);
     std::size_t engaged_members = 0;
-    std::size_t moving_members = 0;
     for (const auto& member : partial_engagement_fixture.world.reg()
              .get<AoeSquadMembers>(partial_engagement_squad).active) {
         engaged_members += partial_engagement_fixture.world.reg()
             .all_of<AoeAttackOrder>(member.entity);
-        moving_members += partial_engagement_fixture.world.reg()
-            .all_of<AoeMoveGoal>(member.entity);
     }
-    assert(engaged_members == 1 && moving_members == 1);
+    assert(engaged_members == 2);
     const float partial_anchor = partial_engagement_fixture.world.reg()
         .get<AoePosition>(partial_engagement_squad).value.x;
     partial_engagement_fixture.advance_ticks(1);
-    assert(partial_engagement_fixture.world.reg()
-               .get<AoePosition>(partial_engagement_squad).value.x >
-           partial_anchor);
+    assert(std::abs(partial_engagement_fixture.world.reg()
+               .get<AoePosition>(partial_engagement_squad).value.x -
+           partial_anchor) < 1e-5f);
+
+    // Squad awareness is shared: a rear member outside its own acquisition
+    // radius still selects from the enemy set discovered by the front member.
+    Fixture shared_awareness_fixture;
+    AoeSquadSpawnOptions shared_awareness_options;
+    shared_awareness_options.composition = {{"test", 2, 1}};
+    shared_awareness_options.team_id = 1;
+    const auto shared_awareness_squad = spawn_aoe_gameplay_squad(
+        shared_awareness_fixture.world, shared_awareness_options);
+    spawn_aoe_gameplay_unit_system(shared_awareness_fixture.world);
+    shared_awareness_fixture.advance_ticks(1);
+    const auto& awareness_members = shared_awareness_fixture.world.reg()
+        .get<AoeSquadMembers>(shared_awareness_squad).active;
+    assert(awareness_members.size() == 2);
+    shared_awareness_fixture.world.reg().get<AoePosition>(
+        awareness_members[0].entity).value = {0.f, 0.f};
+    shared_awareness_fixture.world.reg().get<AoePosition>(
+        awareness_members[1].entity).value = {-8.f, 0.f};
+    const auto awareness_enemy = shared_awareness_fixture.unit(
+        {5.f, 0.f}, 500.f, 2);
+    shared_awareness_fixture.world.reg().get<AoeSquadFormation>(
+        shared_awareness_squad).dirty = false;
+    shared_awareness_fixture.world.reg().get<AoeSquadOrder>(
+        shared_awareness_squad) = {
+            AoeSquadOrderType::AttackMove, {10.f, 0.f}, {}};
+    shared_awareness_fixture.world.reg().get<AoeSquadState>(
+        shared_awareness_squad).phase = AoeSquadPhase::Moving;
+    const float awareness_anchor = shared_awareness_fixture.world.reg()
+        .get<AoePosition>(shared_awareness_squad).value.x;
+    shared_awareness_fixture.advance_ticks(1);
+    for (const auto& member : awareness_members)
+        assert(shared_awareness_fixture.world.reg().get<AoeAttackOrder>(
+                   member.entity).target.entity == awareness_enemy);
+    assert(std::abs(shared_awareness_fixture.world.reg().get<AoePosition>(
+               shared_awareness_squad).value.x - awareness_anchor) < 1e-5f);
 
     const auto disband_member = squad_combat_fixture.world.reg()
         .get<AoeSquadMembers>(attackers).active.front().entity;
@@ -1245,8 +1267,8 @@ int main() {
     }
     assert(saw_damage && saw_death);
 
-    // Attack Move ignores hostiles outside real attack range, interrupts as
-    // soon as one enters range, then resumes the original destination.
+    // Attack Move acquires within the configured awareness radius rather than
+    // the weapon range, locks that target, then resumes the original goal.
     Fixture attack_move_fixture;
     const auto attack_mover = attack_move_fixture.unit({0.f, 0.f}, 50.f, 1);
     const auto attack_move_ally = attack_move_fixture.unit({1.f, 0.f}, 50.f, 1);
@@ -1255,17 +1277,60 @@ int main() {
         attack_move_fixture.world, attack_mover, {10.f, 0.f}));
     attack_move_fixture.advance_ticks(1);
     assert(attack_move_fixture.world.reg().all_of<AoeAttackMoveOrder,
-        AoeMoveGoal>(attack_mover));
-    assert(!attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover));
-    for (int i = 0; i < 20 &&
-         !attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover);
-         ++i)
-        attack_move_fixture.advance_ticks(1);
+        AoeAttackOrder>(attack_mover));
     assert(attack_move_fixture.world.reg().all_of<AoeAttackOrder>(attack_mover));
     assert(attack_move_fixture.world.reg().get<AoeAttackOrder>(attack_mover)
                .target.entity == attack_move_enemy);
     assert(attack_move_fixture.world.reg().get<AoeAttackOrder>(attack_mover)
                .target.entity != attack_move_ally);
+
+    Fixture target_lock_fixture;
+    const auto lock_mover = target_lock_fixture.unit({0.f, 0.f}, 50.f, 1);
+    const auto locked_enemy = target_lock_fixture.unit({5.f, 0.f}, 500.f, 2);
+    assert(request_aoe_attack_move(
+        target_lock_fixture.world, lock_mover, {12.f, 0.f}));
+    target_lock_fixture.advance_ticks(1);
+    assert(target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
+               .target.entity == locked_enemy);
+    const auto closer_enemy = target_lock_fixture.unit({1.f, 0.f}, 500.f, 2);
+    target_lock_fixture.advance_ticks(1);
+    assert(target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
+               .target.entity == locked_enemy);
+    target_lock_fixture.world.reg().get<AoeHealth>(locked_enemy).current = 0.f;
+    target_lock_fixture.advance_ticks(1);
+    assert(target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
+               .target.entity == closer_enemy);
+
+    const auto unreachable_enemy = target_lock_fixture.unit({3.f, 0.f}, 500.f, 2);
+    target_lock_fixture.world.reg().get<AoePosition>(closer_enemy).value = {20.f, 0.f};
+    for (int i = 0; i < 10 &&
+         target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
+             .target.entity != unreachable_enemy; ++i)
+        target_lock_fixture.advance_ticks(1);
+    assert(target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
+               .target.entity == unreachable_enemy);
+    Fixture unreachable_fixture;
+    const auto unreachable_mover = unreachable_fixture.unit(
+        {0.f, 0.f}, 50.f, 1);
+    const auto unreachable_target = unreachable_fixture.unit(
+        {5.5f, 0.f}, 500.f, 2);
+    assert(request_aoe_attack_move(
+        unreachable_fixture.world, unreachable_mover, {12.f, 0.f}));
+    unreachable_fixture.advance_ticks(1);
+    assert(unreachable_fixture.world.reg().get<AoeAttackOrder>(
+               unreachable_mover).target.entity == unreachable_target);
+    auto& unreachable_path = unreachable_fixture.world.reg()
+        .get<AoeNavigationPath>(unreachable_mover);
+    unreachable_path.no_path = true;
+    unreachable_fixture.world.reg().get<AoeEngagementApproach>(
+        unreachable_mover).unreachable_ticks = unreachable_fixture.world
+            .resource<AoeNavigationSettings>().blocked_repath_ticks - 1;
+    const auto reachable_alternative = unreachable_fixture.unit(
+        {2.f, 1.f}, 500.f, 2);
+    unreachable_fixture.advance_ticks(1);
+    assert(unreachable_fixture.world.reg().get<AoeAttackOrder>(
+               unreachable_mover)
+               .target.entity == reachable_alternative);
     for (int i = 0; i < 100 &&
          attack_move_fixture.world.reg().get<AoeHealth>(attack_move_enemy).current > 0.f;
          ++i)
@@ -1322,22 +1387,6 @@ int main() {
            UnitState::Idle);
     assert(glm::length(arrival_fixture.world.reg().get<AoePosition>(arrival_mover).value -
                        glm::vec2{1.f, 0.f}) < 1e-5f);
-
-    Fixture invalid_strategy_fixture;
-    auto* invalid_strategy_definition = const_cast<AoeUnitDefinition*>(
-        invalid_strategy_fixture.definition.get());
-    invalid_strategy_definition->target_acquisition.strategy_id = "missing";
-    const auto invalid_strategy_unit = invalid_strategy_fixture.unit(
-        {0.f, 0.f}, 50.f, 1);
-    const auto rejected_attack_moves = invalid_strategy_fixture.world
-        .resource<AoeGameplayDiagnostics>().commands_rejected;
-    assert(request_aoe_attack_move(
-        invalid_strategy_fixture.world, invalid_strategy_unit, {2.f, 0.f}));
-    invalid_strategy_fixture.advance_ticks(1);
-    assert(invalid_strategy_fixture.world.resource<AoeGameplayDiagnostics>()
-               .commands_rejected == rejected_attack_moves + 1);
-    assert(!invalid_strategy_fixture.world.reg()
-        .all_of<AoeAttackMoveOrder>(invalid_strategy_unit));
 
     Fixture no_attack_fixture;
     auto* no_attack_definition = const_cast<AoeUnitDefinition*>(

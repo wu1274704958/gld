@@ -122,7 +122,7 @@ AoeGameplaySettings {
 - 分 class 的 `armor`；
 - 椭圆柱 `collision`；
 - `movement.speed`；
-- `target_acquisition.strategy_id/radius`；
+- `target_acquisition.strategy/radius/disengage_radius`；
 - 可选 `attack`；
 - `lifecycle`；
 - `presentation` 资源和语义动画映射。
@@ -232,7 +232,7 @@ struct AoeUnitTarget {
 
 - 动态障碍索引每个 tick 只构建一次，后面的寻路与移动共享；
 - 命令先转换为 order/goal，再由导航和移动消费；
-- AttackMove 在导航前抢占移动，因此进入攻击范围的目标可在同 tick 推迟移动；
+- AttackMove 在导航前索敌，因此进入发现范围的目标可在同 tick 推迟原路线并开始追击；
 - movement 先更新位置，combat 再用最新位置检查攻击距离；
 - Projectile 在攻击 release 产生后同 tick 注册，但从下一个 tick 开始飞行；
 - lifecycle 最后推进死亡与消失状态，PostUpdate 再做实际池化。
@@ -452,28 +452,36 @@ request_aoe_stop(world, unit);
 
 ### 8.2 索敌策略
 
-索敌策略注册到 `AoeTargetAcquisitionRegistry`：
+索敌策略使用枚举到实现类型的静态模板映射：
 
 ```cpp
-struct MyAcquisition {
+enum class AoeTargetAcquisitionType : std::uint8_t {
+    NearestEnemy
+};
+
+struct NearestEnemyAcquisitionStrategy {
     static std::optional<AoeUnitTarget> select(
         const EcsWorld& world,
         const AoeTargetAcquisitionContext& context);
 };
 
-registry.bind<MyAcquisition>("my_strategy");
+template<>
+struct AoeTargetAcquisitionBinding<
+    AoeTargetAcquisitionType::NearestEnemy> {
+    using type = NearestEnemyAcquisitionStrategy;
+};
 ```
 
-单位 JSON 的 `target_acquisition.strategy_id` 决定使用哪个策略；默认是 `nearest_enemy`。
+单位 JSON 仍用 `target_acquisition.strategy_id` 序列化，加载时转换为枚举；默认是 `nearest_enemy`。运行时不再维护字符串 registry。
 
 内置 `nearest_enemy`：
 
 - 排除自己、同队、死亡、回收中和 pooled 单位；
-- 支持一组 `excluded` 目标，供 Squad 分散目标；
+- 支持一组 `excluded` 目标，用于不可达目标切换时临时排除当前目标；
 - 使用双方椭圆碰撞面之间的 gap，而不是中心距离；
 - gap 相同时以 instance ID、entity ID 做稳定决胜，保证结果可重复。
 
-当前该策略直接遍历所有活动候选单位。动态障碍已有空间索引，但索敌尚未改为专用 team-aware spatial query；这是单位规模继续增大时的重要优化点。
+独立单位使用活动单位视图搜索；Squad 有有效逻辑地图时复用动态障碍空间索引构建一次共享候选集合，没有地图时回退到活动单位视图。
 
 ### 8.3 AttackTarget 与 AttackMove
 
@@ -490,12 +498,12 @@ registry.bind<MyAcquisition>("my_strategy");
 
 - 保留原始移动终点；
 - 每个 tick 在导航前检查敌人；
-- 当前实现只选取已经进入该单位真实 `attack.range` 的敌人，然后立刻推迟移动并攻击；
-- 不会因为敌人仅进入更大的 `target_acquisition.radius` 就主动离开路线追击；
-- 当前目标死亡、失效或离开攻击范围后，清除 engagement 并继续前往原终点；
+- 使用 `target_acquisition.radius` 发现敌人，`attack.range` 只决定何时能够攻击；
+- 锁定后不会因为出现更近敌人或尚未进入武器射程而切换；
+- 当前目标死亡、失效、离开 `disengage_radius` 或确认不可达后重新选择最近目标；
 - 到达终点且无目标时结束命令。
 
-这里有意区分“AttackMove 路过时攻击已进入射程的敌人”和“AttackTarget 主动追击选中敌人”。若以后需要经典 RTS 的警戒追击，可新增策略或增加 chase leash，而不应悄悄改变当前命令语义。
+`AttackMove` 保留终点并主动追击发现范围内的目标；`AttackTarget` 则只处理明确指定的目标，目标失效后不会自动串联附近敌人。
 
 ### 8.4 朝向
 
@@ -658,9 +666,10 @@ slot_world = squad_center
 
 `Squad AttackMove`：
 
-- Squad 范围搜索负责触发 engagement；
-- 每个成员再使用自己单位定义中的索敌策略选择目标；
-- 本轮已经被分配的目标通过 `excluded` 传递，优先分散攻击；
+- 任一成员发现的敌人进入全 Squad 共享候选集合；
+- 每个成员使用 Squad combat settings 中的策略，从共享集合选择离自己最近的目标；
+- 不再使用 claimed 去重，多个成员可以锁定同一个敌人；
+- 存在共享 engagement 时 Squad anchor 暂停 AttackMove 推进；
 - 目标死亡后，持有该目标的成员立即寻找下一个目标；
 - 仍有敌人时不会先强制回归 Formation；
 - 范围内没有目标后，Squad 才恢复原 AttackMove 终点并在移动中重建阵型。

@@ -26,6 +26,7 @@ namespace gld::ecs::aoe {
 
 enum class AttackMode { Melee, Projectile };
 enum class UnitState { Idle, Moving, Attacking, Dying, Disappearing };
+enum class AoeTargetAcquisitionType : std::uint8_t { NearestEnemy };
 
 struct TypedAmount {
     int class_id = 0;
@@ -53,8 +54,10 @@ struct AttackDefinition {
 
 struct MovementDefinition { float speed = 1.f; };
 struct TargetAcquisitionDefinition {
-    std::string strategy_id = "nearest_enemy";
+    AoeTargetAcquisitionType strategy =
+        AoeTargetAcquisitionType::NearestEnemy;
     float radius = 6.f;
+    float disengage_radius = 9.f;
 };
 struct LifecycleDefinition {
     float death_duration_seconds = 0.f;
@@ -188,6 +191,7 @@ struct AoeEngagementApproach {
     glm::vec2 direction{1.f, 0.f};
     float desired_gap = 0.f;
     std::uint64_t assignment_sequence = 0;
+    std::uint32_t unreachable_ticks = 0;
 };
 struct AoeNavigationPath {
     std::vector<glm::vec2> waypoints;
@@ -355,6 +359,8 @@ struct AoeTargetAcquisitionContext {
     float radius = 0.f;
     std::uint32_t seeker_team = 0;
     std::span<const AoeUnitTarget> excluded{};
+    std::span<const AoeUnitTarget> candidates{};
+    bool use_candidates = false;
 };
 
 template<class T>
@@ -364,28 +370,32 @@ concept AoeTargetAcquisitionStrategy = requires(
         -> std::same_as<std::optional<AoeUnitTarget>>;
 };
 
-class AoeTargetAcquisitionRegistry {
-public:
-    using SelectFn = std::optional<AoeUnitTarget> (*)(
-        const EcsWorld&, const AoeTargetAcquisitionContext&);
-
-    template<AoeTargetAcquisitionStrategy T>
-    void bind(std::string id) { bind_erased(std::move(id), &T::select); }
-
-    bool contains(std::string_view id) const;
-    std::optional<AoeUnitTarget> select(
-        std::string_view id, const EcsWorld&,
-        const AoeTargetAcquisitionContext&) const;
-
-private:
-    void bind_erased(std::string id, SelectFn function);
-    std::unordered_map<std::string, SelectFn> entries_;
-};
-
 struct NearestEnemyAcquisitionStrategy {
     static std::optional<AoeUnitTarget> select(
         const EcsWorld&, const AoeTargetAcquisitionContext&);
 };
+
+template<AoeTargetAcquisitionType>
+struct AoeTargetAcquisitionBinding;
+
+template<>
+struct AoeTargetAcquisitionBinding<
+    AoeTargetAcquisitionType::NearestEnemy> {
+    using type = NearestEnemyAcquisitionStrategy;
+};
+
+template<AoeTargetAcquisitionType Type>
+std::optional<AoeUnitTarget> select_aoe_target(
+    const EcsWorld& world, const AoeTargetAcquisitionContext& context) {
+    using Strategy = typename AoeTargetAcquisitionBinding<Type>::type;
+    static_assert(AoeTargetAcquisitionStrategy<Strategy>);
+    return Strategy::select(world, context);
+}
+
+std::optional<AoeUnitTarget> dispatch_aoe_target(
+    AoeTargetAcquisitionType, const EcsWorld&,
+    const AoeTargetAcquisitionContext&);
+std::string_view aoe_target_acquisition_name(AoeTargetAcquisitionType);
 
 template<std::size_t N>
 struct AoeFixedString {
@@ -540,8 +550,10 @@ struct AoeSquadSpawnOptions {
     int player_color = 0;
     std::uint32_t layers = 0x1u;
     int direction_count = 16;
-    std::string acquisition_strategy_id = "nearest_enemy";
+    AoeTargetAcquisitionType acquisition_strategy =
+        AoeTargetAcquisitionType::NearestEnemy;
     float acquisition_radius = 6.f;
+    float disengage_radius = 9.f;
 };
 
 enum class AoeSquadSpawnStatus { Pending, Ready, Partial, Failed, Empty };
@@ -575,8 +587,10 @@ struct AoeSquadFormation {
     bool teleport_on_next_layout = true;
 };
 struct AoeSquadCombatSettings {
-    std::string acquisition_strategy_id = "nearest_enemy";
+    AoeTargetAcquisitionType acquisition_strategy =
+        AoeTargetAcquisitionType::NearestEnemy;
     float acquisition_radius = 6.f;
+    float disengage_radius = 9.f;
 };
 struct AoeSquadOrder {
     AoeSquadOrderType type = AoeSquadOrderType::Idle;

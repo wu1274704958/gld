@@ -79,11 +79,13 @@ cooldown_seconds`. The loader rejects non-finite values, invalid crit ranges,
 duplicate/negative class IDs, invalid colliders, invalid movement/lifecycle
 values, and projectile attacks without a projectile ID.
 
-`target_acquisition` is optional. Its defaults are `nearest_enemy` and a
-surface-to-surface radius of 6 gameplay units. Strategies are static logic types
-registered with `AoeTargetAcquisitionRegistry::bind<T>(id)`. The built-in
-strategy selects the closest live unit with a different instance-level
-`AoeTeam`; player color remains presentation-only.
+`target_acquisition` is optional. Its defaults are `nearest_enemy`, a
+surface-to-surface discovery radius of 6 gameplay units, and a disengage radius
+of 9. Strategies use the closed `AoeTargetAcquisitionType` enum and
+`AoeTargetAcquisitionBinding<Type>` template mapping, so dispatch has no runtime
+string registry. The built-in strategy keeps a valid locked target and otherwise
+selects the closest live unit with a different instance-level `AoeTeam`; player
+color remains presentation-only.
 
 ## Fixed-clock authority
 
@@ -328,10 +330,12 @@ and produces a collision-aware square grid.
 `request_aoe_squad_move`, `request_aoe_squad_attack`,
 `request_aoe_squad_attack_move`, and `request_aoe_squad_stop` apply orders to
 the whole squad. Squad movement is capped to the slowest living member. Attack
-Move uses the squad search as an engagement trigger, then lets each capable
-member select its nearest unclaimed enemy with the strategy configured by that
-unit definition. Members leave their travel slots, use deterministic
-target-relative approach directions, and form an inner melee ring or an outer
+Move builds one enemy set shared by the whole squad, then lets each capable
+member select its own nearest enemy with the strategy configured by the squad.
+Targets are not claimed: several members may lock the same enemy, and the squad
+anchor pauses while any shared engagement remains. Members leave their travel
+slots, use deterministic target-relative approach directions, and form an inner
+melee ring or an outer
 projectile ring derived from their attack range. A dead target is replaced only
 for the members that owned it; after no target remains the squad rebuilds its
 formation while resuming the original destination. Explicit Squad AttackTarget

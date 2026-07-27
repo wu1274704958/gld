@@ -116,6 +116,14 @@ float non_negative(const json& value, const char* name) {
     return number;
 }
 
+AoeTargetAcquisitionType target_acquisition_type(
+    std::string_view name) {
+    if (name == "nearest_enemy")
+        return AoeTargetAcquisitionType::NearestEnemy;
+    throw std::runtime_error(
+        "target_acquisition.strategy_id must be nearest_enemy");
+}
+
 std::vector<TypedAmount> typed_amounts(const json& values, const char* name) {
     if (!values.is_array()) throw std::runtime_error(std::string(name) + " must be an array");
     std::vector<TypedAmount> result;
@@ -183,14 +191,22 @@ std::shared_ptr<AoeUnitDefinition> parse_definition(const json& source) {
         const auto& acquisition = source.at("target_acquisition");
         if (!acquisition.is_object())
             throw std::runtime_error("target_acquisition must be an object");
-        result->target_acquisition.strategy_id = acquisition.value(
-            "strategy_id", result->target_acquisition.strategy_id);
+        result->target_acquisition.strategy = target_acquisition_type(
+            acquisition.value("strategy_id", std::string(
+                aoe_target_acquisition_name(
+                    result->target_acquisition.strategy))));
         result->target_acquisition.radius = acquisition.contains("radius")
             ? non_negative(acquisition.at("radius"), "target_acquisition.radius")
             : result->target_acquisition.radius;
-        if (result->target_acquisition.strategy_id.empty())
+        result->target_acquisition.disengage_radius =
+            acquisition.contains("disengage_radius")
+                ? non_negative(acquisition.at("disengage_radius"),
+                               "target_acquisition.disengage_radius")
+                : result->target_acquisition.disengage_radius;
+        if (result->target_acquisition.disengage_radius <
+            result->target_acquisition.radius)
             throw std::runtime_error(
-                "target_acquisition.strategy_id must not be empty");
+                "target_acquisition.disengage_radius must be at least radius");
     }
 
     if (source.contains("attack")) {
@@ -879,9 +895,7 @@ void apply_command(EcsWorld& world, const AoeGameplayCommand& command, std::uint
     if (command.type == AoeCommandType::AttackMove) {
         const auto* reference = reg.try_get<AoeUnitDefinitionRef>(command.unit);
         const auto* definition = reference ? reference->value.get() : nullptr;
-        const auto* strategies = world.try_resource<AoeTargetAcquisitionRegistry>();
-        if (!definition || !definition->attack || !strategies ||
-            !strategies->contains(definition->target_acquisition.strategy_id) ||
+        if (!definition || !definition->attack ||
             !reg.all_of<AoePosition, AoeCollider, AoeMovement, AoeFacing, AoeTeam>(
                 command.unit)) {
             reject(world); return;
@@ -915,8 +929,7 @@ void apply_command(EcsWorld& world, const AoeGameplayCommand& command, std::uint
 
 void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
-    auto* strategies = world.try_resource<AoeTargetAcquisitionRegistry>();
-    if (!strategies) return;
+    const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
     std::vector<entt::entity> finish;
     for (const auto entity : reg.view<AoeAttackMoveOrder, AoePosition, AoeCollider,
                                       AoeActionState, AoeUnitDefinitionRef,
@@ -925,35 +938,73 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
         auto& state = reg.get<AoeActionState>(entity);
         if (is_terminal(state.state)) continue;
         const auto* definition = reg.get<AoeUnitDefinitionRef>(entity).value.get();
-        if (!definition || !definition->attack ||
-            !strategies->contains(definition->target_acquisition.strategy_id)) {
+        if (!definition || !definition->attack) {
             finish.push_back(entity);
             reject(world);
             continue;
         }
 
+        std::optional<AoeUnitTarget> excluded;
+        bool keep_if_no_replacement = false;
         if (const auto* attack = reg.try_get<AoeAttackOrder>(entity)) {
             if (target_valid(reg, attack->target)) {
-                if (state.state == UnitState::Attacking) continue;
+                auto* approach = reg.try_get<AoeEngagementApproach>(entity);
+                if (!approach ||
+                    approach->target.entity != attack->target.entity ||
+                    approach->target.instance_id != attack->target.instance_id) {
+                    assign_engagement_approach(reg, entity, attack->target,
+                                               *definition->attack);
+                    approach = reg.try_get<AoeEngagementApproach>(entity);
+                }
+                if (state.state == UnitState::Attacking) {
+                    if (approach) approach->unreachable_ticks = 0;
+                    continue;
+                }
                 const float gap = aoe_surface_gap(
                     reg.get<AoePosition>(entity), reg.get<AoeCollider>(entity),
                     reg.get<AoePosition>(attack->target.entity),
                     reg.get<AoeCollider>(attack->target.entity));
-                if (gap <= definition->attack->range + Epsilon) continue;
+                if (gap <= definition->target_acquisition.disengage_radius +
+                               Epsilon) {
+                    const auto* path = reg.try_get<AoeNavigationPath>(entity);
+                    if (gap <= definition->attack->range + Epsilon ||
+                        !path || !path->no_path) {
+                        if (approach) approach->unreachable_ticks = 0;
+                        continue;
+                    }
+                    if (approach && approach->unreachable_ticks <
+                                        std::numeric_limits<std::uint32_t>::max())
+                        ++approach->unreachable_ticks;
+                    if (!approach || approach->unreachable_ticks <
+                            std::max(1u, navigation.blocked_repath_ticks))
+                        continue;
+                    excluded = attack->target;
+                    keep_if_no_replacement = true;
+                }
             }
-            clear_active_engagement(reg, entity);
-            set_idle_if_active(reg, entity, tick);
+            if (!keep_if_no_replacement) {
+                clear_active_engagement(reg, entity);
+                set_idle_if_active(reg, entity, tick);
+            }
         }
 
         const auto& position = reg.get<AoePosition>(entity);
         const auto& acquisition = definition->target_acquisition;
-        auto target = strategies->select(acquisition.strategy_id, world,
+        const std::span<const AoeUnitTarget> excluded_span = excluded
+            ? std::span<const AoeUnitTarget>(&*excluded, 1)
+            : std::span<const AoeUnitTarget>{};
+        auto target = dispatch_aoe_target(acquisition.strategy, world,
             AoeTargetAcquisitionContext{
-                entity, position.value, definition->attack->range,
-                reg.get<AoeTeam>(entity).id});
+                .seeker = entity,
+                .origin = position.value,
+                .radius = acquisition.radius,
+                .seeker_team = reg.get<AoeTeam>(entity).id,
+                .excluded = excluded_span});
         if (target && (target->entity == entity || !target_valid(reg, *target)))
             target.reset();
         if (target) {
+            if (keep_if_no_replacement)
+                clear_active_engagement(reg, entity);
             reg.remove<AoeMoveGoal>(entity);
             reg.remove<AoeNavigationPath>(entity);
             reg.emplace_or_replace<AoeAttackOrder>(entity,
@@ -963,6 +1014,7 @@ void attack_move_acquisition_tick(EcsWorld& world, std::uint64_t tick) {
             set_idle_if_active(reg, entity, tick);
             continue;
         }
+        if (keep_if_no_replacement) continue;
 
         const auto destination = reg.get<AoeAttackMoveOrder>(entity).destination;
         if (glm::length(destination - position.value) <= Epsilon) {
@@ -1149,36 +1201,114 @@ void engage_squad_target(EcsWorld& world, entt::entity squad,
     reg.get<AoeSquadState>(squad).phase = AoeSquadPhase::Engaging;
 }
 
+bool target_within_squad_radius(
+    const entt::registry& reg, const AoeSquadMembers& members,
+    const AoeUnitTarget& target, float radius) {
+    if (!target_valid(reg, target) ||
+        !reg.all_of<AoePosition, AoeCollider>(target.entity))
+        return false;
+    for (const auto& member : members.active) {
+        if (!squad_member_valid(reg, member) ||
+            !reg.all_of<AoePosition, AoeCollider>(member.entity))
+            continue;
+        if (aoe_surface_gap(
+                reg.get<AoePosition>(member.entity),
+                reg.get<AoeCollider>(member.entity),
+                reg.get<AoePosition>(target.entity),
+                reg.get<AoeCollider>(target.entity)) <= radius + Epsilon)
+            return true;
+    }
+    return false;
+}
+
+std::vector<AoeUnitTarget> collect_squad_targets(
+    EcsWorld& world, const AoeSquadMembers& members,
+    std::uint32_t seeker_team, float radius) {
+    auto& reg = world.reg();
+    std::vector<AoeUnitTarget> result;
+    glm::vec2 low{std::numeric_limits<float>::infinity()};
+    glm::vec2 high{-std::numeric_limits<float>::infinity()};
+    bool have_member = false;
+    for (const auto& member : members.active) {
+        if (!squad_member_valid(reg, member) ||
+            !reg.all_of<AoePosition, AoeCollider>(member.entity))
+            continue;
+        const auto& position = reg.get<AoePosition>(member.entity);
+        const auto& collider = reg.get<AoeCollider>(member.entity);
+        const glm::vec2 radii{collider.radius_x, collider.radius_y};
+        low = glm::min(low, position.value - radii);
+        high = glm::max(high, position.value + radii);
+        have_member = true;
+    }
+    if (!have_member) return result;
+
+    const auto consider = [&](entt::entity entity,
+                              std::uint64_t instance_id) {
+        if (!reg.valid(entity) ||
+            !reg.all_of<AoeTeam, AoePosition, AoeCollider, AoeHealth,
+                        AoeActionState, AoeGameplayIdentity,
+                        AoeUnitDefinitionRef>(entity) ||
+            reg.get<AoeTeam>(entity).id == seeker_team)
+            return;
+        const AoeUnitTarget target{entity, instance_id};
+        if (!target_valid(reg, target) ||
+            !target_within_squad_radius(reg, members, target, radius))
+            return;
+        result.push_back(target);
+    };
+
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const auto* dynamic = world.try_resource<AoeDynamicObstacleIndex>();
+    if (map && map->valid() && dynamic) {
+        dynamic->query(*map, low - glm::vec2(radius),
+                       high + glm::vec2(radius),
+            [&](const AoeDynamicObstacleEntry& entry) {
+                consider(entry.entity, entry.instance_id);
+            });
+    } else {
+        for (const auto entity : reg.view<
+                 AoeTeam, AoePosition, AoeCollider, AoeHealth,
+                 AoeActionState, AoeGameplayIdentity, AoeUnitDefinitionRef>(
+                 entt::exclude<AoePooledUnit, AoeRecyclePending>))
+            consider(entity,
+                reg.get<AoeGameplayIdentity>(entity).instance_id);
+    }
+    return result;
+}
+
 std::optional<AoeUnitTarget> select_member_target(
     EcsWorld& world, entt::entity entity,
-    const AoeTargetAcquisitionRegistry* acquisition,
-    std::span<const AoeUnitTarget> excluded) {
-    if (!acquisition) return std::nullopt;
+    AoeTargetAcquisitionType acquisition,
+    std::span<const AoeUnitTarget> candidates,
+    std::span<const AoeUnitTarget> excluded = {}) {
     auto& reg = world.reg();
     const auto* reference = reg.try_get<AoeUnitDefinitionRef>(entity);
     const auto* definition = reference ? reference->value.get() : nullptr;
     if (!definition || !definition->attack ||
-        !acquisition->contains(definition->target_acquisition.strategy_id) ||
         !reg.all_of<AoePosition, AoeTeam>(entity))
         return std::nullopt;
-    auto target = acquisition->select(
-        definition->target_acquisition.strategy_id, world,
-        {entity, reg.get<AoePosition>(entity).value,
-         definition->attack->range, reg.get<AoeTeam>(entity).id,
-         excluded});
+    auto target = dispatch_aoe_target(acquisition, world,
+        AoeTargetAcquisitionContext{
+            .seeker = entity,
+            .origin = reg.get<AoePosition>(entity).value,
+            .seeker_team = reg.get<AoeTeam>(entity).id,
+            .excluded = excluded,
+            .candidates = candidates,
+            .use_candidates = true});
     if (!target || !target_valid(reg, *target)) return std::nullopt;
     return target;
 }
 
 bool update_squad_attack_move_engagement(
-    EcsWorld& world, entt::entity squad,
-    const AoeTargetAcquisitionRegistry* acquisition,
-    std::uint64_t tick) {
+    EcsWorld& world, entt::entity squad, std::uint64_t tick) {
     auto& reg = world.reg();
     auto& members = reg.get<AoeSquadMembers>(squad);
+    const auto& settings = reg.get<AoeSquadCombatSettings>(squad);
+    const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
+    const auto candidates = collect_squad_targets(
+        world, members, reg.get<AoeTeam>(squad).id,
+        settings.acquisition_radius);
     bool active = false;
-    std::vector<AoeUnitTarget> claimed;
-    claimed.reserve(members.active.size());
     for (const auto& member : members.active) {
         if (!squad_member_valid(reg, member)) continue;
         if (const auto* current = reg.try_get<AoeAttackOrder>(member.entity);
@@ -1186,37 +1316,55 @@ bool update_squad_attack_move_engagement(
             const auto& action = reg.get<AoeActionState>(member.entity);
             const auto* definition = reg.get<AoeUnitDefinitionRef>(
                 member.entity).value.get();
-            const float gap = definition && definition->attack
-                ? aoe_surface_gap(
-                    reg.get<AoePosition>(member.entity),
-                    reg.get<AoeCollider>(member.entity),
-                    reg.get<AoePosition>(current->target.entity),
-                    reg.get<AoeCollider>(current->target.entity))
-                : std::numeric_limits<float>::infinity();
-            if (action.state != UnitState::Attacking &&
-                (!definition || !definition->attack ||
-                 gap > definition->attack->range + Epsilon)) {
-                clear_active_engagement(reg, member.entity);
-            } else {
-                const auto* approach = reg.try_get<AoeEngagementApproach>(
+            if (definition && definition->attack &&
+                (action.state == UnitState::Attacking ||
+                 target_within_squad_radius(
+                     reg, members, current->target,
+                     settings.disengage_radius))) {
+                auto* approach = reg.try_get<AoeEngagementApproach>(
                     member.entity);
                 if (!approach ||
                     approach->target.entity != current->target.entity ||
                     approach->target.instance_id !=
                         current->target.instance_id) {
-                    if (definition && definition->attack)
-                        assign_engagement_approach(reg, member.entity,
-                                                   current->target,
-                                                   *definition->attack);
+                    assign_engagement_approach(reg, member.entity,
+                                               current->target,
+                                               *definition->attack);
+                    approach = reg.try_get<AoeEngagementApproach>(
+                        member.entity);
                 }
-                claimed.push_back(current->target);
+                const auto* path = reg.try_get<AoeNavigationPath>(
+                    member.entity);
+                const bool unreachable = action.state != UnitState::Attacking &&
+                    path && path->no_path;
+                if (approach) {
+                    if (unreachable && approach->unreachable_ticks <
+                                           std::numeric_limits<std::uint32_t>::max())
+                        ++approach->unreachable_ticks;
+                    else if (!unreachable)
+                        approach->unreachable_ticks = 0;
+                }
+                const bool replace_unreachable = approach && unreachable &&
+                    approach->unreachable_ticks >=
+                        std::max(1u, navigation.blocked_repath_ticks);
+                if (replace_unreachable) {
+                    const std::array excluded{current->target};
+                    auto replacement = select_member_target(
+                        world, member.entity, settings.acquisition_strategy,
+                        candidates, excluded);
+                    if (replacement) {
+                        clear_active_engagement(reg, member.entity);
+                        attack_with_squad_member(
+                            reg, member.entity, *replacement, tick);
+                    }
+                }
                 active = true;
                 continue;
             }
         }
         clear_active_engagement(reg, member.entity);
         auto target = select_member_target(
-            world, member.entity, acquisition, claimed);
+            world, member.entity, settings.acquisition_strategy, candidates);
         if (!target || !target_valid(reg, *target)) {
             if (reg.get<AoeActionState>(member.entity).state ==
                 UnitState::Attacking)
@@ -1224,7 +1372,6 @@ bool update_squad_attack_move_engagement(
             continue;
         }
         attack_with_squad_member(reg, member.entity, *target, tick);
-        claimed.push_back(*target);
         active = true;
     }
     if (active)
@@ -1232,20 +1379,9 @@ bool update_squad_attack_move_engagement(
     return active;
 }
 
-bool squad_has_unengaged_member(const entt::registry& reg,
-                                const AoeSquadMembers& members) {
-    for (const auto& member : members.active) {
-        if (!squad_member_valid(reg, member)) continue;
-        const auto* attack = reg.try_get<AoeAttackOrder>(member.entity);
-        if (!attack || !target_valid(reg, attack->target)) return true;
-    }
-    return false;
-}
-
 void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
     const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
-    auto* acquisition = world.try_resource<AoeTargetAcquisitionRegistry>();
     for (const auto squad : reg.view<AoeSquadMembers, AoeSquadSpawnState,
                                      AoeSquadFormation, AoeSquadCombatSettings,
                                      AoeSquadOrder, AoeSquadState, AoePosition,
@@ -1282,7 +1418,7 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             state.phase == AoeSquadPhase::Engaging) {
             acquisition_attempted = true;
             if (update_squad_attack_move_engagement(
-                    world, squad, acquisition, tick)) {
+                    world, squad, tick)) {
                 order.target = {};
                 attack_move_active = true;
             } else {
@@ -1305,7 +1441,7 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             } else if (order.type == AoeSquadOrderType::AttackMove) {
                 acquisition_attempted = true;
                 if (update_squad_attack_move_engagement(
-                        world, squad, acquisition, tick))
+                        world, squad, tick))
                     attack_move_active = true;
                 const glm::vec2 delta = order.destination - center.value;
                 if (glm::length(delta) > Epsilon)
@@ -1340,15 +1476,17 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             !acquisition_attempted) {
             order.target = {};
             if (update_squad_attack_move_engagement(
-                    world, squad, acquisition, tick))
+                    world, squad, tick))
                 attack_move_active = true;
         }
 
-        // If every live member is fighting, defer the squad movement exactly
-        // like a single-unit Attack Move. Otherwise the anchor and unengaged
-        // members continue, while drive_squad_slots skips active attackers.
-        if (attack_move_active && !squad_has_unengaged_member(reg, members))
+        // Shared squad awareness pauses the Attack Move anchor as soon as the
+        // squad engages. Attackers approach their targets independently while
+        // any non-combat member holds its current formation slot.
+        if (attack_move_active) {
+            drive_squad_slots(world, squad, state.movement_speed, tick);
             continue;
+        }
 
         if (order.type == AoeSquadOrderType::MoveTo ||
             order.type == AoeSquadOrderType::AttackMove) {
@@ -2888,24 +3026,24 @@ std::vector<AoeFormationSlot> AoeFormationRegistry::layout(
     return result;
 }
 
-void AoeTargetAcquisitionRegistry::bind_erased(
-    std::string id, SelectFn function) {
-    if (id.empty() || !function)
-        throw std::invalid_argument(
-            "target acquisition binding requires a non-empty id and function");
-    if (!entries_.emplace(std::move(id), function).second)
-        throw std::invalid_argument("duplicate target acquisition binding");
+std::optional<AoeUnitTarget> dispatch_aoe_target(
+    AoeTargetAcquisitionType type, const EcsWorld& world,
+    const AoeTargetAcquisitionContext& context) {
+    switch (type) {
+    case AoeTargetAcquisitionType::NearestEnemy:
+        return select_aoe_target<
+            AoeTargetAcquisitionType::NearestEnemy>(world, context);
+    }
+    return std::nullopt;
 }
 
-bool AoeTargetAcquisitionRegistry::contains(std::string_view id) const {
-    return entries_.find(std::string(id)) != entries_.end();
-}
-
-std::optional<AoeUnitTarget> AoeTargetAcquisitionRegistry::select(
-    std::string_view id, const EcsWorld& world,
-    const AoeTargetAcquisitionContext& context) const {
-    const auto it = entries_.find(std::string(id));
-    return it == entries_.end() ? std::nullopt : it->second(world, context);
+std::string_view aoe_target_acquisition_name(
+    AoeTargetAcquisitionType type) {
+    switch (type) {
+    case AoeTargetAcquisitionType::NearestEnemy:
+        return "nearest_enemy";
+    }
+    return "unknown";
 }
 
 std::optional<AoeUnitTarget> NearestEnemyAcquisitionStrategy::select(
@@ -2920,27 +3058,29 @@ std::optional<AoeUnitTarget> NearestEnemyAcquisitionStrategy::select(
     const auto& seeker_collider = reg.get<AoeCollider>(context.seeker);
     std::optional<AoeUnitTarget> best;
     float best_gap = std::numeric_limits<float>::infinity();
-    for (const auto candidate : reg.view<AoeTeam, AoePosition, AoeCollider,
-                                         AoeHealth, AoeActionState,
-                                         AoeGameplayIdentity,
-                                         AoeUnitDefinitionRef>(
-             entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
+    const auto consider = [&](entt::entity candidate,
+                              std::uint64_t instance_id) {
+        if (!reg.valid(candidate) ||
+            !reg.all_of<AoeTeam, AoePosition, AoeCollider, AoeHealth,
+                        AoeActionState, AoeGameplayIdentity,
+                        AoeUnitDefinitionRef>(candidate))
+            return;
         if (candidate == context.seeker ||
             reg.get<AoeTeam>(candidate).id == context.seeker_team)
-            continue;
+            return;
         const auto& identity = reg.get<AoeGameplayIdentity>(candidate);
-        const AoeUnitTarget target{candidate, identity.instance_id};
+        const AoeUnitTarget target{candidate, instance_id};
         if (std::find_if(context.excluded.begin(), context.excluded.end(),
                 [&](const AoeUnitTarget& value) {
                     return value.entity == target.entity &&
                            value.instance_id == target.instance_id;
                 }) != context.excluded.end())
-            continue;
-        if (!target_valid(reg, target)) continue;
+            return;
+        if (!target_valid(reg, target)) return;
         const float gap = aoe_surface_gap(
             seeker_position, seeker_collider,
             reg.get<AoePosition>(candidate), reg.get<AoeCollider>(candidate));
-        if (gap > context.radius + Epsilon) continue;
+        if (!context.use_candidates && gap > context.radius + Epsilon) return;
         const bool closer = gap + Epsilon < best_gap;
         const bool tied = std::abs(gap - best_gap) <= Epsilon;
         const bool stable_before = !best ||
@@ -2951,6 +3091,17 @@ std::optional<AoeUnitTarget> NearestEnemyAcquisitionStrategy::select(
             best = target;
             best_gap = gap;
         }
+    };
+    if (context.use_candidates) {
+        for (const auto& candidate : context.candidates)
+            consider(candidate.entity, candidate.instance_id);
+    } else {
+        for (const auto candidate : reg.view<
+                 AoeTeam, AoePosition, AoeCollider, AoeHealth,
+                 AoeActionState, AoeGameplayIdentity, AoeUnitDefinitionRef>(
+                 entt::exclude<AoePooledUnit, AoeRecyclePending>))
+            consider(candidate,
+                reg.get<AoeGameplayIdentity>(candidate).instance_id);
     }
     return best;
 }
@@ -3250,14 +3401,13 @@ entt::entity spawn_aoe_gameplay_squad(
         glm::length(options.forward) <= Epsilon ||
         !std::isfinite(options.formation_spacing) || options.formation_spacing < 0.f ||
         !std::isfinite(options.acquisition_radius) || options.acquisition_radius < 0.f ||
-        options.acquisition_strategy_id.empty() || options.direction_count <= 0 ||
+        !std::isfinite(options.disengage_radius) ||
+        options.disengage_radius < options.acquisition_radius ||
+        options.direction_count <= 0 ||
         options.player_color < 0 || options.player_color > 8)
         return entt::null;
     const auto* formations = world.try_resource<AoeFormationRegistry>();
     if (!formations || !formations->contains(options.formation)) return entt::null;
-    const auto* acquisition = world.try_resource<AoeTargetAcquisitionRegistry>();
-    if (!acquisition ||
-        !acquisition->contains(options.acquisition_strategy_id)) return entt::null;
     std::uint64_t requested = 0;
     for (const auto& entry : options.composition) {
         if (entry.definition_id.empty() || !entry.count ||
@@ -3280,7 +3430,8 @@ entt::entity spawn_aoe_gameplay_squad(
     reg.emplace<AoeSquadFormation>(squad, AoeSquadFormation{
         options.formation, options.formation_spacing, forward, {}, true, true});
     reg.emplace<AoeSquadCombatSettings>(squad, AoeSquadCombatSettings{
-        options.acquisition_strategy_id, options.acquisition_radius});
+        options.acquisition_strategy, options.acquisition_radius,
+        options.disengage_radius});
     reg.emplace<AoeSquadOrder>(squad);
     reg.emplace<AoeSquadState>(squad);
 
@@ -3608,9 +3759,6 @@ void AoeGameplayPlugin::operator()(App& app) const {
     if (!formations.contains(AoeFormationType::Skirmish))
         formations.bind<AoeFormationType::Skirmish,
                         DefaultSkirmishFormation>();
-    auto& acquisition = app.world.resource_or_add<AoeTargetAcquisitionRegistry>();
-    if (!acquisition.contains("nearest_enemy"))
-        acquisition.bind<NearestEnemyAcquisitionStrategy>("nearest_enemy");
     auto& projectiles = app.world.resource_or_add<AoeProjectileRegistry>();
     if (!projectiles.contains("arrow"))
         projectiles.bind<ArrowProjectileLogic>("arrow");

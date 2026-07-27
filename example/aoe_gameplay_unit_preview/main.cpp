@@ -340,8 +340,11 @@ void diagnostics_system(EcsWorld& world) {
         if (definition) {
             out << "Player armor [class:value]: " << typed_amounts(definition->armor) << '\n';
             out << "Acquisition strategy="
-                << definition->target_acquisition.strategy_id
-                << " radius=" << definition->target_acquisition.radius << '\n';
+                << aoe_target_acquisition_name(
+                       definition->target_acquisition.strategy)
+                << " radius=" << definition->target_acquisition.radius
+                << " disengage="
+                << definition->target_acquisition.disengage_radius << '\n';
             if (definition->attack)
                 out << "Damage [class:value]: " << typed_amounts(definition->attack->damage)
                     << " cooldown=" << definition->attack->cooldown_seconds << "s\n";
