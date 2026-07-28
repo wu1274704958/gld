@@ -17,6 +17,10 @@ namespace {
 using json = nlohmann::json;
 constexpr float Epsilon = 1e-5f;
 void squad_traffic_tick(EcsWorld& world, std::uint64_t tick);
+void movement_intent_tick(EcsWorld& world, std::uint64_t tick);
+void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick);
+void unit_flow_tick(EcsWorld& world, std::uint64_t tick);
+void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick);
 
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
 #define GLD_AOE_GAMEPLAY_PHASE(world_value, field_name, function) do { \
@@ -594,9 +598,21 @@ glm::vec2 squad_slot_world(const AoePosition& center,
            forward * slot.local_offset.y;
 }
 
-glm::vec2 attack_approach_destination(const entt::registry& reg,
+bool navigation_destination_valid(const AoeLogicMap* map,
+                                  glm::vec2 destination,
+                                  glm::vec2 clearance) {
+    if (!map || !map->valid()) return true;
+    if (!map->contains(destination, clearance) ||
+        map->position_blocked(destination, clearance))
+        return false;
+    const auto cell = map->world_to_cell(destination);
+    return cell && map->cell_traversable(cell->x, cell->y, clearance);
+}
+
+glm::vec2 attack_approach_destination(EcsWorld& world,
                                       entt::entity entity,
                                       const AoeUnitTarget& target) {
+    const auto& reg = world.reg();
     const auto& target_position = reg.get<AoePosition>(target.entity);
     const auto* approach = reg.try_get<AoeEngagementApproach>(entity);
     if (!approach || approach->target.entity != target.entity ||
@@ -610,7 +626,27 @@ glm::vec2 attack_approach_destination(const entt::registry& reg,
     const float radius = aoe_collider_support_radius(target_collider, direction) +
                          aoe_collider_support_radius(collider, -direction) +
                          approach->desired_gap;
-    return target_position.value + direction * radius;
+    const glm::vec2 clearance{collider.radius_x, collider.radius_y};
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const glm::vec2 desired = target_position.value + direction * radius;
+    if (navigation_destination_valid(map, desired, clearance))
+        return desired;
+
+    // Preserve the assigned radial distance, but search deterministic nearby
+    // angles when the preferred attack point lies outside the map or in a
+    // static obstacle. Alternating sides avoids a global directional bias.
+    constexpr float AngleStep = glm::pi<float>() / 8.f;
+    const float base_angle = std::atan2(direction.y, direction.x);
+    for (int step = 1; step <= 8; ++step)
+        for (const int sign : {1, -1}) {
+            const float angle = base_angle + sign * step * AngleStep;
+            const glm::vec2 candidate = target_position.value +
+                glm::vec2(std::cos(angle), std::sin(angle)) * radius;
+            if (navigation_destination_valid(map, candidate, clearance))
+                return candidate;
+        }
+    return navigation_destination_valid(map, target_position.value, clearance)
+        ? target_position.value : desired;
 }
 
 entt::entity ignored_formation_squad(const entt::registry& reg,
@@ -738,9 +774,7 @@ void handle_squad_layout_failure(EcsWorld& world, entt::entity squad,
 
 bool slot_destination_valid(const AoeLogicMap* map, glm::vec2 destination,
                             glm::vec2 clearance) {
-    return !map || !map->valid() ||
-        (map->contains(destination, clearance) &&
-         !map->position_blocked(destination, clearance));
+    return navigation_destination_valid(map, destination, clearance);
 }
 
 glm::vec2 resolve_elastic_slot_destination(
@@ -801,6 +835,18 @@ glm::vec2 resolve_elastic_slot_destination(
             ++world.resource_or_add<AoeGameplayDiagnostics>().elastic_slot_uses;
             return candidate;
         }
+
+    // Keeping the current valid position is preferable to repeatedly asking
+    // A* for an invalid original slot. The formation will retry its desired
+    // slot on subsequent fixed ticks as the squad center moves.
+    const glm::vec2 current = reg.get<AoePosition>(entity).value;
+    if (slot_destination_valid(map, current, clearance)) {
+        follow.elastic = true;
+        follow.recovery_ticks = 0;
+        follow.navigation_destination = current;
+        ++world.resource_or_add<AoeGameplayDiagnostics>().elastic_slot_uses;
+        return current;
+    }
 
     follow.elastic = true;
     follow.recovery_ticks = 0;
@@ -1680,7 +1726,7 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
             reg.emplace_or_replace<AoeMoveGoal>(entity,
                 AoeMoveGoal{
                     has_approach
-                        ? attack_approach_destination(reg, entity, order.target)
+                        ? attack_approach_destination(world, entity, order.target)
                         : target_position.value,
                     has_approach ? 0.f : definition->attack->range,
                     order.target});
@@ -1717,7 +1763,7 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
         if (goal.target.entity != entt::null) {
             if (!target_valid(reg, goal.target)) continue;
             goal.destination = reg.all_of<AoeEngagementApproach>(entity)
-                ? attack_approach_destination(reg, entity, goal.target)
+                ? attack_approach_destination(world, entity, goal.target)
                 : reg.get<AoePosition>(goal.target.entity).value;
         }
         auto* path = reg.try_get<AoeNavigationPath>(entity);
@@ -1784,387 +1830,969 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
     }
 }
 
+
+void movement_intent_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    for (const auto entity : reg.view<AoePathMotionRequest>())
+        reg.get<AoePathMotionRequest>(entity).valid = false;
+
+    for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMovement,
+                                      AoeMoveGoal, AoeNavigationPath,
+                                      AoeActionState>()) {
+        const auto& state = reg.get<AoeActionState>(entity);
+        const auto& path = reg.get<AoeNavigationPath>(entity);
+        if (state.state == UnitState::Attacking || is_terminal(state.state) ||
+            path.no_path || path.current >= path.waypoints.size())
+            continue;
+        const auto& position = reg.get<AoePosition>(entity);
+        const auto& goal = reg.get<AoeMoveGoal>(entity);
+        const glm::vec2 delta = path.waypoints[path.current] - position.value;
+        const float distance = glm::length(delta);
+        if (!(distance > .01f)) continue;
+        const glm::vec2 direction = delta / distance;
+        float max_speed = reg.get<AoeMovement>(entity).speed;
+        if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity))
+            max_speed = std::min(max_speed, limit->value);
+        float remaining = distance;
+        if (goal.target.entity != entt::null &&
+            path.current + 1 >= path.waypoints.size() &&
+            target_valid(reg, goal.target)) {
+            remaining = std::max(0.f, aoe_surface_gap(
+                position, reg.get<AoeCollider>(entity),
+                reg.get<AoePosition>(goal.target.entity),
+                reg.get<AoeCollider>(goal.target.entity)) -
+                goal.stopping_distance);
+        }
+        float speed = std::min(max_speed, remaining / .25f);
+        if (const auto* locomotion = reg.try_get<AoeLocomotionState>(entity);
+            locomotion && glm::length(locomotion->velocity) > Epsilon) {
+            const float alignment = glm::dot(
+                glm::normalize(locomotion->velocity), direction);
+            speed *= std::clamp((alignment + .25f) / 1.25f, .1f, 1.f);
+        }
+        AoeMovementIntentKind kind = AoeMovementIntentKind::Move;
+        if (reg.all_of<AoeEngagementApproach>(entity))
+            kind = AoeMovementIntentKind::AttackApproach;
+        else if (reg.all_of<AoeSquadMember>(entity))
+            kind = AoeMovementIntentKind::FormationSlot;
+        reg.emplace_or_replace<AoePathMotionRequest>(entity,
+            AoePathMotionRequest{kind, direction * speed,
+                path.waypoints[path.current], max_speed,
+                path.request_sequence, tick, true});
+    }
+}
+
+void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    for (const auto entity : reg.view<AoeMovementIntent>())
+        reg.get<AoeMovementIntent>(entity).valid = false;
+    world.resource_or_add<AoeSteeringRegistry>();
+    world.resource_or_add<AoeCrowdSteeringScratch>();
+    world.resource_or_add<AoeNavigationSettings>();
+    world.resource_or_add<AoeGameplayDiagnostics>();
+    auto& steering = world.resource<AoeSteeringRegistry>();
+    if (!steering.contains("local_default"))
+        steering.bind<DefaultLocalSteeringLogic>("local_default");
+    const auto& settings = world.resource<AoeNavigationSettings>();
+    auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
+    auto& neighbors = world.resource<AoeCrowdSteeringScratch>().nearest_neighbors;
+    neighbors.clear();
+    neighbors.reserve(settings.steering_max_neighbors + 1u);
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const auto* dynamic = world.try_resource<AoeDynamicObstacleIndex>();
+
+    for (const auto entity : reg.view<AoePathMotionRequest, AoePosition,
+                                      AoeCollider, AoeLocomotionState>()) {
+        const auto& request = reg.get<AoePathMotionRequest>(entity);
+        if (!request.valid || request.produced_tick != tick) continue;
+        const auto& position = reg.get<AoePosition>(entity);
+        const auto& collider = reg.get<AoeCollider>(entity);
+        const glm::vec2 radii{collider.radius_x, collider.radius_y};
+        auto& locomotion = reg.get<AoeLocomotionState>(entity);
+        const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
+        const entt::entity ignored_squad =
+            ignored_formation_squad(reg, entity);
+        neighbors.clear();
+        if (map && map->valid() && dynamic &&
+            settings.steering_max_neighbors > 0) {
+            const float query_radius = std::max(
+                request.max_speed * settings.steering_prediction_seconds +
+                    settings.steering_separation_padding,
+                std::max(radii.x, radii.y) * 4.f);
+            dynamic->query(*map, position.value - glm::vec2(query_radius),
+                position.value + glm::vec2(query_radius),
+                [&](const AoeDynamicObstacleEntry& obstacle) {
+                    if (obstacle.entity == entity ||
+                        (ignored_squad != entt::null &&
+                         obstacle.squad == ignored_squad))
+                        return;
+                    const AoeSteeringNeighbor candidate{obstacle.entity,
+                        obstacle.instance_id, obstacle.center,
+                        obstacle.radii, obstacle.velocity};
+                    const glm::vec2 candidate_delta =
+                        obstacle.center - position.value;
+                    const float candidate_distance = glm::dot(
+                        candidate_delta, candidate_delta);
+                    const auto insertion = std::lower_bound(
+                        neighbors.begin(), neighbors.end(), candidate_distance,
+                        [&](const AoeSteeringNeighbor& value, float distance2) {
+                            const glm::vec2 delta =
+                                value.position - position.value;
+                            return glm::dot(delta, delta) < distance2;
+                        });
+                    neighbors.insert(insertion, candidate);
+                    if (neighbors.size() > settings.steering_max_neighbors)
+                        neighbors.pop_back();
+                });
+        }
+        int preferred_side = locomotion.avoidance_side;
+        if (const auto* member = reg.try_get<AoeSquadMember>(entity);
+            member && reg.valid(member->squad))
+            if (const auto* traffic =
+                    reg.try_get<AoeSquadTrafficState>(member->squad);
+                traffic && traffic->negotiated_side != 0)
+                preferred_side = traffic->negotiated_side;
+        bool threatened = false;
+        bool imminent = false;
+        std::uint64_t threat_signature = 1469598103934665603ull;
+        const float request_speed = glm::length(request.velocity);
+        const glm::vec2 request_direction = request_speed > Epsilon
+            ? request.velocity / request_speed : glm::vec2{0.f};
+        const auto heading_x = static_cast<std::int32_t>(
+            std::round(request_direction.x * 1024.f));
+        const auto heading_y = static_cast<std::int32_t>(
+            std::round(request_direction.y * 1024.f));
+        threat_signature ^= static_cast<std::uint32_t>(heading_x);
+        threat_signature *= 1099511628211ull;
+        threat_signature ^= static_cast<std::uint32_t>(heading_y);
+        threat_signature *= 1099511628211ull;
+        for (const auto& neighbor : neighbors) {
+            threat_signature ^= neighbor.instance_id;
+            threat_signature *= 1099511628211ull;
+            const glm::vec2 relative = neighbor.position - position.value;
+            const glm::vec2 relative_velocity =
+                request.velocity - neighbor.velocity;
+            const float speed2 = glm::dot(relative_velocity,
+                                          relative_velocity);
+            const float contact_time = speed2 > Epsilon
+                ? std::clamp(glm::dot(relative, relative_velocity) / speed2,
+                    0.f, settings.steering_prediction_seconds)
+                : 0.f;
+            const glm::vec2 closest = relative -
+                relative_velocity * contact_time;
+            const glm::vec2 combined = radii + neighbor.radii +
+                glm::vec2(settings.steering_separation_padding);
+            const float normalized = closest.x * closest.x /
+                    (combined.x * combined.x) +
+                closest.y * closest.y / (combined.y * combined.y);
+            threatened = threatened || normalized < 4.f;
+            if (normalized < 1.f && contact_time <=
+                    settings.steering_imminent_collision_seconds) {
+                imminent = true;
+            }
+        }
+        diagnostics.steering_neighbors_considered += neighbors.size();
+        AoeSteeringResult result{request.velocity};
+        const auto interval = std::max(
+            1u, settings.steering_full_solve_interval);
+        const bool cache_valid = locomotion.last_steering_tick != 0 &&
+            std::isfinite(locomotion.cached_target_velocity.x) &&
+            std::isfinite(locomotion.cached_target_velocity.y) &&
+            glm::dot(locomotion.cached_target_velocity,
+                     locomotion.cached_target_velocity) > Epsilon * Epsilon;
+        const bool cadence_due = !identity ||
+            ((tick + identity->instance_id) % interval == 0);
+        const bool signature_changed =
+            threat_signature != locomotion.threat_signature;
+        const bool full_solve = locomotion.escape_steering || !threatened ||
+            imminent || !cache_valid || signature_changed || cadence_due;
+        if (!full_solve) {
+            result.target_velocity = locomotion.cached_target_velocity;
+            result.avoidance_side = locomotion.avoidance_side;
+            result.threatened = true;
+            ++diagnostics.steering_cached_solves;
+        } else if (steering.contains(settings.steering_strategy_id)) {
+            result = steering.steer(settings.steering_strategy_id,
+                {entity, identity ? identity->instance_id : 0,
+                 position.value, radii, locomotion.velocity, request.velocity,
+                 request.local_goal, request.max_speed,
+                 settings.steering_prediction_seconds,
+                 settings.steering_separation_padding,
+                 map && map->valid() ? map : nullptr, neighbors,
+                 preferred_side,
+                 settings.steering_side_switch_margin +
+                     (locomotion.avoidance_side_hold_ticks > 0 && !imminent
+                          ? 2.f : 0.f),
+                 settings.steering_candidate_angle_step,
+                 locomotion.escape_steering
+                    ? settings.steering_escape_max_angle
+                    : settings.steering_normal_max_angle,
+                 settings.steering_minimum_safe_fraction});
+            locomotion.cached_target_velocity = result.target_velocity;
+            locomotion.last_steering_tick = tick;
+            locomotion.threat_signature = threat_signature;
+            if (locomotion.escape_steering)
+                ++diagnostics.steering_escape_solves;
+            if (imminent) ++diagnostics.steering_imminent_solves;
+            else if (threatened) ++diagnostics.steering_full_solves;
+            else ++diagnostics.steering_fast_path;
+        } else {
+            ++diagnostics.steering_fallbacks;
+        }
+        if (locomotion.avoidance_side_hold_ticks > 0)
+            --locomotion.avoidance_side_hold_ticks;
+        if (result.avoidance_side != 0 &&
+            result.avoidance_side != locomotion.avoidance_side) {
+            if (locomotion.avoidance_side != 0)
+                ++diagnostics.steering_side_switches;
+            locomotion.avoidance_side = static_cast<std::int8_t>(
+                result.avoidance_side);
+            locomotion.avoidance_side_hold_ticks =
+                static_cast<std::uint8_t>(std::min(
+                    settings.steering_side_hold_ticks,
+                    static_cast<std::uint32_t>(
+                        std::numeric_limits<std::uint8_t>::max())));
+        }
+        if (!std::isfinite(result.target_velocity.x) ||
+            !std::isfinite(result.target_velocity.y)) {
+            result.target_velocity = request.velocity;
+            ++diagnostics.steering_fallbacks;
+        }
+        reg.emplace_or_replace<AoeMovementIntent>(entity,
+            AoeMovementIntent{request.kind, result.target_velocity,
+                request.velocity, request.local_goal,
+                static_cast<std::uint32_t>(neighbors.size()),
+                static_cast<std::int8_t>(result.avoidance_side),
+                result.threatened,
+                result.infeasible, tick, true});
+    }
+}
+
+namespace {
+float unit_flow_radius(const AoeUnitFlowRecord& value) {
+    return std::max(value.radii.x, value.radii.y);
+}
+
+float relative_motion_safe_fraction(glm::vec2 relative_position,
+                                    glm::vec2 relative_displacement,
+                                    glm::vec2 combined_radii) {
+    if (!(combined_radii.x > Epsilon) || !(combined_radii.y > Epsilon))
+        return 1.f;
+    const float rx2 = combined_radii.x * combined_radii.x;
+    const float ry2 = combined_radii.y * combined_radii.y;
+    const float c = relative_position.x * relative_position.x / rx2 +
+                    relative_position.y * relative_position.y / ry2 - 1.f;
+    if (c <= 0.f) {
+        // Use the ellipse gradient here, matching the contact projection in
+        // unit_flow_tick. A plain world-space dot product gives the wrong
+        // entering/leaving answer for non-circular colliders.
+        const float radial_displacement =
+            relative_position.x * relative_displacement.x / rx2 +
+            relative_position.y * relative_displacement.y / ry2;
+        return radial_displacement >= 0.f
+            ? 1.f : 0.f;
+    }
+    const float a = relative_displacement.x * relative_displacement.x / rx2 +
+                    relative_displacement.y * relative_displacement.y / ry2;
+    if (!(a > Epsilon)) return 1.f;
+    const float b = 2.f *
+        (relative_position.x * relative_displacement.x / rx2 +
+         relative_position.y * relative_displacement.y / ry2);
+    const float discriminant = b * b - 4.f * a * c;
+    if (discriminant < 0.f) return 1.f;
+    const float enter = (-b - std::sqrt(discriminant)) / (2.f * a);
+    return enter >= 0.f && enter <= 1.f
+        ? std::max(0.f, enter - .0001f) : 1.f;
+}
+} // namespace
+
+void unit_flow_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    world.resource_or_add<AoeNavigationSettings>();
+    world.resource_or_add<AoeGameplayDiagnostics>();
+    world.resource_or_add<AoeUnitFlowIndex>();
+    const auto& settings = world.resource<AoeNavigationSettings>();
+    const float fixed_dt = static_cast<float>(
+        world.resource<AoeGameplaySettings>().fixed_dt);
+    auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
+    auto& index = world.resource<AoeUnitFlowIndex>();
+    index.records.clear();
+    index.candidates.clear();
+    index.selected.clear();
+    index.maximum_reach = 0.f;
+    for (const auto entity : reg.view<AoeGlobalMotionDecision>())
+        reg.get<AoeGlobalMotionDecision>(entity).valid = false;
+    const auto acceleration_limited = [&](entt::entity entity,
+                                          glm::vec2 velocity) {
+        const float target_speed = glm::length(velocity);
+        const auto* locomotion = reg.try_get<AoeLocomotionState>(entity);
+        const float current_speed = locomotion
+            ? glm::length(locomotion->velocity) : 0.f;
+        const float change = std::max(0.f,
+            settings.steering_max_acceleration) * fixed_dt;
+        const float speed = current_speed < target_speed
+            ? std::min(target_speed, current_speed + change)
+            : std::max(target_speed, current_speed - change);
+        return target_speed > Epsilon
+            ? velocity * (speed / target_speed) : glm::vec2{0.f};
+    };
+    for (const auto entity : reg.view<AoeMovementIntent, AoePosition,
+                                      AoeCollider, AoeGameplayIdentity,
+                                      AoeTeam>()) {
+        const auto& intent = reg.get<AoeMovementIntent>(entity);
+        if (!intent.valid || intent.produced_tick != tick) continue;
+        const auto& collider = reg.get<AoeCollider>(entity);
+        entt::entity squad = entt::null;
+        if (const auto* member = reg.try_get<AoeSquadMember>(entity))
+            squad = member->squad;
+        index.records.push_back({entity,
+            reg.get<AoeGameplayIdentity>(entity).instance_id, squad,
+            reg.get<AoeTeam>(entity).id, intent.kind,
+            reg.get<AoePosition>(entity).value,
+            {collider.radius_x, collider.radius_y}, intent.velocity});
+        index.maximum_reach = std::max(index.maximum_reach,
+            unit_flow_radius(index.records.back()) +
+            glm::length(intent.velocity) * settings.unit_flow_prediction_seconds);
+        (void)reg.get_or_emplace<AoeGlobalMotionState>(entity);
+        reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
+            AoeGlobalMotionDecision{.velocity = intent.velocity,
+                .produced_tick = tick, .valid = true});
+        if (intent.locally_infeasible)
+            ++diagnostics.flow_infeasible_assignments;
+    }
+    diagnostics.flow_active_intents += index.records.size();
+    if (!settings.unit_flow_enabled) {
+        for (const auto& record : index.records) {
+            auto& decision = reg.get<AoeGlobalMotionDecision>(record.entity);
+            decision.velocity = acceleration_limited(
+                record.entity, decision.velocity);
+        }
+        return;
+    }
+    std::sort(index.records.begin(), index.records.end(),
+        [](const AoeUnitFlowRecord& a, const AoeUnitFlowRecord& b) {
+            if (std::abs(a.position.x - b.position.x) > Epsilon)
+                return a.position.x < b.position.x;
+            return a.instance_id < b.instance_id;
+        });
+    for (std::size_t i = 0; i < index.records.size(); ++i)
+        for (std::size_t j = i + 1; j < index.records.size(); ++j) {
+            const auto& a = index.records[i];
+            const auto& b = index.records[j];
+            const float reach = unit_flow_radius(a) +
+                glm::length(a.intent_velocity) *
+                    settings.unit_flow_prediction_seconds;
+            if (b.position.x - a.position.x > reach + index.maximum_reach)
+                break;
+            const glm::vec2 relative = b.position - a.position;
+            const glm::vec2 relative_velocity =
+                a.intent_velocity - b.intent_velocity;
+            const float relative_speed2 = glm::dot(
+                relative_velocity, relative_velocity);
+            const float time = relative_speed2 > Epsilon
+                ? std::clamp(glm::dot(relative, relative_velocity) /
+                                 relative_speed2,
+                             0.f, settings.unit_flow_prediction_seconds)
+                : 0.f;
+            const float closest = glm::length(
+                relative - relative_velocity * time);
+            const float clearance = unit_flow_radius(a) +
+                unit_flow_radius(b) + settings.unit_flow_follow_gap;
+            if (closest > clearance) continue;
+            index.candidates.push_back({i, j, time, closest});
+        }
+    std::sort(index.candidates.begin(), index.candidates.end(),
+        [&](const AoeUnitFlowConflict& a,
+            const AoeUnitFlowConflict& b) {
+            if (std::abs(a.time_to_collision - b.time_to_collision) > Epsilon)
+                return a.time_to_collision < b.time_to_collision;
+            if (std::abs(a.closest_distance - b.closest_distance) > Epsilon)
+                return a.closest_distance < b.closest_distance;
+            const auto aid = index.records[a.a].instance_id ^
+                             index.records[a.b].instance_id;
+            const auto bid = index.records[b.a].instance_id ^
+                             index.records[b.b].instance_id;
+            return aid < bid;
+        });
+    std::vector<std::uint32_t> selected_count(index.records.size(), 0);
+    std::vector<std::uint32_t> candidate_count(index.records.size(), 0);
+    for (const auto& edge : index.candidates) {
+        ++candidate_count[edge.a];
+        ++candidate_count[edge.b];
+        if (selected_count[edge.a] >= settings.unit_flow_max_neighbors ||
+            selected_count[edge.b] >= settings.unit_flow_max_neighbors)
+            continue;
+        index.selected.push_back(edge);
+        ++selected_count[edge.a];
+        ++selected_count[edge.b];
+    }
+    diagnostics.flow_neighbor_checks += index.candidates.size();
+    diagnostics.flow_conflicts += index.selected.size();
+
+    index.parents.resize(index.records.size());
+    index.ranks.assign(index.records.size(), 0);
+    for (std::size_t i = 0; i < index.parents.size(); ++i)
+        index.parents[i] = i;
+    const auto find_root = [&](std::size_t value) {
+        std::size_t root = value;
+        while (index.parents[root] != root) root = index.parents[root];
+        while (index.parents[value] != value) {
+            const auto next = index.parents[value];
+            index.parents[value] = root;
+            value = next;
+        }
+        return root;
+    };
+    for (const auto& edge : index.selected) {
+        auto a = find_root(edge.a);
+        auto b = find_root(edge.b);
+        if (a == b) continue;
+        if (index.ranks[a] < index.ranks[b]) std::swap(a, b);
+        index.parents[b] = a;
+        if (index.ranks[a] == index.ranks[b]) ++index.ranks[a];
+    }
+    std::unordered_map<std::size_t, std::uint32_t> groups;
+    std::uint32_t next_group = 1;
+    std::vector<glm::vec2> lateral(index.records.size(), glm::vec2{0.f});
+    std::vector<float> speed_scale(index.records.size(), 1.f);
+    std::vector<AoeGlobalMotionMode> modes(
+        index.records.size(), AoeGlobalMotionMode::Clear);
+    std::vector<AoeMotionDecisionReason> reasons(
+        index.records.size(), AoeMotionDecisionReason::None);
+    std::vector<std::int8_t> sides(index.records.size(), 0);
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const auto side_open = [&](const AoeUnitFlowRecord& record, int side) {
+        if (!map || !map->valid()) return true;
+        const float speed = glm::length(record.intent_velocity);
+        if (!(speed > Epsilon)) return false;
+        const glm::vec2 direction = record.intent_velocity / speed;
+        const glm::vec2 right{direction.y, -direction.x};
+        const glm::vec2 offset = right * settings.unit_flow_lateral_clearance *
+            (side < 0 ? 1.f : -1.f);
+        return map->static_safe_fraction(record.position,
+            record.position + offset, record.radii) >= 1.f - Epsilon;
+    };
+    const auto add_side = [&](std::size_t index_value, int preferred,
+                              AoeGlobalMotionMode mode,
+                              AoeMotionDecisionReason reason) {
+        const auto& record = index.records[index_value];
+        const float speed = glm::length(record.intent_velocity);
+        if (!(speed > Epsilon)) return false;
+        int side = preferred;
+        if (!side_open(record, side)) side = -side;
+        if (!side_open(record, side)) {
+            speed_scale[index_value] = std::min(speed_scale[index_value],
+                settings.unit_flow_yield_speed_scale);
+            modes[index_value] = AoeGlobalMotionMode::Yielding;
+            reasons[index_value] = AoeMotionDecisionReason::SideBlocked;
+            return false;
+        }
+        const glm::vec2 direction = record.intent_velocity / speed;
+        const glm::vec2 right{direction.y, -direction.x};
+        lateral[index_value] += right * (side < 0 ? 1.f : -1.f);
+        modes[index_value] = mode;
+        reasons[index_value] = reason;
+        sides[index_value] = static_cast<std::int8_t>(side);
+        return true;
+    };
+    const auto yield_to = [&](std::size_t yielding, std::size_t priority,
+                              AoeMotionDecisionReason reason) {
+        speed_scale[yielding] = std::min(speed_scale[yielding],
+            settings.unit_flow_yield_speed_scale);
+        modes[yielding] = AoeGlobalMotionMode::Yielding;
+        reasons[yielding] = reason;
+        auto& decision = reg.get<AoeGlobalMotionDecision>(
+            index.records[yielding].entity);
+        decision.yielding_to = index.records[priority].entity;
+        decision.yielding_to_instance = index.records[priority].instance_id;
+    };
+
+    // Every selected edge contributes one constraint. Accumulating all of
+    // them before normalizing the result handles a connected traffic group
+    // without pretending that repeated passes are an iterative solver.
+    for (const auto& edge : index.selected) {
+        const auto& a = index.records[edge.a];
+        const auto& b = index.records[edge.b];
+        const float speed_a = glm::length(a.intent_velocity);
+        const float speed_b = glm::length(b.intent_velocity);
+        if (!(speed_a > Epsilon) || !(speed_b > Epsilon)) continue;
+        const glm::vec2 dir_a = a.intent_velocity / speed_a;
+        const glm::vec2 dir_b = b.intent_velocity / speed_b;
+        const float alignment = glm::dot(dir_a, dir_b);
+        const float speed_difference = std::abs(speed_a - speed_b);
+        const bool same_speed = speed_difference <=
+            std::max(settings.unit_flow_same_speed_absolute,
+                std::max(speed_a, speed_b) *
+                    settings.unit_flow_same_speed_relative);
+        auto& state_a = reg.get<AoeGlobalMotionState>(a.entity);
+        auto& state_b = reg.get<AoeGlobalMotionState>(b.entity);
+        bool a_priority = speed_a > speed_b;
+        if (same_speed) {
+            if (state_a.wait_ticks != state_b.wait_ticks &&
+                std::max(state_a.wait_ticks, state_b.wait_ticks) >=
+                    settings.unit_flow_starvation_ticks) {
+                a_priority = state_a.wait_ticks > state_b.wait_ticks;
+                ++diagnostics.flow_starvation_promotions;
+            } else
+                a_priority = a.instance_id < b.instance_id;
+        }
+        if (alignment <= settings.unit_flow_head_on_dot) {
+            // Negotiate one shared passing convention for the edge. A
+            // unilateral side flip would put both opposite-facing units
+            // into the same world-space lane.
+            if (side_open(a, -1) && side_open(b, -1)) {
+                add_side(edge.a, -1, AoeGlobalMotionMode::PassingRight,
+                         AoeMotionDecisionReason::HeadOnTraffic);
+                add_side(edge.b, -1, AoeGlobalMotionMode::PassingRight,
+                         AoeMotionDecisionReason::HeadOnTraffic);
+            } else if (side_open(a, 1) && side_open(b, 1)) {
+                add_side(edge.a, 1, AoeGlobalMotionMode::PassingLeft,
+                         AoeMotionDecisionReason::HeadOnTraffic);
+                add_side(edge.b, 1, AoeGlobalMotionMode::PassingLeft,
+                         AoeMotionDecisionReason::HeadOnTraffic);
+            } else {
+                yield_to(a_priority ? edge.b : edge.a,
+                         a_priority ? edge.a : edge.b,
+                         AoeMotionDecisionReason::SideBlocked);
+            }
+        } else if (alignment >= settings.unit_flow_same_direction_dot &&
+                   same_speed) {
+            const float collision_distance =
+                unit_flow_radius(a) + unit_flow_radius(b);
+            if (edge.closest_distance <= collision_distance + Epsilon) {
+                const glm::vec2 right{dir_a.y, -dir_a.x};
+                const float lateral_separation = glm::dot(
+                    b.position - a.position, right);
+                const int separation_side =
+                    std::abs(lateral_separation) > Epsilon
+                    ? (lateral_separation > 0.f ? 1 : -1)
+                    : (a_priority ? -1 : 1);
+                add_side(edge.a, separation_side,
+                    AoeGlobalMotionMode::SideStep,
+                    AoeMotionDecisionReason::SameDirectionConflict);
+                add_side(edge.b, -separation_side,
+                    AoeGlobalMotionMode::SideStep,
+                    AoeMotionDecisionReason::SameDirectionConflict);
+            }
+        } else {
+            const std::size_t yielding = a_priority ? edge.b : edge.a;
+            const std::size_t priority = a_priority ? edge.a : edge.b;
+            const auto reason = alignment >=
+                    settings.unit_flow_same_direction_dot
+                ? AoeMotionDecisionReason::FasterTraffic
+                : AoeMotionDecisionReason::CrossingTraffic;
+            if (add_side(yielding, -1,
+                         AoeGlobalMotionMode::SideStep, reason)) {
+                auto& decision = reg.get<AoeGlobalMotionDecision>(
+                    index.records[yielding].entity);
+                decision.yielding_to = index.records[priority].entity;
+                decision.yielding_to_instance =
+                    index.records[priority].instance_id;
+            } else {
+                yield_to(yielding, priority,
+                         AoeMotionDecisionReason::SideBlocked);
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < index.records.size(); ++i) {
+        const auto& record = index.records[i];
+        auto& decision = reg.get<AoeGlobalMotionDecision>(record.entity);
+        auto& state = reg.get<AoeGlobalMotionState>(record.entity);
+        const float speed = glm::length(record.intent_velocity);
+        if (glm::length(lateral[i]) > Epsilon && speed > Epsilon) {
+            const glm::vec2 direction = record.intent_velocity / speed;
+            decision.velocity = glm::normalize(direction +
+                glm::normalize(lateral[i]) * settings.unit_flow_lateral_bias) *
+                speed * speed_scale[i];
+        } else {
+            decision.velocity = record.intent_velocity * speed_scale[i];
+        }
+        decision.mode = modes[i];
+        decision.reason = reasons[i];
+        decision.selected_conflicts = selected_count[i];
+        decision.candidate_count = candidate_count[i];
+        const auto root = find_root(i);
+        auto [group_it, inserted] = groups.emplace(root, next_group);
+        if (inserted) ++next_group;
+        decision.conflict_group = selected_count[i] > 0 ? group_it->second : 0;
+        decision.nearest_time_to_collision =
+            settings.unit_flow_prediction_seconds;
+        for (const auto& edge : index.selected)
+            if (edge.a == i || edge.b == i) {
+                decision.nearest_time_to_collision = std::min(
+                    decision.nearest_time_to_collision,
+                    edge.time_to_collision);
+                if (state.peer == entt::null ||
+                    edge.time_to_collision <=
+                        decision.nearest_time_to_collision + Epsilon) {
+                    const auto peer_index = edge.a == i ? edge.b : edge.a;
+                    state.peer = index.records[peer_index].entity;
+                    state.peer_instance_id =
+                        index.records[peer_index].instance_id;
+                }
+            }
+        if (selected_count[i] == 0) {
+            state.peer = entt::null;
+            state.peer_instance_id = 0;
+            if (tick > state.last_conflict_tick +
+                    settings.unit_flow_backing_cooldown_ticks) {
+                state.backing_ticks = 0;
+                state.backing_distance = 0.f;
+            }
+        }
+        const auto* locomotion = reg.try_get<AoeLocomotionState>(record.entity);
+        const bool stopped = locomotion && locomotion->actual_speed <=
+            settings.steering_stalled_speed;
+        if (decision.mode != AoeGlobalMotionMode::Clear && stopped)
+            ++state.wait_ticks;
+        else if (decision.mode == AoeGlobalMotionMode::Clear)
+            state.wait_ticks = 0;
+        const float maximum_backing_distance =
+            2.f * unit_flow_radius(record) *
+            settings.unit_flow_backing_max_diameters;
+        const bool backing_available =
+            state.backing_ticks < settings.unit_flow_backing_max_ticks &&
+            state.backing_distance + Epsilon < maximum_backing_distance;
+        if (!backing_available && state.backing_ticks > 0 &&
+            tick > state.last_backing_tick +
+                settings.unit_flow_backing_cooldown_ticks) {
+            state.backing_ticks = 0;
+            state.backing_distance = 0.f;
+        }
+        const bool traffic_deadlock = selected_count[i] > 0 &&
+            (decision.mode != AoeGlobalMotionMode::Clear ||
+             state.mode != AoeGlobalMotionMode::Clear);
+        if (traffic_deadlock &&
+            state.wait_ticks >= settings.unit_flow_backing_threshold_ticks &&
+            state.backing_ticks < settings.unit_flow_backing_max_ticks &&
+            state.backing_distance + Epsilon < maximum_backing_distance) {
+            const glm::vec2 backward = speed > Epsilon
+                ? -record.intent_velocity / speed : glm::vec2{0.f};
+            const float distance = 2.f * unit_flow_radius(record);
+            if (!map || !map->valid() || map->static_safe_fraction(
+                    record.position, record.position + backward * distance,
+                    record.radii) >= 1.f - Epsilon) {
+                decision.velocity = backward * speed *
+                    settings.unit_flow_backing_speed_scale;
+                decision.mode = AoeGlobalMotionMode::Backing;
+                decision.reason = AoeMotionDecisionReason::DeadlockEscape;
+                state.last_backing_tick = tick;
+                ++diagnostics.flow_deadlock_escalations;
+            }
+        }
+        decision.wait_ticks = state.wait_ticks;
+        diagnostics.flow_wait_ticks += state.wait_ticks;
+        decision.velocity = acceleration_limited(
+            record.entity, decision.velocity);
+        state.mode = decision.mode;
+        state.negotiated_side = sides[i];
+        state.last_conflict_tick = selected_count[i] > 0
+            ? tick : state.last_conflict_tick;
+        switch (decision.mode) {
+        case AoeGlobalMotionMode::SideStep: ++diagnostics.flow_following; break;
+        case AoeGlobalMotionMode::PassingLeft:
+        case AoeGlobalMotionMode::PassingRight: ++diagnostics.flow_passing; break;
+        case AoeGlobalMotionMode::Yielding: ++diagnostics.flow_yielding; break;
+        case AoeGlobalMotionMode::Backing: ++diagnostics.flow_backing; break;
+        case AoeGlobalMotionMode::Recovering: ++diagnostics.flow_recovering; break;
+        case AoeGlobalMotionMode::Clear: break;
+        }
+    }
+
+    // Project the complete conflict group's velocities onto the contact
+    // constraints. Pair-policy lateral choices alone can cancel in a dense
+    // group (one neighbor above and another below); the projection resolves
+    // all current overlaps together before the safety-only clipping stage.
+    std::vector<float> velocity_caps(index.records.size(), 0.f);
+    for (std::size_t i = 0; i < index.records.size(); ++i)
+        velocity_caps[i] = glm::length(acceleration_limited(
+            index.records[i].entity, index.records[i].intent_velocity));
+    const float recovery_seconds = std::max(
+        fixed_dt, settings.unit_flow_overlap_recovery_seconds);
+    for (std::uint32_t iteration = 0;
+         iteration < std::max(1u, settings.unit_flow_solver_iterations);
+         ++iteration) {
+        for (const auto& edge : index.selected) {
+            const auto& a = index.records[edge.a];
+            const auto& b = index.records[edge.b];
+            const glm::vec2 combined = a.radii + b.radii;
+            if (!(combined.x > Epsilon) || !(combined.y > Epsilon))
+                continue;
+            const glm::vec2 relative = a.position - b.position;
+            const glm::vec2 scaled{relative.x / combined.x,
+                                   relative.y / combined.y};
+            const float normalized_distance = glm::length(scaled);
+            // Safety treats a pair on the contact boundary as blocked when
+            // its relative velocity enters the other collider. Project those
+            // shallow/contact cases too; skipping them leaves an approaching
+            // velocity for safety to reduce to zero forever.
+            if (normalized_distance > 1.f + Epsilon) continue;
+            glm::vec2 normal{relative.x / (combined.x * combined.x),
+                             relative.y / (combined.y * combined.y)};
+            const float normal_length = glm::length(normal);
+            if (!(normal_length > Epsilon)) {
+                const auto parity = a.instance_id < b.instance_id ? 1.f : -1.f;
+                normal = {parity, 0.f};
+            } else {
+                normal /= normal_length;
+            }
+            auto& decision_a = reg.get<AoeGlobalMotionDecision>(a.entity);
+            auto& decision_b = reg.get<AoeGlobalMotionDecision>(b.entity);
+            const float cap_a = velocity_caps[edge.a];
+            const float cap_b = velocity_caps[edge.b];
+            const float penetration = std::max(0.f,
+                1.f - normalized_distance);
+            const float separation_speed = std::min(cap_a + cap_b,
+                penetration *
+                    std::min(combined.x, combined.y) / recovery_seconds);
+            const float current_separation = glm::dot(
+                normal, decision_a.velocity - decision_b.velocity);
+            if (current_separation + Epsilon >= separation_speed) continue;
+            const float correction = separation_speed - current_separation;
+            const float intent_a = glm::length(a.intent_velocity);
+            const float intent_b = glm::length(b.intent_velocity);
+            const bool same_speed = std::abs(intent_a - intent_b) <=
+                std::max(settings.unit_flow_same_speed_absolute,
+                    std::max(intent_a, intent_b) *
+                        settings.unit_flow_same_speed_relative);
+            if (same_speed) {
+                decision_a.velocity += normal * (correction * .5f);
+                decision_b.velocity -= normal * (correction * .5f);
+            } else if (intent_a < intent_b) {
+                decision_a.velocity += normal * correction;
+            } else {
+                decision_b.velocity -= normal * correction;
+            }
+            ++diagnostics.flow_overlap_projections;
+        }
+    }
+    // Scale every member of a connected conflict group by the same factor.
+    // Independent per-unit clamps can turn a separating relative velocity
+    // back into an approaching one; a common factor preserves every projected
+    // pair constraint while respecting the strictest member's speed cap.
+    std::vector<float> group_scale(index.records.size(), 1.f);
+    for (std::size_t i = 0; i < index.records.size(); ++i) {
+        const float speed = glm::length(
+            reg.get<AoeGlobalMotionDecision>(index.records[i].entity).velocity);
+        if (speed <= velocity_caps[i] + Epsilon || !(speed > Epsilon))
+            continue;
+        const auto root = find_root(i);
+        group_scale[root] = std::min(
+            group_scale[root], velocity_caps[i] / speed);
+    }
+    for (std::size_t i = 0; i < index.records.size(); ++i)
+        reg.get<AoeGlobalMotionDecision>(index.records[i].entity).velocity *=
+            group_scale[find_root(i)];
+}
+
+void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    const float dt = static_cast<float>(
+        world.resource<AoeGameplaySettings>().fixed_dt);
+    auto& index = world.resource_or_add<AoeUnitFlowIndex>();
+    const auto* map = world.try_resource<AoeLogicMap>();
+    for (const auto& record : index.records) {
+        auto& decision = reg.get<AoeGlobalMotionDecision>(record.entity);
+        if (!decision.valid || decision.produced_tick != tick) continue;
+        decision.static_safe_fraction = map && map->valid()
+            ? map->static_safe_fraction(record.position,
+                record.position + decision.velocity * dt, record.radii)
+            : 1.f;
+        decision.dynamic_safe_fraction = 1.f;
+    }
+    for (const auto& edge : index.candidates) {
+        const auto& a = index.records[edge.a];
+        const auto& b = index.records[edge.b];
+        auto& decision_a = reg.get<AoeGlobalMotionDecision>(a.entity);
+        auto& decision_b = reg.get<AoeGlobalMotionDecision>(b.entity);
+        const float safe = relative_motion_safe_fraction(
+            a.position - b.position,
+            (decision_a.velocity - decision_b.velocity) * dt,
+            a.radii + b.radii);
+        decision_a.dynamic_safe_fraction = std::min(
+            decision_a.dynamic_safe_fraction, safe);
+        decision_b.dynamic_safe_fraction = std::min(
+            decision_b.dynamic_safe_fraction, safe);
+    }
+    for (const auto& record : index.records) {
+        auto& decision = reg.get<AoeGlobalMotionDecision>(record.entity);
+        decision.safe_fraction = std::min(decision.static_safe_fraction,
+                                          decision.dynamic_safe_fraction);
+        if (decision.safe_fraction < 1.f - Epsilon) {
+            if (decision.static_safe_fraction <=
+                decision.dynamic_safe_fraction + Epsilon)
+                decision.stop_reason =
+                    AoeMotionStopReason::StaticSafetyClipped;
+            else
+                decision.stop_reason =
+                    AoeMotionStopReason::DynamicSafetyClipped;
+        } else if (decision.mode == AoeGlobalMotionMode::Yielding) {
+            decision.stop_reason = AoeMotionStopReason::GlobalYield;
+        }
+    }
+}
+
+
 void movement_tick(EcsWorld& world, std::uint64_t tick) {
     GLD_PERF_TIME_POINT(movement_started);
     auto& reg = world.reg();
-    const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
-    {
-        auto& steering = world.resource_or_add<AoeSteeringRegistry>();
-        if (!steering.contains("local_default"))
-            steering.bind<DefaultLocalSteeringLogic>("local_default");
-    }
-    // EcsWorld resource insertion can relocate its type-erased storage. Take
-    // long-lived references only after all resources needed by this tick have
-    // been materialized.
-    world.resource_or_add<Events<AoeNavigationEvent>>();
-    world.resource_or_add<AoeGameplayDiagnostics>();
-    world.resource_or_add<AoeCrowdSteeringScratch>();
+    const auto& settings = world.resource<AoeGameplaySettings>();
     const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
-    const auto& steering = world.resource<AoeSteeringRegistry>();
-#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
-    auto& performance =
-        world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
-#endif
+    const float dt = static_cast<float>(settings.fixed_dt);
+    auto& diagnostics = world.resource_or_add<AoeGameplayDiagnostics>();
+    std::vector<entt::entity> arrived;
+
     for (const auto entity : reg.view<AoeLocomotionState>()) {
         auto& locomotion = reg.get<AoeLocomotionState>(entity);
         locomotion.previous_velocity = locomotion.velocity;
         locomotion.effective_max_speed = 0.f;
         locomotion.actual_speed = 0.f;
     }
-    auto& scratch = world.resource<AoeCrowdSteeringScratch>();
-    auto& arrived = scratch.arrived;
-    auto& neighbors = scratch.nearest_neighbors;
-    arrived.clear();
-    neighbors.clear();
-    neighbors.reserve(navigation.steering_max_neighbors + 1u);
-    for (auto entity : reg.view<AoePosition, AoeCollider, AoeMovement, AoeMoveGoal,
-                                AoeNavigationPath, AoeActionState, AoeFacing>()) {
+    for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMovement,
+                                      AoeMoveGoal, AoeNavigationPath,
+                                      AoeActionState, AoeFacing>()) {
         auto& locomotion = reg.get_or_emplace<AoeLocomotionState>(entity);
         auto& state = reg.get<AoeActionState>(entity);
+        auto& path = reg.get<AoeNavigationPath>(entity);
         if (state.state == UnitState::Attacking || is_terminal(state.state)) {
             locomotion.velocity = {0.f, 0.f};
             locomotion.stalled_ticks = 0;
             locomotion.escape_steering = false;
             continue;
         }
-        auto& goal = reg.get<AoeMoveGoal>(entity);
-        auto& path = reg.get<AoeNavigationPath>(entity);
         if (path.no_path) {
             locomotion.velocity = {0.f, 0.f};
             ++locomotion.stalled_ticks;
-            locomotion.escape_steering = locomotion.stalled_ticks >=
-                std::max(1u, navigation.steering_escape_stalled_ticks);
+            if (auto* decision =
+                    reg.try_get<AoeGlobalMotionDecision>(entity))
+                decision->stop_reason = AoeMotionStopReason::NoPath;
             continue;
         }
+        auto& goal = reg.get<AoeMoveGoal>(entity);
         if (goal.target.entity != entt::null) {
-            if (!target_valid(reg, goal.target)) { arrived.push_back(entity); continue; }
+            if (!target_valid(reg, goal.target)) {
+                arrived.push_back(entity);
+                continue;
+            }
             goal.destination = reg.all_of<AoeEngagementApproach>(entity)
-                ? attack_approach_destination(reg, entity, goal.target)
+                ? attack_approach_destination(world, entity, goal.target)
                 : reg.get<AoePosition>(goal.target.entity).value;
         }
-        if (path.waypoints.empty() || path.current >= path.waypoints.size()) {
+        if (path.current >= path.waypoints.size()) {
             arrived.push_back(entity);
             continue;
         }
         auto& position = reg.get<AoePosition>(entity);
-        glm::vec2 delta = path.waypoints[path.current] - position.value;
+        const glm::vec2 delta = path.waypoints[path.current] - position.value;
         const float distance = glm::length(delta);
-        bool reached = distance <= .01f;
-        float remaining = distance;
         const bool final_waypoint = path.current + 1 >= path.waypoints.size();
+        bool reached = distance <= .01f;
         if (goal.target.entity != entt::null && final_waypoint && !reached) {
-            remaining = std::max(0.f, aoe_surface_gap(position, reg.get<AoeCollider>(entity),
-                reg.get<AoePosition>(goal.target.entity), reg.get<AoeCollider>(goal.target.entity)) -
-                goal.stopping_distance);
-            reached = remaining <= Epsilon;
+            reached = aoe_surface_gap(position, reg.get<AoeCollider>(entity),
+                reg.get<AoePosition>(goal.target.entity),
+                reg.get<AoeCollider>(goal.target.entity)) <=
+                goal.stopping_distance + Epsilon;
         }
-        if (!reached) {
-            const glm::vec2 preferred_direction = delta / distance;
-            const float base_speed = reg.get<AoeMovement>(entity).speed;
-            float speed = base_speed;
-            const auto* squad_limit =
-                reg.try_get<AoeSquadMoveSpeedLimit>(entity);
-            if (squad_limit) speed = std::min(speed, squad_limit->value);
-            locomotion.effective_max_speed = speed;
-            GLD_PERF_MONITOR(
-                ++performance.movement_speed_samples;
-                performance.movement_base_speed_sum += base_speed;
-                performance.movement_effective_speed_sum += speed;
-                if (squad_limit && speed + Epsilon < base_speed)
-                    ++performance.movement_squad_limited;
-            );
-            // Arrive instead of orbiting a final point. With a persistent
-            // heading, full speed all the way to an epsilon-sized target can
-            // repeatedly overshoot it, especially after a sharp A* corner.
-            float desired_speed = std::min(speed, remaining / .25f);
-            GLD_PERF_MONITOR(
-                if (desired_speed + Epsilon < speed)
-                    ++performance.movement_arrive_limited;
-            );
-            if (glm::length(locomotion.velocity) > Epsilon) {
-                const float alignment = glm::dot(
-                    glm::normalize(locomotion.velocity), preferred_direction);
-                // Turn in place at a reduced pace instead of carrying full
-                // tangential speed around a sharp waypoint indefinitely.
-                const float turn_scale = std::clamp(
-                    (alignment + .25f) / 1.25f, .1f, 1.f);
-                desired_speed *= turn_scale;
-                GLD_PERF_MONITOR(
-                    if (turn_scale < 1.f - Epsilon)
-                        ++performance.movement_turn_limited;
-                );
-            }
-            GLD_PERF_MONITOR(
-                performance.movement_desired_speed_sum += desired_speed;
-            );
-            const glm::vec2 preferred_velocity =
-                preferred_direction * desired_speed;
-            const auto& collider = reg.get<AoeCollider>(entity);
-            const glm::vec2 radii{collider.radius_x, collider.radius_y};
-            const auto* map = world.try_resource<AoeLogicMap>();
-            const auto* dynamic = world.try_resource<AoeDynamicObstacleIndex>();
-            const entt::entity ignored_squad =
-                ignored_formation_squad(reg, entity);
-            neighbors.clear();
-            if (map && map->valid() && dynamic &&
-                dynamic->entries().size() > 1 &&
-                navigation.steering_max_neighbors > 0) {
-                const float query_radius = std::max(
-                    speed * navigation.steering_prediction_seconds +
-                        navigation.steering_separation_padding,
-                    std::max(radii.x, radii.y) * 4.f);
-                dynamic->query(*map, position.value - glm::vec2(query_radius),
-                    position.value + glm::vec2(query_radius),
-                    [&](const AoeDynamicObstacleEntry& obstacle) {
-                        if (obstacle.entity == entity ||
-                            (ignored_squad != entt::null &&
-                             obstacle.squad == ignored_squad))
-                            return;
-                        const AoeSteeringNeighbor candidate{obstacle.entity,
-                            obstacle.instance_id, obstacle.center,
-                            obstacle.radii, obstacle.velocity};
-                        const auto insertion = std::lower_bound(
-                            neighbors.begin(), neighbors.end(), candidate,
-                            [&](const AoeSteeringNeighbor& existing,
-                                const AoeSteeringNeighbor& value) {
-                                const auto relevance = [&](const auto& item) {
-                                    const glm::vec2 delta =
-                                        item.position - position.value;
-                                    const glm::vec2 combined = radii +
-                                        item.radii + glm::vec2(Epsilon);
-                                    return delta.x * delta.x /
-                                               (combined.x * combined.x) +
-                                           delta.y * delta.y /
-                                               (combined.y * combined.y);
-                                };
-                                const float existing_distance = relevance(existing);
-                                const float value_distance = relevance(value);
-                                if (std::abs(existing_distance - value_distance) >
-                                    Epsilon)
-                                    return existing_distance < value_distance;
-                                return existing.instance_id < value.instance_id;
-                            });
-                        if (insertion == neighbors.end() &&
-                            neighbors.size() >= navigation.steering_max_neighbors)
-                            return;
-                        neighbors.insert(insertion, candidate);
-                        if (neighbors.size() > navigation.steering_max_neighbors)
-                            neighbors.pop_back();
-                    });
-            }
-            const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
-            auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
-            diagnostics.steering_neighbors_considered += neighbors.size();
-            bool threatened = false;
-            bool imminent = false;
-            std::uint64_t threat_signature = 1469598103934665603ull;
-            const auto heading_x = static_cast<std::int32_t>(
-                std::round(preferred_direction.x * 1024.f));
-            const auto heading_y = static_cast<std::int32_t>(
-                std::round(preferred_direction.y * 1024.f));
-            threat_signature ^= static_cast<std::uint32_t>(heading_x);
-            threat_signature *= 1099511628211ull;
-            threat_signature ^= static_cast<std::uint32_t>(heading_y);
-            threat_signature *= 1099511628211ull;
-            for (const auto& neighbor : neighbors) {
-                threat_signature ^= neighbor.instance_id;
-                threat_signature *= 1099511628211ull;
-                const glm::vec2 relative_position =
-                    neighbor.position - position.value;
-                const glm::vec2 relative_velocity =
-                    preferred_velocity - neighbor.velocity;
-                const float relative_speed2 = glm::dot(
-                    relative_velocity, relative_velocity);
-                const float closest_time = relative_speed2 > Epsilon
-                    ? std::clamp(glm::dot(relative_position, relative_velocity) /
-                                     relative_speed2,
-                                 0.f,
-                                 navigation.steering_prediction_seconds)
-                    : 0.f;
-                const glm::vec2 closest = relative_position -
-                    relative_velocity * closest_time;
-                const glm::vec2 combined = radii + neighbor.radii +
-                    glm::vec2(std::max(0.f,
-                        navigation.steering_separation_padding));
-                const float normalized2 =
-                    closest.x * closest.x / (combined.x * combined.x) +
-                    closest.y * closest.y / (combined.y * combined.y);
-                threatened = threatened || normalized2 < 4.f;
-                imminent = imminent ||
-                    (normalized2 < 1.f && closest_time <=
-                        navigation.steering_imminent_collision_seconds);
-            }
-            AoeSteeringResult steering_result{preferred_velocity};
-            const auto interval = std::max(
-                1u, navigation.steering_full_solve_interval);
-            const bool cache_valid = locomotion.last_steering_tick != 0 &&
-                glm::dot(locomotion.cached_target_velocity,
-                         locomotion.cached_target_velocity) > Epsilon * Epsilon;
-            const bool cadence_due = !identity ||
-                ((tick + identity->instance_id) % interval == 0);
-            const bool signature_changed =
-                threat_signature != locomotion.threat_signature;
-            const bool full_solve = locomotion.escape_steering || !threatened ||
-                imminent || !cache_valid || signature_changed || cadence_due;
-            if (!full_solve) {
-                steering_result.target_velocity =
-                    locomotion.cached_target_velocity;
-                steering_result.avoidance_side = locomotion.avoidance_side;
-                steering_result.threatened = true;
-                ++diagnostics.steering_cached_solves;
-            } else if (steering.contains(navigation.steering_strategy_id)) {
-                int preferred_side = locomotion.avoidance_side;
-                if (const auto* member = reg.try_get<AoeSquadMember>(entity);
-                    member && reg.valid(member->squad))
-                    if (const auto* traffic =
-                            reg.try_get<AoeSquadTrafficState>(member->squad);
-                        traffic && traffic->negotiated_side != 0)
-                        preferred_side = traffic->negotiated_side;
-                steering_result = steering.steer(
-                    navigation.steering_strategy_id,
-                    {entity, identity ? identity->instance_id : 0,
-                     position.value, radii, locomotion.velocity,
-                     preferred_velocity, path.waypoints[path.current], speed,
-                     navigation.steering_prediction_seconds,
-                     navigation.steering_separation_padding,
-                     map && map->valid() ? map : nullptr, neighbors,
-                     preferred_side,
-                     navigation.steering_side_switch_margin +
-                         (locomotion.avoidance_side_hold_ticks > 0 && !imminent
-                              ? 2.f : 0.f),
-                     navigation.steering_candidate_angle_step,
-                     locomotion.escape_steering
-                         ? navigation.steering_escape_max_angle
-                         : navigation.steering_normal_max_angle,
-                     navigation.steering_minimum_safe_fraction});
-                if (locomotion.escape_steering)
-                    ++diagnostics.steering_escape_solves;
-                locomotion.cached_target_velocity =
-                    steering_result.target_velocity;
-                locomotion.last_steering_tick = tick;
-                locomotion.threat_signature = threat_signature;
-                if (imminent) ++diagnostics.steering_imminent_solves;
-                else if (threatened) ++diagnostics.steering_full_solves;
-                else ++diagnostics.steering_fast_path;
+        if (reached) {
+            if (!final_waypoint) {
+                ++path.current;
+                state.state = UnitState::Moving;
             } else {
-                ++diagnostics.steering_fallbacks;
+                arrived.push_back(entity);
             }
-            if (locomotion.avoidance_side_hold_ticks > 0)
-                --locomotion.avoidance_side_hold_ticks;
-            if (steering_result.avoidance_side != 0 &&
-                steering_result.avoidance_side != locomotion.avoidance_side) {
-                if (locomotion.avoidance_side != 0)
-                    ++diagnostics.steering_side_switches;
-                locomotion.avoidance_side = static_cast<std::int8_t>(
-                    steering_result.avoidance_side);
-                locomotion.avoidance_side_hold_ticks =
-                    static_cast<std::uint8_t>(std::min(
-                        navigation.steering_side_hold_ticks,
-                        static_cast<std::uint32_t>(
-                            std::numeric_limits<std::uint8_t>::max())));
-            }
-            glm::vec2 target_velocity = steering_result.target_velocity;
-            if (!std::isfinite(target_velocity.x) ||
-                !std::isfinite(target_velocity.y)) {
-                target_velocity = preferred_velocity;
-                ++diagnostics.steering_fallbacks;
-            }
-            const float target_speed = std::min(speed, glm::length(target_velocity));
-            GLD_PERF_MONITOR(
-                performance.movement_steering_speed_sum += target_speed;
-                if (target_speed + Epsilon < desired_speed)
-                    ++performance.movement_steering_limited;
-            );
-            glm::vec2 target_direction = target_speed > Epsilon
-                ? target_velocity / glm::length(target_velocity)
-                : preferred_direction;
-            const float current_speed = glm::length(locomotion.velocity);
-            glm::vec2 new_direction = target_direction;
-            if (current_speed > Epsilon) {
-                const glm::vec2 current_direction =
-                    locomotion.velocity / current_speed;
-                const float signed_angle = std::atan2(
-                    current_direction.x * target_direction.y -
-                        current_direction.y * target_direction.x,
-                    std::clamp(glm::dot(current_direction, target_direction),
-                               -1.f, 1.f));
-                const float max_turn = std::max(0.f,
-                    navigation.steering_max_turn_radians_per_second) * dt;
-                const float turn = std::clamp(signed_angle, -max_turn, max_turn);
-                const float c = std::cos(turn);
-                const float s = std::sin(turn);
-                new_direction = {current_direction.x * c - current_direction.y * s,
-                                 current_direction.x * s + current_direction.y * c};
-            }
-            const float max_speed_change = std::max(
-                0.f, navigation.steering_max_acceleration) * dt;
-            const float new_speed = current_speed < target_speed
-                ? std::min(target_speed, current_speed + max_speed_change)
-                : std::max(target_speed, current_speed - max_speed_change);
-            glm::vec2 velocity = new_direction * new_speed;
-            const float step = std::min(remaining, glm::length(velocity) * dt);
-            const glm::vec2 move_direction = glm::length(velocity) > Epsilon
-                ? glm::normalize(velocity) : preferred_direction;
-            const glm::vec2 candidate = position.value + move_direction * step;
-            float safe = 1.f;
-            if (map && map->valid()) {
-                safe = map->static_safe_fraction(position.value, candidate, radii);
-                if (dynamic) {
-                    safe = std::min(safe,
-                        navigation.steering_max_neighbors > 0
-                            ? steering_dynamic_safe_fraction(
-                                  position.value, candidate, radii, neighbors)
-                            : dynamic->dynamic_safe_fraction(
-                                  *map, position.value, candidate, radii,
-                                  entity, ignored_squad));
-                }
-            }
-            const glm::vec2 displacement = move_direction * step * safe;
-            position.value += displacement;
-            locomotion.velocity = dt > 0.f ? displacement / dt : glm::vec2{0.f};
-            locomotion.actual_speed = glm::length(locomotion.velocity);
-            locomotion.distance_travelled += glm::length(displacement);
-            GLD_PERF_MONITOR(
-                performance.movement_actual_speed_sum +=
-                    locomotion.actual_speed;
-                if (safe < 1.f - Epsilon)
-                    ++performance.movement_safe_limited;
-            );
-            if (locomotion.actual_speed > navigation.steering_stalled_speed)
-                set_locomotion_facing(reg.get<AoeFacing>(entity), locomotion,
-                    locomotion.velocity, navigation, diagnostics);
-            const float forward_progress = glm::dot(
-                displacement, preferred_direction);
-            if (forward_progress + Epsilon <
-                navigation.steering_stalled_speed * dt) {
+            continue;
+        }
+
+        const auto* request = reg.try_get<AoePathMotionRequest>(entity);
+        auto* decision = reg.try_get<AoeGlobalMotionDecision>(entity);
+        const bool valid_decision = decision && decision->valid &&
+                                    decision->produced_tick == tick;
+        glm::vec2 velocity = valid_decision ? decision->velocity
+            : (request && request->valid ? request->velocity : glm::vec2{0.f});
+        const float safety = valid_decision
+            ? std::clamp(decision->safe_fraction, 0.f, 1.f) : 1.f;
+        velocity *= safety;
+        float speed = glm::length(velocity);
+        const float max_speed = reg.get<AoeMovement>(entity).speed;
+        if (speed > max_speed && speed > Epsilon) {
+            velocity *= max_speed / speed;
+            speed = max_speed;
+        }
+        locomotion.effective_max_speed = request ? request->max_speed : max_speed;
+        glm::vec2 displacement = velocity * dt;
+        if (distance > Epsilon && glm::length(displacement) > distance &&
+            glm::dot(glm::normalize(displacement), delta / distance) > .9f)
+            displacement = delta;
+        position.value += displacement;
+        locomotion.velocity = dt > 0.f
+            ? displacement / dt : glm::vec2{0.f};
+        locomotion.actual_speed = glm::length(locomotion.velocity);
+        locomotion.distance_travelled += glm::length(displacement);
+        const bool backing = valid_decision &&
+            decision->mode == AoeGlobalMotionMode::Backing;
+        if (locomotion.actual_speed > navigation.steering_stalled_speed &&
+            !backing)
+            set_locomotion_facing(reg.get<AoeFacing>(entity), locomotion,
+                locomotion.velocity, navigation, diagnostics);
+        if (backing) {
+            auto& motion_state =
+                reg.get_or_emplace<AoeGlobalMotionState>(entity);
+            motion_state.backing_distance += glm::length(displacement);
+            ++motion_state.backing_ticks;
+        }
+
+        const glm::vec2 path_direction = request &&
+                glm::length(request->velocity) > Epsilon
+            ? glm::normalize(request->velocity) : delta / distance;
+        const float forward_progress = glm::dot(displacement, path_direction);
+        const bool intentional_motion = valid_decision &&
+            decision->mode != AoeGlobalMotionMode::Clear;
+        const bool made_progress = intentional_motion
+            ? locomotion.actual_speed > navigation.steering_stalled_speed
+            : forward_progress + Epsilon >=
+                navigation.steering_stalled_speed * dt;
+        if (!made_progress) {
+            ++locomotion.stalled_ticks;
+            const auto* intent = reg.try_get<AoeMovementIntent>(entity);
+            locomotion.local_avoidance_infeasible = intent &&
+                intent->locally_infeasible;
+            const std::uint32_t traffic_limit =
+                navigation.unit_flow_backing_threshold_ticks +
+                navigation.unit_flow_backing_max_ticks;
+            const bool traffic_grace = intentional_motion &&
+                decision->wait_ticks < traffic_limit;
+            if (!traffic_grace) {
                 ++path.blocked_ticks;
-                ++locomotion.stalled_ticks;
                 locomotion.escape_steering = locomotion.stalled_ticks >=
                     std::max(1u, navigation.steering_escape_stalled_ticks);
-                const std::uint32_t repath_trigger = std::max(
-                    1u, navigation.blocked_repath_ticks);
-                if (path.blocked_ticks == repath_trigger)
-                    world.resource_or_add<Events<AoeNavigationEvent>>().emit(
-                        entity, path.request_sequence,
-                        AoeNavigationEventStatus::Blocked, tick);
-                if (path.blocked_ticks >= repath_trigger) {
+                const auto trigger = std::max(1u,
+                    navigation.blocked_repath_ticks);
+                if (path.blocked_ticks >= trigger) {
                     path.include_dynamic_obstacles = true;
                     path.dynamic_repath_requested = true;
                     path.blocked_ticks = 0;
+                    if (decision)
+                        decision->stop_reason =
+                            AoeMotionStopReason::RepathPending;
                 }
-                state.state = UnitState::Moving;
             } else {
                 path.blocked_ticks = 0;
-                locomotion.stalled_ticks = 0;
-                locomotion.escape_steering = false;
-                state.state = UnitState::Moving;
             }
-        } else if (!final_waypoint) {
-            ++path.current;
-            state.state = UnitState::Moving;
-        } else arrived.push_back(entity);
+            if (decision && decision->stop_reason == AoeMotionStopReason::None)
+                decision->stop_reason = intentional_motion
+                    ? AoeMotionStopReason::GlobalYield
+                    : AoeMotionStopReason::Unknown;
+        } else {
+            path.blocked_ticks = 0;
+            locomotion.stalled_ticks = 0;
+            locomotion.escape_steering = false;
+            locomotion.local_avoidance_infeasible = false;
+        }
+        state.state = UnitState::Moving;
     }
-    for (auto entity : arrived) {
+
+    for (const auto entity : arrived) {
         if (!reg.valid(entity)) continue;
         if (const auto* goal = reg.try_get<AoeMoveGoal>(entity);
             goal && goal->target.entity == entt::null &&
@@ -2175,16 +2803,11 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity))
                 locomotion->distance_travelled += snapped;
         }
-        reg.remove<AoeMoveGoal>(entity);
-        reg.remove<AoeNavigationPath>(entity);
+        reg.remove<AoeMoveGoal, AoeNavigationPath>(entity);
         auto& state = reg.get<AoeActionState>(entity);
         if (!is_terminal(state.state)) {
             state.state = UnitState::Idle;
             state.state_started_tick = tick;
-        }
-        if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity)) {
-            locomotion->velocity = {0.f, 0.f};
-            locomotion->actual_speed = 0.f;
         }
     }
     for (const auto entity : reg.view<AoeLocomotionState>(
@@ -2196,7 +2819,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         locomotion.escape_steering = false;
     }
     GLD_PERF_MONITOR(
-        auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
         diagnostics.movement_last_ms =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - movement_started).count();
@@ -2384,6 +3006,14 @@ void fixed_tick(EcsWorld& world) {
         [&] { attack_move_acquisition_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, navigation_ms,
         [&] { navigation_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, movement_intent_ms,
+        [&] { movement_intent_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, local_avoidance_ms,
+        [&] { local_avoidance_intent_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, unit_flow_ms,
+        [&] { unit_flow_tick(world, clock.tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, motion_safety_ms,
+        [&] { global_motion_safety_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, movement_ms,
         [&] { movement_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, combat_ms,
@@ -2642,9 +3272,13 @@ bool AoeSteeringRegistry::contains(std::string_view id) const {
 AoeSteeringResult AoeSteeringRegistry::steer(
     std::string_view id, const AoeSteeringContext& context) const {
     const auto it = entries_.find(std::string(id));
-    return it == entries_.end()
+    auto result = it == entries_.end()
         ? AoeSteeringResult{context.preferred_velocity}
         : it->second(context);
+    const float speed = glm::length(result.target_velocity);
+    result.infeasible =
+        glm::length(context.preferred_velocity) > Epsilon && speed <= Epsilon;
+    return result;
 }
 
 AoeSteeringResult DefaultLocalSteeringLogic::steer(
@@ -3700,7 +4334,9 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
         reg.remove<AoeGameplaySpawnRequest, AoeGameplaySpawnError, AoeUnitDefinitionRef,
                    AoeHealth, AoeLevel, AoeCollider, AoePosition,
                    AoePositionHistory, AoeMovement, AoeTeam,
-                   AoeLocomotionState,
+                   AoeLocomotionState, AoePathMotionRequest,
+                   AoeMovementIntent, AoeGlobalMotionState,
+                   AoeGlobalMotionDecision,
                    AoeFacing,
                    AoePresentationOptions, AoeActionState, AoeGameplayIdentity,
                    AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,
@@ -3744,6 +4380,7 @@ void AoeGameplayPlugin::operator()(App& app) const {
 #endif
     app.world.resource_or_add<AoeCrowdSteeringScratch>();
     app.world.resource_or_add<AoeSquadTrafficIndex>();
+    app.world.resource_or_add<AoeUnitFlowIndex>();
     app.world.resource_or_add<AoeNavigationSettings>();
     app.world.resource_or_add<AoeDynamicObstacleIndex>();
     app.world.resource_or_add<AoeStaticObstacleBindings>();

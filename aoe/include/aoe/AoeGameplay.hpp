@@ -151,6 +151,84 @@ struct AoePosition { glm::vec2 value{0.f}; };
 // Gameplay systems always read AoePosition directly.
 struct AoePositionHistory { glm::vec2 previous{0.f}; };
 struct AoeMovement { float speed = 1.f; };
+
+enum class AoeMovementIntentKind {
+    None, Move, FormationSlot, AttackApproach
+};
+
+// Raw path-following request consumed by the local avoidance solver.
+struct AoePathMotionRequest {
+    AoeMovementIntentKind kind = AoeMovementIntentKind::None;
+    glm::vec2 velocity{0.f};
+    glm::vec2 local_goal{0.f};
+    float max_speed = 0.f;
+    std::uint64_t path_sequence = 0;
+    std::uint64_t produced_tick = 0;
+    bool valid = false;
+};
+
+// Local navigation/avoidance output. The vector direction and length are both
+// authoritative inputs to global motion planning.
+struct AoeMovementIntent {
+    AoeMovementIntentKind kind = AoeMovementIntentKind::None;
+    glm::vec2 velocity{0.f};
+    glm::vec2 raw_path_velocity{0.f};
+    glm::vec2 local_goal{0.f};
+    std::uint32_t neighbor_count = 0;
+    std::int8_t avoidance_side = 0;
+    bool threatened = false;
+    bool locally_infeasible = false;
+    std::uint64_t produced_tick = 0;
+    bool valid = false;
+};
+
+enum class AoeGlobalMotionMode {
+    Clear, SideStep, PassingLeft, PassingRight, Yielding, Backing, Recovering
+};
+
+enum class AoeMotionDecisionReason {
+    None, SameDirectionConflict, FasterTraffic, HeadOnTraffic,
+    CrossingTraffic, StarvationPriority, SideBlocked, DeadlockEscape
+};
+
+enum class AoeMotionStopReason {
+    None, NoPath, Arrived, Attacking, LocalAvoidanceInfeasible,
+    GlobalYield, GlobalSideStepBlocked, GlobalDeadlock,
+    StaticSafetyClipped, DynamicSafetyClipped, RepathPending,
+    DynamicRepathFailed, Unknown
+};
+
+struct AoeGlobalMotionState {
+    AoeGlobalMotionMode mode = AoeGlobalMotionMode::Clear;
+    entt::entity peer{entt::null};
+    std::uint64_t peer_instance_id = 0;
+    std::uint64_t last_conflict_tick = 0;
+    std::uint64_t last_backing_tick = 0;
+    std::uint32_t wait_ticks = 0;
+    std::uint32_t backing_ticks = 0;
+    float backing_distance = 0.f;
+    std::int8_t negotiated_side = 0;
+};
+
+struct AoeGlobalMotionDecision {
+    glm::vec2 velocity{0.f};
+    float static_safe_fraction = 1.f;
+    float dynamic_safe_fraction = 1.f;
+    float safe_fraction = 1.f;
+    AoeGlobalMotionMode mode = AoeGlobalMotionMode::Clear;
+    AoeMotionDecisionReason reason = AoeMotionDecisionReason::None;
+    AoeMotionStopReason stop_reason = AoeMotionStopReason::None;
+    entt::entity yielding_to{entt::null};
+    std::uint64_t yielding_to_instance = 0;
+    std::uint32_t conflict_group = 0;
+    std::uint32_t selected_conflicts = 0;
+    std::uint32_t candidate_count = 0;
+    std::uint32_t wait_ticks = 0;
+    float nearest_time_to_collision = 0.f;
+    std::uint64_t produced_tick = 0;
+    bool valid = false;
+};
+
 struct AoeLocomotionState {
     glm::vec2 velocity{0.f};
     glm::vec2 previous_velocity{0.f};
@@ -168,6 +246,7 @@ struct AoeLocomotionState {
     std::uint8_t avoidance_side_hold_ticks = 0;
     std::uint32_t stalled_ticks = 0;
     bool escape_steering = false;
+    bool local_avoidance_infeasible = false;
     int pending_facing_direction = -1;
     std::uint8_t pending_facing_ticks = 0;
 };
@@ -318,6 +397,7 @@ struct AoeSteeringResult {
     glm::vec2 target_velocity{0.f};
     int avoidance_side = 0;
     bool threatened = false;
+    bool infeasible = false;
 };
 
 template<class T>
@@ -781,6 +861,25 @@ struct AoeNavigationSettings {
     float squad_traffic_yield_speed_scale = .35f;
     float squad_traffic_lateral_clearance = .75f;
     float squad_traffic_offset_rate = 2.f;
+    bool unit_flow_enabled = true;
+    std::uint32_t unit_flow_max_neighbors = 12;
+    std::uint32_t unit_flow_solver_iterations = 8;
+    std::uint32_t unit_flow_starvation_ticks = 30;
+    std::uint32_t unit_flow_backing_threshold_ticks = 45;
+    std::uint32_t unit_flow_backing_max_ticks = 12;
+    std::uint32_t unit_flow_backing_cooldown_ticks = 30;
+    float unit_flow_prediction_seconds = 1.f;
+    float unit_flow_same_direction_dot = .65f;
+    float unit_flow_head_on_dot = -.5f;
+    float unit_flow_same_speed_absolute = .05f;
+    float unit_flow_same_speed_relative = .1f;
+    float unit_flow_follow_gap = .2f;
+    float unit_flow_yield_speed_scale = .2f;
+    float unit_flow_lateral_clearance = .6f;
+    float unit_flow_lateral_bias = .75f;
+    float unit_flow_overlap_recovery_seconds = .25f;
+    float unit_flow_backing_speed_scale = .25f;
+    float unit_flow_backing_max_diameters = 1.5f;
 };
 
 struct AoeStaticObstacleBindings {
@@ -822,6 +921,19 @@ struct AoeGameplayDiagnostics {
     std::uint64_t dynamic_repath_failures = 0;
     std::uint64_t elastic_slot_uses = 0;
     std::uint64_t squad_traffic_conflicts = 0;
+    std::uint64_t flow_active_intents = 0;
+    std::uint64_t flow_neighbor_checks = 0;
+    std::uint64_t flow_conflicts = 0;
+    std::uint64_t flow_following = 0;
+    std::uint64_t flow_passing = 0;
+    std::uint64_t flow_yielding = 0;
+    std::uint64_t flow_backing = 0;
+    std::uint64_t flow_recovering = 0;
+    std::uint64_t flow_starvation_promotions = 0;
+    std::uint64_t flow_infeasible_assignments = 0;
+    std::uint64_t flow_deadlock_escalations = 0;
+    std::uint64_t flow_overlap_projections = 0;
+    std::uint64_t flow_wait_ticks = 0;
     double movement_last_ms = 0.0;
     double movement_peak_ms = 0.0;
 };
@@ -844,6 +956,10 @@ struct AoeGameplayPerformanceDiagnostics {
     double squad_traffic_ms = 0.0;
     double attack_move_acquisition_ms = 0.0;
     double navigation_ms = 0.0;
+    double movement_intent_ms = 0.0;
+    double local_avoidance_ms = 0.0;
+    double unit_flow_ms = 0.0;
+    double motion_safety_ms = 0.0;
     double movement_ms = 0.0;
     double combat_ms = 0.0;
     double projectile_ms = 0.0;
@@ -882,6 +998,34 @@ struct AoeSquadTrafficRecord {
 
 struct AoeSquadTrafficIndex {
     std::vector<AoeSquadTrafficRecord> records;
+    float maximum_reach = 0.f;
+};
+
+struct AoeUnitFlowRecord {
+    entt::entity entity{entt::null};
+    std::uint64_t instance_id = 0;
+    entt::entity squad{entt::null};
+    std::uint32_t team = 0;
+    AoeMovementIntentKind kind = AoeMovementIntentKind::None;
+    glm::vec2 position{0.f};
+    glm::vec2 radii{0.f};
+    glm::vec2 intent_velocity{0.f};
+};
+
+struct AoeUnitFlowConflict {
+    std::size_t a = 0;
+    std::size_t b = 0;
+    float time_to_collision = 0.f;
+    float closest_distance = 0.f;
+};
+
+// Fixed-tick scratch reused by the sweep-and-prune traffic coordinator.
+struct AoeUnitFlowIndex {
+    std::vector<AoeUnitFlowRecord> records;
+    std::vector<AoeUnitFlowConflict> candidates;
+    std::vector<AoeUnitFlowConflict> selected;
+    std::vector<std::size_t> parents;
+    std::vector<std::uint32_t> ranks;
     float maximum_reach = 0.f;
 };
 

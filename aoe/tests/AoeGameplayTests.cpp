@@ -49,6 +49,24 @@ struct InvalidFormation {
     }
 };
 
+struct KnownLocalSteering {
+    static inline std::uint32_t calls = 0;
+    static inline glm::vec2 velocity{0.f};
+
+    static AoeSteeringResult steer(const AoeSteeringContext&) {
+        ++calls;
+        return AoeSteeringResult{.target_velocity = velocity};
+    }
+};
+
+struct ContactLocalSteering {
+    static AoeSteeringResult steer(const AoeSteeringContext& context) {
+        return AoeSteeringResult{.target_velocity =
+            context.position.x < 4.2f
+                ? glm::vec2{1.f, 0.f} : glm::vec2{-1.f, 0.f}};
+    }
+};
+
 nlohmann::json definition_json(int schema = 2) {
     nlohmann::json value = {
         {"schema_version", schema}, {"kind", "aoe_gameplay_unit"}, {"id", "test"},
@@ -154,6 +172,10 @@ struct Fixture {
         // Most legacy tests assert exact constant-speed positions. Dedicated
         // steering tests below exercise the production acceleration defaults.
         navigation.steering_max_acceleration = 1000.f;
+        // Legacy tests intentionally overlap independent movers while checking
+        // exact positions/facing. Unit-flow behavior is enabled explicitly by
+        // its dedicated traffic fixtures below.
+        navigation.unit_flow_enabled = false;
         world.resource_or_add<AoeFormationRegistry>()
             .bind<AoeFormationType::Skirmish, DefaultSkirmishFormation>();
         world.resource_or_add<AoeProjectileRegistry>()
@@ -589,6 +611,210 @@ int main() {
                .storage<entt::entity>().free_list() == steering_entity_count);
     assert(cached_steering_fixture.world.resource<AoeGameplayDiagnostics>()
                .steering_cached_solves > 0);
+
+    // The local solver owns the direction/length intent. Global planning is
+    // the next consumer and movement must not invoke local steering again.
+    Fixture pipeline_fixture;
+    pipeline_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& pipeline_navigation =
+        pipeline_fixture.world.resource<AoeNavigationSettings>();
+    pipeline_navigation.steering_strategy_id = "known_test";
+    pipeline_navigation.unit_flow_enabled = false;
+    pipeline_fixture.world.resource_or_add<AoeSteeringRegistry>()
+        .bind<KnownLocalSteering>("known_test");
+    KnownLocalSteering::calls = 0;
+    KnownLocalSteering::velocity = {.75f, 1.25f};
+    const auto pipeline_unit = pipeline_fixture.unit({2.f, 2.f}, 50.f, 1);
+    assert(request_aoe_move(pipeline_fixture.world,
+                            pipeline_unit, {10.f, 2.f}));
+    pipeline_fixture.advance_ticks(1);
+    const auto& pipeline_request = pipeline_fixture.world.reg()
+        .get<AoePathMotionRequest>(pipeline_unit);
+    const auto& pipeline_intent = pipeline_fixture.world.reg()
+        .get<AoeMovementIntent>(pipeline_unit);
+    const auto& pipeline_decision = pipeline_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(pipeline_unit);
+    assert(KnownLocalSteering::calls == 1);
+    assert(glm::length(pipeline_request.velocity - glm::vec2(2.f, 0.f)) <
+           1e-5f);
+    assert(glm::length(pipeline_intent.velocity -
+                       KnownLocalSteering::velocity) < 1e-5f);
+    assert(glm::length(pipeline_decision.velocity -
+                       pipeline_intent.velocity) < 1e-5f);
+    assert(glm::length(pipeline_fixture.world.reg()
+               .get<AoeLocomotionState>(pipeline_unit).velocity -
+           pipeline_decision.velocity) < 1e-5f);
+
+    // The last safety stage may shorten the displacement, but it cannot
+    // rotate the direction selected by global planning.
+    Fixture safety_fixture;
+    safety_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& safety_navigation =
+        safety_fixture.world.resource<AoeNavigationSettings>();
+    safety_navigation.steering_strategy_id = "known_test";
+    safety_navigation.unit_flow_enabled = false;
+    safety_fixture.world.resource_or_add<AoeSteeringRegistry>()
+        .bind<KnownLocalSteering>("known_test");
+    AoeStaticObstacleDesc safety_wall;
+    safety_wall.shape = AoeStaticObstacleShape::Aabb;
+    safety_wall.center = {2.35f, 2.f};
+    safety_wall.half_extents = {.05f, 1.f};
+    safety_fixture.world.resource<AoeLogicMap>()
+        .add_static_obstacle(safety_wall);
+    KnownLocalSteering::calls = 0;
+    KnownLocalSteering::velocity = {2.f, 0.f};
+    const auto safety_unit = safety_fixture.unit({2.f, 2.f}, 50.f, 1);
+    assert(request_aoe_move(safety_fixture.world,
+                            safety_unit, {10.f, 2.f}));
+    safety_fixture.advance_ticks(1);
+    const auto& safety_decision = safety_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(safety_unit);
+    const auto& safety_locomotion = safety_fixture.world.reg()
+        .get<AoeLocomotionState>(safety_unit);
+    assert(safety_decision.static_safe_fraction < 1.f);
+    assert(safety_decision.velocity.x > 0.f &&
+           std::abs(safety_decision.velocity.y) < 1e-5f);
+    assert(safety_locomotion.velocity.x >= 0.f &&
+           std::abs(safety_locomotion.velocity.y) < 1e-5f);
+
+    // Unit-level flow coordination consumes local intent. Same-direction,
+    // same-speed traffic stays unchanged when no collision is predicted,
+    // while head-on units receive complementary right-hand directions.
+    Fixture unit_flow_fixture;
+    unit_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& unit_flow_settings =
+        unit_flow_fixture.world.resource<AoeNavigationSettings>();
+    unit_flow_settings.unit_flow_enabled = true;
+    const auto flow_leader = unit_flow_fixture.unit({4.7f, 3.f}, 50.f, 1);
+    const auto flow_follower = unit_flow_fixture.unit({4.f, 3.f}, 50.f, 1);
+    assert(request_aoe_move(unit_flow_fixture.world, flow_leader, {12.f, 3.f}));
+    assert(request_aoe_move(unit_flow_fixture.world, flow_follower, {12.f, 3.f}));
+    unit_flow_fixture.advance_ticks(1);
+    const auto& follower_intent = unit_flow_fixture.world.reg()
+        .get<AoeMovementIntent>(flow_follower);
+    const auto& follower_flow = unit_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(flow_follower);
+    assert(follower_flow.mode == AoeGlobalMotionMode::Clear);
+    assert(glm::length(follower_flow.velocity - follower_intent.velocity) < 1e-5f);
+    assert(!unit_flow_fixture.world.reg()
+                .get<AoeNavigationPath>(flow_follower).no_path);
+
+    Fixture overlap_flow_fixture;
+    overlap_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    overlap_flow_fixture.world.resource<AoeNavigationSettings>()
+        .unit_flow_enabled = true;
+    const auto overlap_front =
+        overlap_flow_fixture.unit({4.3f, 3.f}, 50.f, 1);
+    const auto overlap_back =
+        overlap_flow_fixture.unit({4.f, 3.f}, 50.f, 1);
+    assert(request_aoe_move(overlap_flow_fixture.world,
+                            overlap_front, {12.f, 3.f}));
+    assert(request_aoe_move(overlap_flow_fixture.world,
+                            overlap_back, {12.f, 3.f}));
+    overlap_flow_fixture.advance_ticks(1);
+    const auto& overlap_front_decision = overlap_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(overlap_front);
+    const auto& overlap_back_decision = overlap_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(overlap_back);
+    assert(glm::dot(glm::vec2(.3f, 0.f),
+               overlap_front_decision.velocity -
+                   overlap_back_decision.velocity) >= -1e-5f);
+    assert(overlap_front_decision.dynamic_safe_fraction > 0.f);
+    assert(overlap_back_decision.dynamic_safe_fraction > 0.f);
+
+    // Exact/shallow contact must participate in the global projection too.
+    // Otherwise the final safety stage clips an approaching pair to zero on
+    // every tick even though both units have valid motion intents.
+    Fixture contact_flow_fixture;
+    contact_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& contact_settings =
+        contact_flow_fixture.world.resource<AoeNavigationSettings>();
+    contact_settings.unit_flow_enabled = true;
+    contact_settings.steering_strategy_id = "contact_test";
+    contact_flow_fixture.world.resource_or_add<AoeSteeringRegistry>()
+        .bind<ContactLocalSteering>("contact_test");
+    const auto contact_left =
+        contact_flow_fixture.unit({4.f, 3.f}, 50.f, 1);
+    const auto contact_right =
+        contact_flow_fixture.unit({4.4f, 3.f}, 50.f, 2);
+    assert(request_aoe_move(contact_flow_fixture.world,
+                            contact_left, {12.f, 3.f}));
+    assert(request_aoe_move(contact_flow_fixture.world,
+                            contact_right, {1.f, 3.f}));
+    contact_flow_fixture.advance_ticks(1);
+    const auto& contact_left_decision = contact_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(contact_left);
+    const auto& contact_right_decision = contact_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(contact_right);
+    assert(contact_left_decision.dynamic_safe_fraction > 0.f);
+    assert(contact_right_decision.dynamic_safe_fraction > 0.f);
+    assert(glm::dot(glm::vec2(-.4f, 0.f),
+               contact_left_decision.velocity -
+                   contact_right_decision.velocity) >= -1e-5f);
+
+    Fixture head_on_flow_fixture;
+    head_on_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    head_on_flow_fixture.world.resource<AoeNavigationSettings>()
+        .unit_flow_enabled = true;
+    const auto eastbound = head_on_flow_fixture.unit({4.f, 6.f}, 50.f, 1);
+    const auto westbound = head_on_flow_fixture.unit({6.f, 6.f}, 50.f, 2);
+    assert(request_aoe_move(head_on_flow_fixture.world, eastbound, {12.f, 6.f}));
+    assert(request_aoe_move(head_on_flow_fixture.world, westbound, {1.f, 6.f}));
+    head_on_flow_fixture.advance_ticks(1);
+    const auto& east_flow = head_on_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(eastbound);
+    const auto& west_flow = head_on_flow_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(westbound);
+    assert(east_flow.mode == AoeGlobalMotionMode::PassingRight);
+    assert(west_flow.mode == AoeGlobalMotionMode::PassingRight);
+    assert(east_flow.velocity.y < 0.f);
+    assert(west_flow.velocity.y > 0.f);
+    assert(!head_on_flow_fixture.world.reg()
+                .get<AoeNavigationPath>(eastbound).no_path);
+    assert(!head_on_flow_fixture.world.reg()
+                .get<AoeNavigationPath>(westbound).no_path);
+    assert(head_on_flow_fixture.world.resource<AoeGameplayDiagnostics>()
+               .flow_neighbor_checks > 0);
+
+    // A one-unit-wide edge corridor cannot provide complementary side lanes.
+    // The lower-priority unit escalates from an aged yield to a bounded
+    // backwards maneuver instead of turning the traffic wait into no_path.
+    Fixture backing_flow_fixture;
+    backing_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    AoeStaticObstacleDesc corridor_wall;
+    corridor_wall.shape = AoeStaticObstacleShape::Aabb;
+    corridor_wall.center = {10.f, 1.1f};
+    corridor_wall.half_extents = {10.f, .25f};
+    backing_flow_fixture.world.resource<AoeLogicMap>()
+        .add_static_obstacle(corridor_wall);
+    auto& backing_settings =
+        backing_flow_fixture.world.resource<AoeNavigationSettings>();
+    backing_settings.unit_flow_enabled = true;
+    backing_settings.unit_flow_backing_threshold_ticks = 1;
+    const auto backing_priority =
+        backing_flow_fixture.unit({4.f, .5f}, 50.f, 1);
+    const auto backing_yielder =
+        backing_flow_fixture.unit({6.f, .5f}, 50.f, 2);
+    assert(request_aoe_move(backing_flow_fixture.world,
+                            backing_priority, {12.f, .5f}));
+    assert(request_aoe_move(backing_flow_fixture.world,
+                            backing_yielder, {1.f, .5f}));
+    backing_flow_fixture.world.reg().emplace<AoeGlobalMotionState>(
+        backing_yielder, AoeGlobalMotionState{
+            .mode = AoeGlobalMotionMode::Yielding, .wait_ticks = 1});
+    backing_flow_fixture.world.reg().get<AoeLocomotionState>(
+        backing_yielder).local_avoidance_infeasible = true;
+    const int backing_facing = backing_flow_fixture.world.reg()
+        .get<AoeFacing>(backing_yielder).direction;
+    backing_flow_fixture.advance_ticks(1);
+    assert(backing_flow_fixture.world.reg().get<AoeGlobalMotionDecision>(
+               backing_yielder).mode == AoeGlobalMotionMode::Backing);
+    assert(!backing_flow_fixture.world.reg().get<AoeNavigationPath>(
+                backing_yielder).no_path);
+    assert(backing_flow_fixture.world.reg().get<AoePosition>(
+               backing_yielder).value.x > 6.f);
+    assert(backing_flow_fixture.world.reg().get<AoeFacing>(
+               backing_yielder).direction == backing_facing);
 
     // The default strategy ignores self/allies/terminal units, compares
     // collider surface gaps, and returns a stable incarnation-aware target.
@@ -1418,12 +1644,20 @@ int main() {
     assert(lifecycle_events[recycle_index].tick - lifecycle_events[disappear_index].tick == 2);
     fixture.world.reg().emplace<AoeMapStaticObstacle>(target);
     fixture.world.reg().emplace<AoeEngagementApproach>(target);
+    fixture.world.reg().emplace<AoeMovementIntent>(target);
+    fixture.world.reg().emplace<AoePathMotionRequest>(target);
+    fixture.world.reg().emplace<AoeGlobalMotionState>(target);
+    fixture.world.reg().emplace<AoeGlobalMotionDecision>(target);
     aoe_gameplay_recycle_system(fixture.world);
     assert(fixture.world.reg().valid(target) && fixture.world.reg().all_of<AoePooledUnit>(target));
     assert(!fixture.world.reg().all_of<AoePositionHistory>(target));
     assert(!fixture.world.reg().all_of<AoeLocomotionState>(target));
     assert(!fixture.world.reg().all_of<AoeMapStaticObstacle>(target));
     assert(!fixture.world.reg().all_of<AoeEngagementApproach>(target));
+    assert(!fixture.world.reg().all_of<AoeMovementIntent>(target));
+    assert(!fixture.world.reg().all_of<AoePathMotionRequest>(target));
+    assert(!fixture.world.reg().all_of<AoeGlobalMotionState>(target));
+    assert(!fixture.world.reg().all_of<AoeGlobalMotionDecision>(target));
     assert(fixture.world.resource<AoeGameplayPool>().available.size() == 1);
 
     AoeUnitSpawnOptions reuse_options;

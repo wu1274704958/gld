@@ -120,6 +120,15 @@ struct SystemProfileState {
     double capture_target_seconds = 15.0;
     std::ostringstream csv;
 };
+
+struct MotionDecisionTraceState {
+    bool capturing = false;
+    fs::path directory = "build/profile";
+    std::ofstream decisions;
+    std::ofstream summaries;
+    std::uint64_t last_tick = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t last_summary_tick = 0;
+};
 #endif
 
 const StressPreset& active_stress_preset(const PreviewState& state) {
@@ -379,6 +388,132 @@ void issue_mutual_attack_move(EcsWorld& world) {
         ? "both squads received AttackMove" : "AttackMove rejected";
 }
 
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+const char* motion_mode_name(AoeGlobalMotionMode value) {
+    switch (value) {
+    case AoeGlobalMotionMode::Clear: return "clear";
+    case AoeGlobalMotionMode::SideStep: return "side_step";
+    case AoeGlobalMotionMode::PassingLeft: return "passing_left";
+    case AoeGlobalMotionMode::PassingRight: return "passing_right";
+    case AoeGlobalMotionMode::Yielding: return "yielding";
+    case AoeGlobalMotionMode::Backing: return "backing";
+    case AoeGlobalMotionMode::Recovering: return "recovering";
+    }
+    return "unknown";
+}
+
+const char* motion_reason_name(AoeMotionDecisionReason value) {
+    switch (value) {
+    case AoeMotionDecisionReason::None: return "none";
+    case AoeMotionDecisionReason::SameDirectionConflict:
+        return "same_direction_conflict";
+    case AoeMotionDecisionReason::FasterTraffic: return "faster_traffic";
+    case AoeMotionDecisionReason::HeadOnTraffic: return "head_on_traffic";
+    case AoeMotionDecisionReason::CrossingTraffic: return "crossing_traffic";
+    case AoeMotionDecisionReason::StarvationPriority:
+        return "starvation_priority";
+    case AoeMotionDecisionReason::SideBlocked: return "side_blocked";
+    case AoeMotionDecisionReason::DeadlockEscape: return "deadlock_escape";
+    }
+    return "unknown";
+}
+
+const char* motion_stop_name(AoeMotionStopReason value) {
+    switch (value) {
+    case AoeMotionStopReason::None: return "none";
+    case AoeMotionStopReason::NoPath: return "no_path";
+    case AoeMotionStopReason::Arrived: return "arrived";
+    case AoeMotionStopReason::Attacking: return "attacking";
+    case AoeMotionStopReason::LocalAvoidanceInfeasible:
+        return "local_avoidance_infeasible";
+    case AoeMotionStopReason::GlobalYield: return "global_yield";
+    case AoeMotionStopReason::GlobalSideStepBlocked:
+        return "global_side_step_blocked";
+    case AoeMotionStopReason::GlobalDeadlock: return "global_deadlock";
+    case AoeMotionStopReason::StaticSafetyClipped:
+        return "static_safety_clipped";
+    case AoeMotionStopReason::DynamicSafetyClipped:
+        return "dynamic_safety_clipped";
+    case AoeMotionStopReason::RepathPending: return "repath_pending";
+    case AoeMotionStopReason::DynamicRepathFailed:
+        return "dynamic_repath_failed";
+    case AoeMotionStopReason::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+AoeMotionStopReason observed_stop_reason(const entt::registry& reg,
+                                         entt::entity entity) {
+    if (const auto* decision = reg.try_get<AoeGlobalMotionDecision>(entity);
+        decision && decision->stop_reason != AoeMotionStopReason::None)
+        return decision->stop_reason;
+    if (const auto* path = reg.try_get<AoeNavigationPath>(entity)) {
+        if (path->no_path) return AoeMotionStopReason::NoPath;
+        if (path->dynamic_repath_failed)
+            return AoeMotionStopReason::DynamicRepathFailed;
+        if (path->dynamic_repath_requested)
+            return AoeMotionStopReason::RepathPending;
+    }
+    if (const auto* action = reg.try_get<AoeActionState>(entity);
+        action && action->state == UnitState::Attacking)
+        return AoeMotionStopReason::Attacking;
+    if (const auto* intent = reg.try_get<AoeMovementIntent>(entity);
+        intent && intent->locally_infeasible)
+        return AoeMotionStopReason::LocalAvoidanceInfeasible;
+    return AoeMotionStopReason::None;
+}
+
+bool begin_motion_trace(MotionDecisionTraceState& trace) {
+    std::error_code error;
+    fs::create_directories(trace.directory, error);
+    trace.decisions.open(trace.directory / "aoe_motion_decisions.csv",
+        std::ios::binary | std::ios::trunc);
+    trace.summaries.open(trace.directory / "aoe_motion_stall_summary.log",
+        std::ios::binary | std::ios::trunc);
+    if (!trace.decisions || !trace.summaries) {
+        trace.decisions.close();
+        trace.summaries.close();
+        return false;
+    }
+    trace.decisions
+        << "tick,entity,instance,team,squad,pos_x,pos_y,radius_x,radius_y,"
+           "action,path_current,"
+           "path_count,goal_x,goal_y,requested_goal_x,requested_goal_y,no_path,"
+           "path_dynamic,dynamic_repath_requested,dynamic_repath_failed,"
+           "raw_x,raw_y,local_x,local_y,local_speed,local_threat,"
+           "local_infeasible,local_neighbors,candidates,selected,group,ttc,"
+           "global_mode,global_reason,yielding_to,peer_instance,wait_ticks,"
+           "global_x,global_y,"
+           "static_safe,dynamic_safe,safe_fraction,actual_x,actual_y,"
+           "actual_speed,stalled_ticks,stop_reason\n";
+    trace.last_tick = std::numeric_limits<std::uint64_t>::max();
+    trace.last_summary_tick = 0;
+    trace.capturing = true;
+    return true;
+}
+
+void end_motion_trace(MotionDecisionTraceState& trace) {
+    trace.capturing = false;
+    trace.decisions.close();
+    trace.summaries.close();
+}
+
+void toggle_motion_trace(EcsWorld& world) {
+    auto& trace = world.resource<MotionDecisionTraceState>();
+    auto& preview = world.resource<PreviewState>();
+    if (trace.capturing) {
+        end_motion_trace(trace);
+        preview.latest = "motion decision trace stopped: " +
+            trace.directory.string();
+    } else if (begin_motion_trace(trace)) {
+        preview.latest = "motion decision trace started: " +
+            trace.directory.string();
+    } else {
+        preview.latest = "failed to open motion decision trace files";
+    }
+}
+#endif
+
 void input_system(EcsWorld& world) {
     auto* keyboard = world.try_resource<Keyboard>();
     auto* state = world.try_resource<PreviewState>();
@@ -433,6 +568,10 @@ void input_system(EcsWorld& world) {
             ? "blue Archer foot trace enabled"
             : "blue Archer foot trace disabled";
     }
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    if (keyboard->just_now_pressed(GLFW_KEY_T))
+        toggle_motion_trace(world);
+#endif
     for (const auto& preset : StressPresets) {
         if (!keyboard->just_now_pressed(GLFW_KEY_0 + preset.key)) continue;
         state->stress_preset = preset.key;
@@ -446,6 +585,138 @@ void input_system(EcsWorld& world) {
         state->latest = "definitions rescanned and squads rebuilt";
     }
 }
+
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+void motion_decision_trace_system(EcsWorld& world) {
+    auto* trace = world.try_resource<MotionDecisionTraceState>();
+    if (!trace || !trace->capturing) return;
+    const auto& clock = world.resource<AoeGameplayClock>();
+    if (trace->last_tick == clock.tick) return;
+    trace->last_tick = clock.tick;
+    auto& reg = world.reg();
+    struct StalledUnit {
+        std::uint64_t instance = 0;
+        std::uint32_t stalled_ticks = 0;
+        AoeMotionStopReason reason = AoeMotionStopReason::None;
+    };
+    constexpr std::size_t StopReasonCount =
+        static_cast<std::size_t>(AoeMotionStopReason::Unknown) + 1u;
+    std::array<std::uint32_t, StopReasonCount> stop_counts{};
+    std::vector<StalledUnit> stalled_units;
+
+    trace->decisions << std::fixed << std::setprecision(6);
+    for (const auto entity : reg.view<AoeGameplayIdentity, AoePosition,
+                                      AoeTeam>(entt::exclude<AoePooledUnit,
+                                                            AoeRecyclePending>)) {
+        const auto& identity = reg.get<AoeGameplayIdentity>(entity);
+        const auto& position = reg.get<AoePosition>(entity);
+        const auto& team = reg.get<AoeTeam>(entity);
+        const auto* collider = reg.try_get<AoeCollider>(entity);
+        const auto* member = reg.try_get<AoeSquadMember>(entity);
+        const auto* action = reg.try_get<AoeActionState>(entity);
+        const auto* path = reg.try_get<AoeNavigationPath>(entity);
+        const auto* goal = reg.try_get<AoeMoveGoal>(entity);
+        const auto* request = reg.try_get<AoePathMotionRequest>(entity);
+        const auto* intent = reg.try_get<AoeMovementIntent>(entity);
+        const auto* decision = reg.try_get<AoeGlobalMotionDecision>(entity);
+        const auto* motion_state = reg.try_get<AoeGlobalMotionState>(entity);
+        const auto* locomotion = reg.try_get<AoeLocomotionState>(entity);
+        const bool request_valid = request && request->valid &&
+            request->produced_tick == clock.tick;
+        const bool intent_valid = intent && intent->valid &&
+            intent->produced_tick == clock.tick;
+        const bool decision_valid = decision && decision->valid &&
+            decision->produced_tick == clock.tick;
+        const glm::vec2 raw = request_valid
+            ? request->velocity : glm::vec2{0.f};
+        const glm::vec2 local = intent_valid
+            ? intent->velocity : glm::vec2{0.f};
+        const glm::vec2 global = decision_valid
+            ? decision->velocity : glm::vec2{0.f};
+        const glm::vec2 actual = locomotion
+            ? locomotion->velocity : glm::vec2{0.f};
+        const auto stop = observed_stop_reason(reg, entity);
+        ++stop_counts[static_cast<std::size_t>(stop)];
+        if (locomotion && locomotion->stalled_ticks > 0)
+            stalled_units.push_back(
+                {identity.instance_id, locomotion->stalled_ticks, stop});
+
+        trace->decisions
+            << clock.tick << ',' << static_cast<std::uint32_t>(entity) << ','
+            << identity.instance_id << ',' << team.id << ','
+            << (member ? static_cast<std::uint32_t>(member->squad) : 0u) << ','
+            << position.value.x << ',' << position.value.y << ','
+            << (collider ? collider->radius_x : 0.f) << ','
+            << (collider ? collider->radius_y : 0.f) << ','
+            << (action ? action_name(action->state) : "none") << ','
+            << (path ? path->current : 0u) << ','
+            << (path ? path->waypoints.size() : 0u) << ','
+            << (goal ? goal->destination.x : 0.f) << ','
+            << (goal ? goal->destination.y : 0.f) << ','
+            << (path ? path->requested_goal.x : 0.f) << ','
+            << (path ? path->requested_goal.y : 0.f) << ','
+            << (path && path->no_path ? 1 : 0) << ','
+            << (path && path->include_dynamic_obstacles ? 1 : 0) << ','
+            << (path && path->dynamic_repath_requested ? 1 : 0) << ','
+            << (path && path->dynamic_repath_failed ? 1 : 0) << ','
+            << raw.x << ',' << raw.y << ',' << local.x << ',' << local.y << ','
+            << glm::length(local) << ','
+            << (intent_valid && intent->threatened ? 1 : 0) << ','
+            << (intent_valid && intent->locally_infeasible ? 1 : 0) << ','
+            << (intent_valid ? intent->neighbor_count : 0u) << ','
+            << (decision_valid ? decision->candidate_count : 0u) << ','
+            << (decision_valid ? decision->selected_conflicts : 0u) << ','
+            << (decision_valid ? decision->conflict_group : 0u) << ','
+            << (decision_valid ? decision->nearest_time_to_collision : 0.f)
+            << ',' << (decision_valid
+                ? motion_mode_name(decision->mode) : "none") << ','
+            << (decision_valid
+                ? motion_reason_name(decision->reason) : "none") << ','
+            << (decision_valid ? decision->yielding_to_instance : 0u) << ','
+            << (motion_state ? motion_state->peer_instance_id : 0u) << ','
+            << (decision_valid ? decision->wait_ticks : 0u) << ','
+            << global.x << ',' << global.y << ','
+            << (decision_valid ? decision->static_safe_fraction : 1.f) << ','
+            << (decision_valid ? decision->dynamic_safe_fraction : 1.f) << ','
+            << (decision_valid ? decision->safe_fraction : 1.f) << ','
+            << actual.x << ',' << actual.y << ',' << glm::length(actual) << ','
+            << (locomotion ? locomotion->stalled_ticks : 0u) << ','
+            << motion_stop_name(stop) << '\n';
+    }
+
+    const auto& gameplay_settings = world.resource<AoeGameplaySettings>();
+    const auto summary_interval = static_cast<std::uint64_t>(std::max(
+        1.0, std::round(1.0 / gameplay_settings.fixed_dt)));
+    if (trace->last_summary_tick == 0 ||
+        clock.tick - trace->last_summary_tick >= summary_interval) {
+        trace->last_summary_tick = clock.tick;
+        std::sort(stalled_units.begin(), stalled_units.end(),
+            [](const StalledUnit& a, const StalledUnit& b) {
+                if (a.stalled_ticks != b.stalled_ticks)
+                    return a.stalled_ticks > b.stalled_ticks;
+                return a.instance < b.instance;
+            });
+        trace->summaries << "tick=" << clock.tick
+                         << " stalled=" << stalled_units.size();
+        for (std::size_t i = 0; i < stop_counts.size(); ++i) {
+            if (stop_counts[i] == 0) continue;
+            trace->summaries << ' ' << motion_stop_name(
+                static_cast<AoeMotionStopReason>(i)) << '=' << stop_counts[i];
+        }
+        trace->summaries << " longest=";
+        const auto longest = std::min<std::size_t>(10, stalled_units.size());
+        for (std::size_t i = 0; i < longest; ++i) {
+            if (i > 0) trace->summaries << ';';
+            trace->summaries << stalled_units[i].instance << ':'
+                             << stalled_units[i].stalled_ticks << ':'
+                             << motion_stop_name(stalled_units[i].reason);
+        }
+        trace->summaries << '\n';
+        trace->decisions.flush();
+        trace->summaries.flush();
+    }
+}
+#endif
 
 glm::vec2 formation_slot_world(const AoePosition& center,
                                const AoeSquadFormation& formation,
@@ -733,6 +1004,11 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
     std::uint32_t stalled = 0;
     std::uint32_t escaping = 0;
     std::uint32_t elastic = 0;
+    std::uint32_t flow_following = 0;
+    std::uint32_t flow_passing = 0;
+    std::uint32_t flow_yielding = 0;
+    std::uint32_t flow_backing = 0;
+    std::uint32_t flow_infeasible = 0;
     float current_hp = 0.f;
     float max_hp = 0.f;
     const float leash = world.resource_or_add<AoeNavigationSettings>().squad_leash;
@@ -765,6 +1041,19 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
                 reg.try_get<AoeLocomotionState>(member.entity)) {
             if (locomotion->stalled_ticks > 0) ++stalled;
             if (locomotion->escape_steering) ++escaping;
+            if (locomotion->local_avoidance_infeasible) ++flow_infeasible;
+        }
+        if (const auto* flow =
+                reg.try_get<AoeGlobalMotionDecision>(member.entity)) {
+            switch (flow->mode) {
+            case AoeGlobalMotionMode::SideStep: ++flow_following; break;
+            case AoeGlobalMotionMode::PassingLeft:
+            case AoeGlobalMotionMode::PassingRight: ++flow_passing; break;
+            case AoeGlobalMotionMode::Yielding: ++flow_yielding; break;
+            case AoeGlobalMotionMode::Backing: ++flow_backing; break;
+            case AoeGlobalMotionMode::Clear:
+            case AoeGlobalMotionMode::Recovering: break;
+            }
         }
         if (const auto* follow =
                 reg.try_get<AoeSquadSlotFollowState>(member.entity);
@@ -811,6 +1100,9 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
         << dynamic_repath_failed << " beyond-leash=" << beyond_leash << '\n'
         << "  locomotion stalled=" << stalled << " escape=" << escaping
         << " elastic-slot=" << elastic << '\n'
+        << "  global-motion side=" << flow_following << " pass=" << flow_passing
+        << " yield=" << flow_yielding << " back=" << flow_backing
+        << " infeasible=" << flow_infeasible << '\n'
         << "  guide=";
     if (guide) {
         out << guide->current << '/' << guide->waypoints.size()
@@ -886,6 +1178,10 @@ void diagnostics_system(EcsWorld& world) {
         << " | C collision=" << (preview.draw_unit_colliders ? "ON" : "OFF")
         << " | P feet=" << (preview.draw_unit_feet ? "ON" : "OFF")
         << " | L trace=" << (preview.trace_unit_foot ? "ON" : "OFF")
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        << " | T motion-log="
+        << (world.resource<MotionDecisionTraceState>().capturing ? "ON" : "OFF")
+#endif
         << " | V vsync="
         << (world.resource<Window>().vsync ? "ON" : "OFF")
         << " | Esc quit\n"
@@ -934,7 +1230,17 @@ void diagnostics_system(EcsWorld& world) {
         << " neighbors=" << gameplay.steering_neighbors_considered << '\n'
         << "continuity side-switch=" << gameplay.steering_side_switches
         << " facing-suppressed=" << gameplay.facing_changes_suppressed
-        << " facing-committed=" << gameplay.facing_changes_committed << '\n';
+        << " facing-committed=" << gameplay.facing_changes_committed << '\n'
+        << "unit-flow intents=" << gameplay.flow_active_intents
+        << " checks=" << gameplay.flow_neighbor_checks
+        << " conflicts=" << gameplay.flow_conflicts
+        << " follow=" << gameplay.flow_following
+        << " pass=" << gameplay.flow_passing
+        << " yield=" << gameplay.flow_yielding
+        << " back=" << gameplay.flow_backing
+        << " infeasible=" << gameplay.flow_infeasible_assignments
+        << " projections=" << gameplay.flow_overlap_projections
+        << " escalations=" << gameplay.flow_deadlock_escalations << '\n';
     out << "movement ms=" << gameplay.movement_last_ms
         << " peak=" << gameplay.movement_peak_ms << '\n';
     if (aoe2_performance) {
@@ -1029,7 +1335,8 @@ void system_profile_end(EcsWorld& world) {
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
                "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
                "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,"
-               "g_acquisition_ms,g_navigation_ms,"
+               "g_acquisition_ms,g_navigation_ms,g_movement_intent_ms,"
+               "g_local_avoidance_ms,g_unit_flow_ms,g_motion_safety_ms,"
                "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
                "move_speed_samples,move_base_avg,move_effective_avg,move_desired_avg,"
                "move_steering_avg,move_actual_avg,move_actual_base_ratio,"
@@ -1095,6 +1402,8 @@ void system_profile_end(EcsWorld& world) {
         << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
         << gameplay.squad_control_ms << ','
         << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
+        << gameplay.movement_intent_ms << ',' << gameplay.local_avoidance_ms << ','
+        << gameplay.unit_flow_ms << ',' << gameplay.motion_safety_ms << ','
         << gameplay.movement_ms << ',' << gameplay.combat_ms << ','
         << gameplay.projectile_ms << ',' << gameplay.lifecycle_ms << ','
         << gameplay.movement_speed_samples << ',' << base_average << ','
@@ -1168,6 +1477,16 @@ int main() {
         }
     }
     app.world.add_resource<SystemProfileState>(std::move(profile));
+    MotionDecisionTraceState motion_trace;
+    if (const char* value = std::getenv("GLD_AOE_MOTION_TRACE")) {
+        if (*value && std::string_view(value) != "1")
+            motion_trace.directory = fs::path(value);
+        if (!begin_motion_trace(motion_trace))
+            std::fprintf(stderr,
+                "[aoe_squad_preview] failed to start motion trace in %s\n",
+                motion_trace.directory.string().c_str());
+    }
+    app.world.add_resource<MotionDecisionTraceState>(std::move(motion_trace));
 #endif
 
     app.add_system(Stage::Startup, [](EcsWorld& world) {
@@ -1220,9 +1539,18 @@ int main() {
         std::printf(
             "Controls: 1/2/3 stress preset, Space mutual AttackMove, S stop, "
             "G map, N navigation, C collision, P feet, L trace, R reset, F5 rescan, "
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+            "T motion decision log, "
+#endif
             "Escape quit\n");
     });
     app.add_system(Stage::Update, input_system);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    // AoeGameplayPlugin registered its fixed-step driver earlier in
+    // PreUpdate, so this samples the final authoritative decision after all
+    // fixed ticks completed for the rendered frame.
+    app.add_system(Stage::PreUpdate, motion_decision_trace_system);
+#endif
     app.add_system(Stage::Update, projection_system);
     app.add_system(Stage::PostUpdate, submit_map_navigation_gizmos);
     app.add_system(Stage::PostUpdate, submit_unit_collider_gizmos);
