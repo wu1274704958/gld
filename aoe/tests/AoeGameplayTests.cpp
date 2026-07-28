@@ -819,6 +819,14 @@ int main() {
     backing_flow_fixture.world.reg().emplace<AoeGlobalMotionState>(
         backing_yielder, AoeGlobalMotionState{
             .mode = AoeGlobalMotionMode::Yielding, .wait_ticks = 1});
+    // wait_ticks is advanced from the previous tick's authoritative movement
+    // result before the planner overwrites its decision.  Seed that complete
+    // history here instead of only seeding the derived counter.
+    backing_flow_fixture.world.reg().emplace<AoeGlobalMotionDecision>(
+        backing_yielder, AoeGlobalMotionDecision{
+            .mode = AoeGlobalMotionMode::Yielding,
+            .produced_tick = 0,
+            .valid = true});
     backing_flow_fixture.world.reg().get<AoeLocomotionState>(
         backing_yielder).local_avoidance_infeasible = true;
     const int backing_facing = backing_flow_fixture.world.reg()

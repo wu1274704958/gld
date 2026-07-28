@@ -10,7 +10,7 @@ layout(binding = 0, rg16ui) uniform uimage2D current_image;
 struct UnitData {
     vec4 position_radii; // xy=世界坐标中心，zw=碰撞半径
     vec4 intent_dt;      // xy=期望速度，z=fixed dt，w=速度
-    uvec4 identity_wait; // x=handle，y=generation，z=wait ticks，w=保留
+    uvec4 identity_wait; // x=handle，y=generation，z=wait ticks，w=是否有移动意向
 };
 layout(std430, binding = 0) readonly buffer Units { UnitData units[]; };
 uniform uint unit_count;

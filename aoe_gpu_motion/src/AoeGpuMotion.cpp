@@ -339,7 +339,7 @@ public:
         public_diag.unavailable_reason.clear();
         public_diag.map_width_pixels = width_;
         public_diag.map_height_pixels = height_;
-        public_diag.active_units = static_cast<std::uint32_t>(units_.size());
+        public_diag.active_units = active_unit_count_;
         public_diag.authoritative_corrections = world.resource_or_add<
             AoeGlobalMotionPlannerDiagnostics>().authoritative_corrections;
         ++public_diag.fixed_ticks;
@@ -483,6 +483,7 @@ private:
 
     bool gather_units(EcsWorld& world, std::uint64_t tick, std::string& error) {
         units_.clear(); entities_.clear(); live_instances_.clear();
+        active_unit_count_ = 0;
         std::fill(handle_to_index_.begin(), handle_to_index_.end(), InvalidIndex);
         auto& reg = world.reg();
         auto& index = world.resource_or_add<AoeUnitFlowIndex>();
@@ -491,10 +492,13 @@ private:
         for (auto entity : reg.view<AoeGlobalMotionDecision>())
             reg.get<AoeGlobalMotionDecision>(entity).valid = false;
         const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
-        for (auto entity : reg.view<AoeMovementIntent, AoePosition, AoeCollider,
-                                    AoeGameplayIdentity, AoeTeam>()) {
-            const auto& intent = reg.get<AoeMovementIntent>(entity);
-            if (!intent.valid || intent.produced_tick != tick) continue;
+        for (auto entity : reg.view<AoePosition, AoeCollider,
+                                    AoeGameplayIdentity, AoeTeam>(
+                 entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
+            const auto* intent = reg.try_get<AoeMovementIntent>(entity);
+            const bool active = intent && intent->valid &&
+                intent->produced_tick == tick &&
+                glm::length(intent->velocity) > .00001f;
             const auto instance = reg.get<AoeGameplayIdentity>(entity).instance_id;
             const HandleRecord handle = acquire_handle(instance);
             if (!handle.handle) { error = "GPU unit handle space (0x0001-0xEFFF) exhausted"; return false; }
@@ -505,29 +509,34 @@ private:
             GpuUnitData unit{};
             unit.position_radii[0] = position.value.x; unit.position_radii[1] = position.value.y;
             unit.position_radii[2] = collider.radius_x; unit.position_radii[3] = collider.radius_y;
-            unit.intent_dt[0] = intent.velocity.x; unit.intent_dt[1] = intent.velocity.y;
-            unit.intent_dt[2] = dt; unit.intent_dt[3] = glm::length(intent.velocity);
+            const glm::vec2 velocity = active ? intent->velocity : glm::vec2{0.f};
+            unit.intent_dt[0] = velocity.x; unit.intent_dt[1] = velocity.y;
+            unit.intent_dt[2] = dt; unit.intent_dt[3] = glm::length(velocity);
             unit.identity_wait[0] = handle.handle; unit.identity_wait[1] = handle.generation;
             unit.identity_wait[2] = state.wait_ticks;
+            unit.identity_wait[3] = active ? 1u : 0u;
             handle_to_index_[handle.handle] = static_cast<std::uint32_t>(units_.size());
             units_.push_back(unit); entities_.push_back(entity);
-            entt::entity squad = entt::null;
-            if (auto* member = reg.try_get<AoeSquadMember>(entity)) squad = member->squad;
-            index.records.push_back({entity, instance, squad, reg.get<AoeTeam>(entity).id,
-                intent.kind, position.value, {collider.radius_x, collider.radius_y}, intent.velocity});
-            index.maximum_reach = std::max(index.maximum_reach,
-                std::max(collider.radius_x, collider.radius_y) + glm::length(intent.velocity));
-            reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
-                AoeGlobalMotionDecision{.velocity = intent.velocity,
-                    .produced_tick = tick, .valid = true});
-            if (intent.locally_infeasible) ++diag.flow_infeasible_assignments;
+            if (active) {
+                ++active_unit_count_;
+                entt::entity squad = entt::null;
+                if (auto* member = reg.try_get<AoeSquadMember>(entity)) squad = member->squad;
+                index.records.push_back({entity, instance, squad, reg.get<AoeTeam>(entity).id,
+                    intent->kind, position.value, {collider.radius_x, collider.radius_y}, velocity});
+                index.maximum_reach = std::max(index.maximum_reach,
+                    std::max(collider.radius_x, collider.radius_y) + glm::length(velocity));
+                reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
+                    AoeGlobalMotionDecision{.velocity = velocity,
+                        .produced_tick = tick, .valid = true});
+                if (intent->locally_infeasible) ++diag.flow_infeasible_assignments;
+            }
         }
         for (auto it = handles_.begin(); it != handles_.end();) {
             if (!live_instances_.contains(it->first)) {
                 free_handles_.push_back(it->second.handle); it = handles_.erase(it);
             } else ++it;
         }
-        diag.flow_active_intents += units_.size();
+        diag.flow_active_intents += active_unit_count_;
         return true;
     }
 
@@ -574,12 +583,14 @@ private:
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             dispatch_units(Pass::Validate);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        }
-        // 四轮先解决无依赖的候选冲突，最终提案再统一传播 32 个队列层级。
-        // 保持一次末端 readback；中途同步判断是否为空比固定 dispatch 更昂贵。
-        for (int i = 0; i < DependencyPasses; ++i) {
-            dispatch_units(Pass::Propagate);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            // Direct round 的原始意向依赖必须在尝试其它方向前求解；否则下一轮
+            // propose 会覆盖本可通过“阻挡者先移动”解决的队列提案。
+            if (round == 0) {
+                for (int i = 0; i < DependencyPasses; ++i) {
+                    dispatch_units(Pass::Propagate);
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+                }
+            }
         }
         dispatch_pixels(Pass::PrepareNext);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -613,13 +624,14 @@ private:
             const auto& gpu = decisions_[i];
             if (gpu.identity[0] != units_[i].identity_wait[0] ||
                 gpu.identity[1] != units_[i].identity_wait[1]) continue;
+            if (units_[i].identity_wait[3] == 0u) continue;
             auto& decision = reg.get<AoeGlobalMotionDecision>(entities_[i]);
             decision.velocity = {gpu.velocity[0], gpu.velocity[1]};
             decision.produced_tick = tick; decision.valid = true;
             auto& state = reg.get_or_emplace<AoeGlobalMotionState>(entities_[i]);
-            const bool waiting = gpu.identity[2] == 0u && units_[i].intent_dt[3] > .00001f;
+            const bool waiting = gpu.identity[2] != 2u && units_[i].intent_dt[3] > .00001f;
             if (waiting) {
-                ++state.wait_ticks; decision.wait_ticks = state.wait_ticks;
+                decision.wait_ticks = state.wait_ticks;
                 decision.mode = state.wait_ticks >= 45u
                     ? AoeGlobalMotionMode::Backing : AoeGlobalMotionMode::Yielding;
                 decision.reason = state.wait_ticks >= 45u
@@ -629,9 +641,10 @@ private:
                 if (decision.mode == AoeGlobalMotionMode::Backing) ++gameplay_diag.flow_backing;
                 else ++gameplay_diag.flow_yielding;
             } else {
-                state.wait_ticks = 0; decision.wait_ticks = 0;
+                decision.wait_ticks = state.wait_ticks;
                 decision.mode = AoeGlobalMotionMode::Clear;
             }
+            state.mode = decision.mode;
         }
     }
 
@@ -684,6 +697,7 @@ private:
     GLuint unit_buffer_ = 0, proposal_buffer_ = 0, decision_buffer_ = 0,
            handle_map_buffer_ = 0;
     std::uint32_t width_ = 0, height_ = 0;
+    std::uint32_t active_unit_count_ = 0;
     glm::vec2 map_origin_{std::numeric_limits<float>::max()};
     std::uint64_t static_revision_ = 0;
     int current_index_ = 0, next_index_ = 1;

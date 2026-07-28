@@ -1,93 +1,158 @@
 #version 430 core
 
-// Solve-B2：每个单位评分候选方向并提出一个刚体移动。
-// 候选为 0、±22.5、±45、±67.5、±90 度；等待达到 45 tick 后增加 180 度后退。
-// 静态障碍立即淘汰候选。相同方向的动态占用允许进入“等待依赖”状态，交给后面的
-// 固定次数 dependency propagation，而不是让整条队列永久停住。
+// Solve-B2：Round 0 永远先提交完整的原始意向；只有它在直接依赖传播后仍未解决，
+// Round 1..3 才尝试全方向 fallback。一个 invocation 负责一个单位，并逐像素检查
+// 刚体 footprint。identity_wait.w=1 表示本 tick 有可执行的移动意向。
 layout(local_size_x = 64) in;
 layout(binding = 0, rg16ui) uniform readonly uimage2D current_image;
-// build_field 写完并生成 mip 后，同一张纹理作为 sampler 读取。
 layout(binding = 0) uniform sampler2D field_sampler;
 
 struct UnitData { vec4 position_radii; vec4 intent_dt; uvec4 identity_wait; };
 struct Proposal { vec4 velocity_destination; uvec4 meta; };
 layout(std430, binding = 0) readonly buffer Units { UnitData units[]; };
 layout(std430, binding = 1) buffer Proposals { Proposal proposals[]; };
+layout(std430, binding = 3) readonly buffer HandleMap { uint handle_to_index[]; };
 uniform uint unit_count;
 uniform vec2 map_origin;
 uniform float pixels_per_world_unit;
 uniform ivec2 image_size;
 uniform uint candidate_round;
 
-vec2 unpack_direction(uint encoded_vector) {
-    float angle = float(encoded_vector & 0xFFu) * (6.28318530718 / 255.0);
-    return vec2(cos(angle), sin(angle));
-}
-vec2 rotate2(vec2 v, float a) {
-    float c = cos(a), s = sin(a); return vec2(c*v.x-s*v.y, s*v.x+c*v.y);
+const float Pi = 3.14159265359;
+
+vec2 rotate2(vec2 value, float angle) {
+    float c = cos(angle), s = sin(angle);
+    return vec2(c * value.x - s * value.y,
+                s * value.x + c * value.y);
 }
 
-bool footprint_viable(UnitData unit, vec2 destination, vec2 direction,
-                      out bool dependency) {
+bool proposal_covers(uint index, ivec2 pixel) {
+    vec2 center = (proposals[index].velocity_destination.zw - map_origin) *
+                  pixels_per_world_unit;
+    vec2 radii = max(units[index].position_radii.zw * pixels_per_world_unit,
+                     vec2(0.5));
+    vec2 q = (vec2(pixel) + vec2(0.5) - center) / radii;
+    return dot(q, q) <= 1.0;
+}
+
+// Direct 只拒绝静态障碍；任何动态 owner 都先作为依赖，方向相反也不淘汰。
+bool classify_direct(UnitData unit, vec2 destination, out bool dependency) {
     vec2 center = (destination - map_origin) * pixels_per_world_unit;
     vec2 radii = max(unit.position_radii.zw * pixels_per_world_unit, vec2(0.5));
-    ivec2 lo = max(ivec2(floor(center-radii)), ivec2(0));
-    ivec2 hi = min(ivec2(ceil(center+radii)), image_size-1);
-    if (any(lessThan(center-radii, vec2(0.0))) ||
-        any(greaterThanEqual(center+radii, vec2(image_size)))) return false;
+    if (any(lessThan(center - radii, vec2(0.0))) ||
+        any(greaterThanEqual(center + radii, vec2(image_size)))) return false;
+    ivec2 lo = max(ivec2(floor(center - radii)), ivec2(0));
+    ivec2 hi = min(ivec2(ceil(center + radii)), image_size - 1);
     dependency = false;
-    for (int y=lo.y; y<=hi.y; ++y) for (int x=lo.x; x<=hi.x; ++x) {
-        vec2 q=(vec2(x,y)+vec2(0.5)-center)/radii;
-        if (dot(q,q)>1.0) continue;
-        uvec2 value=imageLoad(current_image,ivec2(x,y)).rg;
-        if (value.r>=0xF000u) return false;
-        if (value.r!=0u && value.r!=unit.identity_wait.x) {
-            if (dot(direction, unpack_direction(value.g)) < 0.65) return false;
-            dependency=true;
+    for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            ivec2 pixel = ivec2(x, y);
+            vec2 q = (vec2(pixel) + vec2(0.5) - center) / radii;
+            if (dot(q, q) > 1.0) continue;
+            uint owner = imageLoad(current_image, pixel).r;
+            if (owner >= 0xF000u) return false;
+            if (owner != 0u && owner != unit.identity_wait.x)
+                dependency = true;
         }
-    }
     return true;
 }
 
+// Fallback 不再创建新的未解依赖。动态 owner 只有已经 accepted 且 next footprint
+// 确实会离开目标像素时才可视为空位；其余候选留给下一轮或下一 fixed tick。
+bool fallback_free(UnitData unit, vec2 destination) {
+    vec2 center = (destination - map_origin) * pixels_per_world_unit;
+    vec2 radii = max(unit.position_radii.zw * pixels_per_world_unit, vec2(0.5));
+    if (any(lessThan(center - radii, vec2(0.0))) ||
+        any(greaterThanEqual(center + radii, vec2(image_size)))) return false;
+    ivec2 lo = max(ivec2(floor(center - radii)), ivec2(0));
+    ivec2 hi = min(ivec2(ceil(center + radii)), image_size - 1);
+    for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            ivec2 pixel = ivec2(x, y);
+            vec2 q = (vec2(pixel) + vec2(0.5) - center) / radii;
+            if (dot(q, q) > 1.0) continue;
+            uint owner = imageLoad(current_image, pixel).r;
+            if (owner == 0u || owner == unit.identity_wait.x) continue;
+            if (owner >= 0xF000u) return false;
+            uint blocker = handle_to_index[owner];
+            if (blocker == 0xFFFFFFFFu || proposals[blocker].meta.w != 2u ||
+                proposal_covers(blocker, pixel)) return false;
+        }
+    return true;
+}
+
+uint priority_key(UnitData unit, bool dependency) {
+    // Ready 的最高位为 0，DependencyPending 为 1；随后才比较等待与稳定 handle。
+    uint wait_priority = 0x7FFFu - min(unit.identity_wait.z, 0x7FFFu);
+    return (dependency ? 0x80000000u : 0u) |
+           (wait_priority << 16u) | unit.identity_wait.x;
+}
+
 void main() {
-    uint i=gl_GlobalInvocationID.x; if(i>=unit_count) return;
-    UnitData unit=units[i]; float speed=length(unit.intent_dt.xy);
-    Proposal previous=proposals[i];
-    // 已经整 footprint 获胜的单位在后续 reservation round 中保持原提案。
-    if(candidate_round>0u && previous.meta.w==2u)return;
-    uint tried_mask=candidate_round>0u?previous.meta.y:0u;
-    if(candidate_round>0u && previous.meta.z>0u)
-        tried_mask|=1u<<(previous.meta.z-1u);
-    Proposal best; best.velocity_destination=vec4(0.0,0.0,unit.position_radii.xy);
-    best.meta=uvec4((0xFFFFu-min(unit.identity_wait.z,0xFFFFu))<<16u |
-                    unit.identity_wait.x,tried_mask,0u,0u);
-    if(speed<=0.00001){ proposals[i]=best; return; }
-    vec2 intent_dir=unit.intent_dt.xy/speed; float best_score=-1e20;
-    const float angles[10]=float[10](0.0,0.39269908169,-0.39269908169,
-        0.78539816339,-0.78539816339,1.17809724510,-1.17809724510,
-        1.57079632679,-1.57079632679,3.14159265359);
-    int candidate_count=unit.identity_wait.z>=45u ? 10 : 9;
-    for(int c=0;c<candidate_count;++c){
-        if((tried_mask&(1u<<uint(c)))!=0u)continue;
-        vec2 direction=rotate2(intent_dir,angles[c]);
-        float candidate_speed=c==9 ? speed*0.25 : speed;
-        vec2 velocity=direction*candidate_speed;
-        vec2 destination=unit.position_radii.xy+velocity*unit.intent_dt.z;
-        bool dependency=false;
-        if(!footprint_viable(unit,destination,direction,dependency)) continue;
-        ivec2 fp=clamp(ivec2((destination-map_origin)*pixels_per_world_unit),
-                            ivec2(0),image_size-1);
-        vec4 field=texelFetch(field_sampler,fp,0);
-        // mip 3 汇总更远处的共同意向和拥堵，避免只拥有局部视野。
-        vec4 far_field=texelFetch(field_sampler,fp/8,3);
-        field.xy=mix(field.xy,far_field.xy,0.45);
-        field.z=max(field.z,far_field.z*0.75);
-        vec2 field_dir=length(field.xy)>0.00001?normalize(field.xy):intent_dir;
-        float score=dot(direction,intent_dir)*3.0+dot(direction,field_dir)*0.8-
-                    field.z*1.25-float(c)*0.015;
-        if(score>best_score){best_score=score;
-            best.velocity_destination=vec4(velocity,destination);
-            best.meta.z=uint(c)+1u;}
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= unit_count) return;
+    UnitData unit = units[i];
+    float speed = length(unit.intent_dt.xy);
+
+    Proposal empty;
+    empty.velocity_destination = vec4(0.0, 0.0, unit.position_radii.xy);
+    empty.meta = uvec4(priority_key(unit, false), 0u, 0u, 0u);
+    if (unit.identity_wait.w == 0u || speed <= 0.00001) {
+        proposals[i] = empty;
+        return;
     }
-    proposals[i]=best;
+
+    Proposal previous = proposals[i];
+    // Direct/fallback 已经 accepted 后，后续轮次不得改方向。
+    if (candidate_round > 0u && previous.meta.w == 2u) return;
+
+    vec2 intent_direction = unit.intent_dt.xy / speed;
+    if (candidate_round == 0u) {
+        vec2 destination = unit.position_radii.xy + unit.intent_dt.xy * unit.intent_dt.z;
+        bool dependency = false;
+        if (!classify_direct(unit, destination, dependency)) {
+            proposals[i] = empty;
+            return;
+        }
+        empty.velocity_destination = vec4(unit.intent_dt.xy, destination);
+        empty.meta.x = priority_key(unit, dependency);
+        empty.meta.z = 1u; // direction index 0 + 1
+        proposals[i] = empty;
+        return;
+    }
+
+    uint tried_mask = candidate_round > 1u ? previous.meta.y : 0u;
+    if (candidate_round > 1u && previous.meta.z > 0u)
+        tried_mask |= 1u << (previous.meta.z - 1u);
+
+    Proposal best = empty;
+    best.meta.y = tried_mask;
+    float best_score = -1e20;
+    // 16 个完整方向；反向没有方向惩罚。空旷时 direction 0 通过稳定 tie-break 获胜。
+    for (int direction_index = 0; direction_index < 16; ++direction_index) {
+        if ((tried_mask & (1u << uint(direction_index))) != 0u) continue;
+        float angle = float(direction_index) * (2.0 * Pi / 16.0);
+        vec2 direction = rotate2(intent_direction, angle);
+        const float scales[4] = float[4](1.0, 0.75, 0.5, 0.25);
+        for (int tier = 0; tier < 4; ++tier) {
+            float scale = scales[tier];
+            vec2 velocity = direction * speed * scale;
+            vec2 destination = unit.position_radii.xy + velocity * unit.intent_dt.z;
+            if (!fallback_free(unit, destination)) continue;
+            ivec2 field_pixel = clamp(ivec2((destination - map_origin) *
+                pixels_per_world_unit), ivec2(0), image_size - 1);
+            vec4 field = texelFetch(field_sampler, field_pixel, 0);
+            // 长度是主目标；拥堵与静态净空只在同一长度档中排序。
+            float score = scale * 100.0 - field.z * 2.0 + field.w * 0.25 -
+                          float(direction_index) * 0.0001;
+            if (score > best_score) {
+                best_score = score;
+                best.velocity_destination = vec4(velocity, destination);
+                best.meta.x = priority_key(unit, false);
+                best.meta.z = uint(direction_index) + 1u;
+            }
+            break; // 该方向已经找到最长的立即可走长度。
+        }
+    }
+    proposals[i] = best;
 }

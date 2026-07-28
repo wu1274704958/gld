@@ -10,13 +10,16 @@ struct UnitData{vec4 position_radii;vec4 intent_dt;uvec4 identity_wait;};
 struct Proposal{vec4 velocity_destination;uvec4 meta;};
 layout(std430,binding=0)readonly buffer Units{UnitData units[];};
 layout(std430,binding=1)buffer Proposals{Proposal proposals[];};
-uniform uint unit_count;uniform vec2 map_origin;uniform float pixels_per_world_unit;uniform ivec2 image_size;
+uniform uint unit_count;uniform vec2 map_origin;uniform float pixels_per_world_unit;uniform ivec2 image_size;uniform uint candidate_round;
 void main(){uint i=gl_GlobalInvocationID.x;if(i>=unit_count)return;Proposal p=proposals[i];
  if(p.meta.z==0u){p.meta.w=0u;proposals[i]=p;return;}bool dependency=false;bool won=true;
  vec2 center=(p.velocity_destination.zw-map_origin)*pixels_per_world_unit;
  vec2 radii=max(units[i].position_radii.zw*pixels_per_world_unit,vec2(.5));
  ivec2 lo=max(ivec2(floor(center-radii)),ivec2(0));ivec2 hi=min(ivec2(ceil(center+radii)),image_size-1);
  for(int y=lo.y;y<=hi.y;++y)for(int x=lo.x;x<=hi.x;++x){vec2 q=(vec2(x,y)+vec2(.5)-center)/radii;if(dot(q,q)>1.0)continue;
-  if(imageLoad(reservation_image,ivec2(x,y)).r!=p.meta.x)won=false;
+  uint expected=p.meta.w==2u?units[i].identity_wait.x:p.meta.x;
+  if(imageLoad(reservation_image,ivec2(x,y)).r!=expected)won=false;
   uint owner=imageLoad(current_image,ivec2(x,y)).r;if(owner!=0u&&owner<0xF000u&&owner!=units[i].identity_wait.x)dependency=true;}
- p.meta.w=won?(dependency?1u:2u):0u;proposals[i]=p;}
+ // Fallback shader 已确认所有当前 owner 都会由 accepted proposal 腾空，因此后续轮次
+ // 只需验证原子 reservation；Direct round 才建立新的 dependency。
+ p.meta.w=won?(candidate_round==0u&&dependency?1u:2u):0u;proposals[i]=p;}

@@ -12,8 +12,9 @@ layout(std430,binding=1)readonly buffer Proposals{Proposal proposals[];};
 uniform uint unit_count;uniform vec2 map_origin;uniform float pixels_per_world_unit;
 uniform ivec2 image_size;
 void main(){uint i=gl_GlobalInvocationID.x;if(i>=unit_count||proposals[i].meta.z==0u)return;
+ uint key=proposals[i].meta.w==2u?units[i].identity_wait.x:proposals[i].meta.x;
  vec2 center=(proposals[i].velocity_destination.zw-map_origin)*pixels_per_world_unit;
  vec2 radii=max(units[i].position_radii.zw*pixels_per_world_unit,vec2(0.5));
  ivec2 lo=max(ivec2(floor(center-radii)),ivec2(0));ivec2 hi=min(ivec2(ceil(center+radii)),image_size-1);
  for(int y=lo.y;y<=hi.y;++y)for(int x=lo.x;x<=hi.x;++x){vec2 q=(vec2(x,y)+vec2(.5)-center)/radii;
-  if(dot(q,q)<=1.0)imageAtomicMin(reservation_image,ivec2(x,y),proposals[i].meta.x);}}
+  if(dot(q,q)<=1.0)imageAtomicMin(reservation_image,ivec2(x,y),key);}}

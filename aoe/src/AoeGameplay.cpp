@@ -2442,13 +2442,6 @@ void unit_flow_tick(EcsWorld& world, std::uint64_t tick) {
                 state.backing_distance = 0.f;
             }
         }
-        const auto* locomotion = reg.try_get<AoeLocomotionState>(record.entity);
-        const bool stopped = locomotion && locomotion->actual_speed <=
-            settings.steering_stalled_speed;
-        if (decision.mode != AoeGlobalMotionMode::Clear && stopped)
-            ++state.wait_ticks;
-        else if (decision.mode == AoeGlobalMotionMode::Clear)
-            state.wait_ticks = 0;
         const float maximum_backing_distance =
             2.f * unit_flow_radius(record) *
             settings.unit_flow_backing_max_diameters;
@@ -2587,7 +2580,39 @@ void unit_flow_tick(EcsWorld& world, std::uint64_t tick) {
             group_scale[find_root(i)];
 }
 
+void update_global_motion_wait_states(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    const auto& navigation = world.resource_or_add<AoeNavigationSettings>();
+    for (const auto entity : reg.view<AoeGlobalMotionState>()) {
+        auto& state = reg.get<AoeGlobalMotionState>(entity);
+        const auto* intent = reg.try_get<AoeMovementIntent>(entity);
+        const bool active_intent = intent && intent->valid &&
+            intent->produced_tick == tick &&
+            glm::length(intent->velocity) > Epsilon;
+        if (!active_intent) {
+            state = AoeGlobalMotionState{};
+            continue;
+        }
+        const auto* previous = reg.try_get<AoeGlobalMotionDecision>(entity);
+        const bool contiguous = previous && previous->valid &&
+            previous->produced_tick < tick && previous->produced_tick + 1u == tick;
+        if (!contiguous) {
+            state.wait_ticks = 0;
+            continue;
+        }
+        const auto* locomotion = reg.try_get<AoeLocomotionState>(entity);
+        const bool progressed = locomotion && locomotion->actual_speed >
+            navigation.steering_stalled_speed;
+        if (progressed) state.wait_ticks = 0;
+        else if (state.wait_ticks < std::numeric_limits<std::uint32_t>::max())
+            ++state.wait_ticks;
+    }
+}
+
 void global_motion_planner_tick(EcsWorld& world, std::uint64_t tick) {
+    // wait_ticks 统一表示“连续有意向但上一 tick 没有实际进展”。在 backend
+    // 覆盖上一条 decision 前更新，CPU/GPU/fallback 因而共享完全相同的语义。
+    update_global_motion_wait_states(world, tick);
     const auto& settings = world.resource_or_add<AoeNavigationSettings>();
     auto& registry = world.resource_or_add<AoeGlobalMotionPlannerRegistry>();
     auto& diagnostics =
