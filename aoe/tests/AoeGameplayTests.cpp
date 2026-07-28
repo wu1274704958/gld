@@ -1021,6 +1021,93 @@ int main() {
     assert(glm::length(mapped_squad_fixture.world.reg()
                .get<AoePosition>(mapped_squad).value - glm::vec2(16.f, 6.f)) < .05f);
 
+    // Attack Move performs one role-preserving nearest-slot rematch when the
+    // anchor reaches its destination. Members already standing in each
+    // other's same-priority slots finish without crossing through one another.
+    Fixture arrival_reflow_fixture;
+    AoeSquadSpawnOptions arrival_reflow_options;
+    arrival_reflow_options.composition = {{"test", 4, 1}};
+    arrival_reflow_options.center = {5.f, 5.f};
+    arrival_reflow_options.forward = {1.f, 0.f};
+    arrival_reflow_options.team_id = 1;
+    const auto arrival_reflow_squad = spawn_aoe_gameplay_squad(
+        arrival_reflow_fixture.world, arrival_reflow_options);
+    spawn_aoe_gameplay_unit_system(arrival_reflow_fixture.world);
+    arrival_reflow_fixture.advance_ticks(1);
+    auto& arrival_formation = arrival_reflow_fixture.world.reg()
+        .get<AoeSquadFormation>(arrival_reflow_squad);
+    assert(arrival_formation.slots.size() == 4);
+    const auto slot_world = [&](const AoeFormationSlot& slot) {
+        const auto center = arrival_reflow_fixture.world.reg()
+            .get<AoePosition>(arrival_reflow_squad).value;
+        const glm::vec2 forward = glm::normalize(arrival_formation.forward);
+        const glm::vec2 right{forward.y, -forward.x};
+        return center + right * slot.local_offset.x +
+               forward * slot.local_offset.y;
+    };
+    const auto first_unit = arrival_formation.slots[0].unit;
+    const auto second_unit = arrival_formation.slots[1].unit;
+    arrival_reflow_fixture.world.reg().get<AoePosition>(
+        first_unit.entity).value = slot_world(arrival_formation.slots[1]);
+    arrival_reflow_fixture.world.reg().get<AoePosition>(
+        second_unit.entity).value = slot_world(arrival_formation.slots[0]);
+    auto& arrival_order = arrival_reflow_fixture.world.reg()
+        .get<AoeSquadOrder>(arrival_reflow_squad);
+    arrival_order = {AoeSquadOrderType::AttackMove,
+                     arrival_reflow_fixture.world.reg()
+                         .get<AoePosition>(arrival_reflow_squad).value, {}};
+    arrival_reflow_fixture.world.reg().get<AoeSquadState>(
+        arrival_reflow_squad).phase = AoeSquadPhase::Moving;
+    arrival_formation.arrival_reflow_done = false;
+    arrival_reflow_fixture.advance_ticks(1);
+    assert(arrival_formation.arrival_reflow_done);
+    assert(arrival_formation.slots[0].unit.entity == second_unit.entity);
+    assert(arrival_formation.slots[1].unit.entity == first_unit.entity);
+    assert(arrival_reflow_fixture.world.reg().get<AoeSquadState>(
+               arrival_reflow_squad).phase == AoeSquadPhase::Idle);
+    assert(arrival_reflow_fixture.world.reg().get<AoeSquadOrder>(
+               arrival_reflow_squad).type == AoeSquadOrderType::Idle);
+
+    // A globally nearer slot in another priority group is never assigned.
+    Fixture role_reflow_fixture;
+    const auto role_reflow_squad = spawn_aoe_gameplay_squad(
+        role_reflow_fixture.world, arrival_reflow_options);
+    spawn_aoe_gameplay_unit_system(role_reflow_fixture.world);
+    role_reflow_fixture.advance_ticks(1);
+    auto& role_formation = role_reflow_fixture.world.reg()
+        .get<AoeSquadFormation>(role_reflow_squad);
+    assert(role_formation.slots.size() == 4);
+    role_formation.slots[0].priority = 300;
+    role_formation.slots[1].priority = 300;
+    role_formation.slots[2].priority = -100;
+    role_formation.slots[3].priority = -100;
+    const auto role_zero = role_formation.slots[0].unit;
+    const auto role_two = role_formation.slots[2].unit;
+    const auto role_center = role_reflow_fixture.world.reg()
+        .get<AoePosition>(role_reflow_squad).value;
+    const glm::vec2 role_forward = glm::normalize(role_formation.forward);
+    const glm::vec2 role_right{role_forward.y, -role_forward.x};
+    const auto role_slot_world = [&](std::size_t index) {
+        const auto& slot = role_formation.slots[index];
+        return role_center + role_right * slot.local_offset.x +
+               role_forward * slot.local_offset.y;
+    };
+    role_reflow_fixture.world.reg().get<AoePosition>(role_zero.entity).value =
+        role_slot_world(2);
+    role_reflow_fixture.world.reg().get<AoePosition>(role_two.entity).value =
+        role_slot_world(0);
+    role_reflow_fixture.world.reg().get<AoeSquadOrder>(role_reflow_squad) = {
+        AoeSquadOrderType::AttackMove, role_center, {}};
+    role_reflow_fixture.world.reg().get<AoeSquadState>(
+        role_reflow_squad).phase = AoeSquadPhase::Moving;
+    role_formation.arrival_reflow_done = false;
+    role_reflow_fixture.advance_ticks(1);
+    assert(role_formation.arrival_reflow_done);
+    assert(role_formation.slots[0].unit.entity == role_zero.entity);
+    assert(role_formation.slots[2].unit.entity == role_two.entity);
+    assert(role_formation.slots[0].priority == 300);
+    assert(role_formation.slots[2].priority == -100);
+
     // The preview-sized route remains stable with a 64-member formation. The
     // anchor follows its static guide while members independently split around
     // the two barriers and eventually converge at the destination.
@@ -1287,6 +1374,43 @@ int main() {
     assert(std::abs(shared_awareness_fixture.world.reg().get<AoePosition>(
                shared_awareness_squad).value.x - awareness_anchor) < 1e-5f);
 
+    // A stalled Squad member may immediately engage a different enemy that is
+    // already inside its own weapon range. The Squad keeps its Attack Move
+    // order and remains engaged; this is not the shared-candidate acquisition
+    // path, whose candidates may be outside this member's real weapon range.
+    Fixture stalled_squad_fixture;
+    AoeSquadSpawnOptions stalled_squad_options;
+    stalled_squad_options.composition = {{"test", 1, 1}};
+    stalled_squad_options.team_id = 1;
+    const auto stalled_squad = spawn_aoe_gameplay_squad(
+        stalled_squad_fixture.world, stalled_squad_options);
+    spawn_aoe_gameplay_unit_system(stalled_squad_fixture.world);
+    stalled_squad_fixture.advance_ticks(1);
+    const auto stalled_member = stalled_squad_fixture.world.reg()
+        .get<AoeSquadMembers>(stalled_squad).active.front();
+    const glm::vec2 stalled_member_start = stalled_squad_fixture.world.reg()
+        .get<AoePosition>(stalled_member.entity).value;
+    const auto stalled_squad_primary = stalled_squad_fixture.unit(
+        stalled_member_start + glm::vec2{5.5f, 0.f}, 500.f, 2);
+    assert(request_aoe_squad_attack_move(
+        stalled_squad_fixture.world, stalled_squad,
+        stalled_member_start + glm::vec2{12.f, 0.f}));
+    stalled_squad_fixture.advance_ticks(1);
+    assert(stalled_squad_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_member.entity).target.entity == stalled_squad_primary);
+    const auto stalled_squad_nearby = stalled_squad_fixture.unit(
+        stalled_squad_fixture.world.reg().get<AoePosition>(
+            stalled_member.entity).value + glm::vec2{.6f, 0.f}, 500.f, 2);
+    stalled_squad_fixture.world.reg().get<AoeLocomotionState>(
+        stalled_member.entity).stalled_ticks = 1;
+    stalled_squad_fixture.advance_ticks(1);
+    assert(stalled_squad_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_member.entity).target.entity == stalled_squad_nearby);
+    assert(stalled_squad_fixture.world.reg().get<AoeSquadOrder>(
+               stalled_squad).type == AoeSquadOrderType::AttackMove);
+    assert(stalled_squad_fixture.world.reg().get<AoeSquadState>(
+               stalled_squad).phase == AoeSquadPhase::Engaging);
+
     const auto disband_member = squad_combat_fixture.world.reg()
         .get<AoeSquadMembers>(attackers).active.front().entity;
     assert(disband_aoe_gameplay_squad(squad_combat_fixture.world, attackers));
@@ -1551,6 +1675,46 @@ int main() {
     target_lock_fixture.advance_ticks(1);
     assert(target_lock_fixture.world.reg().get<AoeAttackOrder>(lock_mover)
                .target.entity == closer_enemy);
+
+    // One stalled fixed tick permits an enemy already inside the real weapon
+    // range to preempt a farther locked Attack Move target. An enemy merely
+    // inside acquisition range does not preempt, and no suspended target is
+    // restored after the opportunistic enemy dies.
+    Fixture stalled_target_fixture;
+    const auto stalled_mover = stalled_target_fixture.unit(
+        {0.f, 0.f}, 50.f, 1);
+    const auto stalled_primary = stalled_target_fixture.unit(
+        {5.5f, 0.f}, 500.f, 2);
+    assert(request_aoe_attack_move(
+        stalled_target_fixture.world, stalled_mover, {12.f, 0.f}));
+    stalled_target_fixture.advance_ticks(1);
+    assert(stalled_target_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_mover).target.entity == stalled_primary);
+    const glm::vec2 stalled_position = stalled_target_fixture.world.reg()
+        .get<AoePosition>(stalled_mover).value;
+    const auto outside_weapon_range = stalled_target_fixture.unit(
+        stalled_position + glm::vec2{4.6f, 0.f}, 500.f, 2);
+    stalled_target_fixture.world.reg().get<AoeLocomotionState>(
+        stalled_mover).stalled_ticks = 1;
+    stalled_target_fixture.advance_ticks(1);
+    assert(stalled_target_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_mover).target.entity == stalled_primary);
+    const auto nearby_enemy = stalled_target_fixture.unit(
+        stalled_target_fixture.world.reg().get<AoePosition>(
+            stalled_mover).value + glm::vec2{.6f, 0.f}, 500.f, 2);
+    stalled_target_fixture.world.reg().get<AoeLocomotionState>(
+        stalled_mover).stalled_ticks = 1;
+    stalled_target_fixture.advance_ticks(1);
+    assert(stalled_target_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_mover).target.entity == nearby_enemy);
+    assert(stalled_target_fixture.world.reg().all_of<AoeAttackMoveOrder>(
+        stalled_mover));
+    stalled_target_fixture.world.reg().get<AoeHealth>(nearby_enemy).current = 0.f;
+    stalled_target_fixture.advance_ticks(1);
+    assert(stalled_target_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_mover).target.entity == outside_weapon_range);
+    assert(stalled_target_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_mover).target.entity != stalled_primary);
 
     const auto unreachable_enemy = target_lock_fixture.unit({3.f, 0.f}, 500.f, 2);
     target_lock_fixture.world.reg().get<AoePosition>(closer_enemy).value = {20.f, 0.f};

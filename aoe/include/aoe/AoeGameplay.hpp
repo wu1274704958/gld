@@ -666,6 +666,9 @@ struct AoeSquadFormation {
     std::vector<AoeFormationSlot> slots;
     bool dirty = true;
     bool teleport_on_next_layout = true;
+    // Attack Move performs one role-preserving nearest-slot rematch after its
+    // anchor reaches the destination. Engagement or a new order resets it.
+    bool arrival_reflow_done = false;
 };
 struct AoeSquadCombatSettings {
     AoeTargetAcquisitionType acquisition_strategy =

@@ -219,13 +219,18 @@ struct AoeUnitTarget {
 5. squad_command_tick
 6. command_tick
 7. squad_membership_cleanup_tick
-8. squad_control_tick
-9. attack_move_acquisition_tick
-10. navigation_tick
-11. movement_tick
-12. combat_tick
-13. aoe_projectile_tick
-14. lifecycle_tick
+8. squad_traffic_tick
+9. squad_control_tick
+10. attack_move_acquisition_tick
+11. navigation_tick
+12. movement_intent_tick
+13. local_avoidance_intent_tick
+14. global_motion_planner_tick
+15. global_motion_safety_tick
+16. movement_tick
+17. combat_tick
+18. aoe_projectile_tick
+19. lifecycle_tick
 ```
 
 这个顺序有几项重要含义：
@@ -233,6 +238,8 @@ struct AoeUnitTarget {
 - 动态障碍索引每个 tick 只构建一次，后面的寻路与移动共享；
 - 命令先转换为 order/goal，再由导航和移动消费；
 - AttackMove 在导航前索敌，因此进入发现范围的目标可在同 tick 推迟原路线并开始追击；
+- 索敌读取的是上一 fixed tick 留下的 `stalled_ticks`，因此第一次实际停滞后的下一 tick 可以响应射程内替代目标；
+- navigation 只维护路径，movement intent、局部避障和全局运动阶段依次生成并约束本 tick 的最终速度；
 - movement 先更新位置，combat 再用最新位置检查攻击距离；
 - Projectile 在攻击 release 产生后同 tick 注册，但从下一个 tick 开始飞行；
 - lifecycle 最后推进死亡与消失状态，PostUpdate 再做实际池化。
@@ -500,6 +507,9 @@ struct AoeTargetAcquisitionBinding<
 - 每个 tick 在导航前检查敌人；
 - 使用 `target_acquisition.radius` 发现敌人，`attack.range` 只决定何时能够攻击；
 - 锁定后不会因为出现更近敌人或尚未进入武器射程而切换；
+- 例外是追击发生第一次停滞后（`AoeLocomotionState::stalled_ticks > 0`），如果旧目标仍在武器射程外，可以立即切换到一个已经进入自身真实武器射程的敌人；
+- 这个机会索敌使用碰撞面 gap 和单位自己的索敌策略；没有射程内替代目标时不清理旧目标、路径或不可达累计，继续原来的重寻路/不可达逻辑；
+- 机会目标死亡后按普通 AttackMove 重新索敌，不保存或恢复一个“挂起的旧目标”；
 - 当前目标死亡、失效、离开 `disengage_radius` 或确认不可达后重新选择最近目标；
 - 到达终点且无目标时结束命令。
 
@@ -657,6 +667,15 @@ slot_world = squad_center
 - `squad_leash` 当前主要用于诊断，不会让整队因为一个落后成员而停止；
 - anchor 自己无路可走时 Squad 才进入 `Blocked`。
 
+Squad AttackMove 的 anchor 到达最终目的地后，如果还有成员尚未到达 slot，会执行一次终点重排。重排只改变 `slot.unit` 绑定，不改变 slot 几何、不瞬移成员，也不改写位置历史：
+
+- 按 Formation priority 分组，成员只能在同一优先级组内换位，因此前排/后排角色顺序保持不变；
+- 每组使用确定性的最小总代价匹配，代价是成员当前位置到 slot 世界坐标的平方距离；
+- 相同代价按稳定 member ordinal、instance ID、entity ID 与原 slot 顺序决胜；
+- 成功后同 tick 重新下发 slot goal，避免成员继续走向已被同队成员占据或交叉的旧 slot；
+- 每个终点只执行一次；新命令、成员变化、Formation 变化或战斗 engagement 会重置该标记；
+- 普通 Squad MoveTo 不执行终点重排。
+
 ### 10.5 Squad 作战
 
 显式 `Squad AttackTarget`：
@@ -670,6 +689,8 @@ slot_world = squad_center
 - 每个成员使用 Squad combat settings 中的策略，从共享集合选择离自己最近的目标；
 - 不再使用 claimed 去重，多个成员可以锁定同一个敌人；
 - 存在共享 engagement 时 Squad anchor 暂停 AttackMove 推进；
+- 某成员追击旧目标发生第一次停滞、且旧目标仍在射程外时，可以立即改打一个已经进入该成员真实武器射程的敌人；该检查不会使用未按成员射程过滤的共享候选集合；
+- 没有射程内替代目标时，该成员保持现有 target/path/不可达处理，Squad 仍保持原 engagement；
 - 目标死亡后，持有该目标的成员立即寻找下一个目标；
 - 仍有敌人时不会先强制回归 Formation；
 - 范围内没有目标后，Squad 才恢复原 AttackMove 终点并在移动中重建阵型。

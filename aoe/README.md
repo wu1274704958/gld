@@ -106,18 +106,26 @@ attack cycles until the target dies or another command replaces the order. Targe
 references include an instance ID so a stale order cannot attack a recycled
 entity's new incarnation.
 
-Attack Move checks for enemies already inside the unit's real collider
-surface-to-surface attack range before navigation each fixed tick. Such a target
-defers movement immediately; enemies that are merely inside the wider acquisition
-radius are not chased. The retained destination resumes after the target dies or
-leaves range. Explicit AttackTarget remains the command for pursuing a selected
-enemy. AttackTarget, MoveTo, Stop, or a new Attack Move replaces the previous
-command. `AoeUnitSpawnOptions::team_id` assigns gameplay
+Attack Move discovers and pursues enemies inside the wider acquisition radius,
+while the collider surface-to-surface attack range decides when combat can
+start. A valid locked target is normally retained instead of being replaced by
+each newly discovered enemy. If movement toward that target has stalled for at
+least one fixed tick while it remains outside weapon range, however, an
+alternative enemy already inside the unit's real weapon range may preempt it
+immediately. This in-range check uses the unit's own acquisition strategy rather
+than a Squad's unfiltered shared candidate list. If no such alternative exists,
+the current target, path, and normal blocked-repath behavior are unchanged. The
+retained Attack Move destination resumes after combat; an opportunistic target's
+death performs ordinary acquisition and does not restore a suspended target.
+Explicit AttackTarget remains the command for pursuing only a selected enemy.
+AttackTarget, MoveTo, Stop, or a new Attack Move replaces the previous command.
+`AoeUnitSpawnOptions::team_id` assigns gameplay
 affiliation and is reset when a pooled entity is reused.
 
 The fixed pipeline synchronizes map obstacles first, then processes commands,
-Attack Move acquisition, navigation, movement, combat, projectile, and
-lifecycle.
+Squad traffic/control, Attack Move acquisition, navigation, movement intent,
+local avoidance, global motion planning and safety, movement, combat,
+projectile, and lifecycle.
 Navigation writes `AoeNavigationPath`; movement only consumes waypoints. This is
 the extension boundary for pathfinding, obstacle avoidance, and steering.
 Range uses the support radii of both elliptical colliders rather than center
@@ -340,6 +348,15 @@ projectile ring derived from their attack range. A dead target is replaced only
 for the members that owned it; after no target remains the squad rebuilds its
 formation while resuming the original destination. Explicit Squad AttackTarget
 keeps focus-fire semantics while still spreading approach directions.
+As with a standalone Attack Move unit, a stalled member may immediately replace
+an out-of-range locked target with an enemy already inside that member's weapon
+range. This does not change the Squad order or resume anchor movement while an
+engagement remains. When an Attack Move anchor reaches its final destination,
+the Squad performs at most one terminal nearest-slot rematch if members have not
+arrived. Assignment is minimized independently inside each formation-priority
+group, so front/back role ordering is preserved and members do not cross toward
+slots already occupied by same-role Squad mates. Regular MoveTo does not perform
+this terminal rematch.
 Issuing an order-bearing unit command directly to a member
 automatically detaches that member. `set_aoe_squad_formation` changes formation;
 `disband_aoe_gameplay_squad` detaches all living members and destroys only the
@@ -354,24 +371,33 @@ resolved to a bounded elastic target biased along that corridor; the original
 slot remains intact and is recovered after it becomes valid again.
 
 Run `aoe_gameplay_squad_preview` for the mapped two-squad stress demo. It
-installs a `36 x 16` logic map with two AABB barriers and a circular obstacle,
+installs a `192 x 112` logic map with two AABB barriers and a circular obstacle,
 so both virtual anchors and their members use `grid_astar` instead of the direct
-fallback. Keys 1/2/3 rebuild each side with 16/64/128 mixed Camel Scouts and
-Archers; 64 per side is the default. Space reissues mutual Attack Move, S stops
-both squads, and R respawns the current preset. G toggles map boundaries and
+fallback. Keys 1 through 6 rebuild both sides with a total of
+128/512/2,000/5,000/10,000/20,000 mixed Camel Scouts and Archers; the default
+is 128 total, while the maximum preset contains 10,000 units per side. The main
+camera automatically fits the complete isometric map and updates after a window
+resize. Space reissues mutual Attack Move, S stops both squads, and R respawns
+the current preset. G toggles map boundaries and
 obstacles, N toggles anchor/member paths and formation slots, P toggles rendered
 SLD foot markers, C toggles the interpolated gameplay collision ellipses, and L
 traces one blue Archer to the console. Collision, navigation, foot, and trace
 diagnostics are disabled when comparing performance because they add
 intentional debug work. F5 rescans unit definitions and respawns, and Escape
 exits. The stress preview disables VSync by default so its FPS reflects actual
-throughput; V toggles VSync at runtime. Set `GLD_AOE_STRESS_PRESET=1|2|3` to
+throughput; V toggles VSync at runtime. Set `GLD_AOE_STRESS_PRESET=1|2|3|4|5|6` to
 select the initial load and `GLD_AOE_PROFILE=1` to append HUD snapshots to
 `aoe_gameplay_squad_profile.log`. The aggregate HUD reports squad state plus fixed-clock, dynamic-index,
 steering-tier, live entity category/high-water, AoE2 batch, upload, and render
 timing diagnostics without listing every member. `aoe_map_benchmark` also runs a
 headless 30,000-unit, 30-tick crowd workload so rendering cost cannot be
 mistaken for gameplay steering cost.
+
+The 20,000-unit preset is a pressure-test tier: it must load, render, accept
+Attack Move, and continue publishing diagnostics, but it does not promise an
+interactive frame rate during large-scale acquisition, combat, or terminal
+formation rematching. Keep the optional Gizmo and motion trace switches disabled
+when recording its baseline.
 
 With `GLD_ENABLE_PERFORMANCE_MONITORING=ON`, set
 `GLD_AOE_SYSTEM_PROFILE=<csv-path>` to make the squad preview wait for the

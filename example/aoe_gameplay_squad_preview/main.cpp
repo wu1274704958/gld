@@ -18,6 +18,8 @@
 #include <string_view>
 #include <vector>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <FindPath.hpp>
 #include <resource_mgr.hpp>
 #include <aoe/AoeGameplay.hpp>
@@ -53,27 +55,47 @@ constexpr float TileHeight = 27.f;
 constexpr float SpriteScale = .60f;
 constexpr float DepthUnitsPerTile = 1.f;
 constexpr float ElevationPixelsPerUnit = 48.f;
-constexpr glm::vec2 BlueSpawn{-11.f, 0.f};
-constexpr glm::vec2 RedSpawn{11.f, 0.f};
-constexpr glm::vec2 BlueDestination{11.f, 0.f};
-constexpr glm::vec2 RedDestination{-11.f, 0.f};
+constexpr glm::vec2 PreviewMapOrigin{-96.f, -56.f};
+constexpr std::uint32_t PreviewMapWidth = 192;
+constexpr std::uint32_t PreviewMapHeight = 112;
+constexpr glm::vec2 BlueSpawn{-52.f, 0.f};
+constexpr glm::vec2 RedSpawn{52.f, 0.f};
+constexpr glm::vec2 BlueDestination{52.f, 0.f};
+constexpr glm::vec2 RedDestination{-52.f, 0.f};
 
 struct StressPreset {
-    int key = 2;
-    std::uint32_t total = 64;
-    std::uint32_t camels = 24;
-    std::uint32_t archers = 40;
+    int key = 1;
+    std::uint32_t camels_per_side = 24;
+    std::uint32_t archers_per_side = 40;
+
+    constexpr std::uint32_t units_per_side() const {
+        return camels_per_side + archers_per_side;
+    }
+    constexpr std::uint32_t total_units() const {
+        return units_per_side() * 2u;
+    }
 };
 
 constexpr std::array StressPresets{
-    StressPreset{1, 16, 6, 10},
-    StressPreset{2, 64, 24, 40},
-    StressPreset{3, 128, 48, 80},
+    StressPreset{1, 24, 40},
+    StressPreset{2, 96, 160},
+    StressPreset{3, 375, 625},
+    StressPreset{4, 938, 1562},
+    StressPreset{5, 1875, 3125},
+    StressPreset{6, 3750, 6250},
 };
+
+static_assert(StressPresets[0].total_units() == 128);
+static_assert(StressPresets[1].total_units() == 512);
+static_assert(StressPresets[2].total_units() == 2000);
+static_assert(StressPresets[3].total_units() == 5000);
+static_assert(StressPresets[4].total_units() == 10000);
+static_assert(StressPresets[5].total_units() == 20000);
 
 struct PreviewState {
     entt::entity blue{entt::null};
     entt::entity red{entt::null};
+    entt::entity world_camera{entt::null};
     entt::entity hud{entt::null};
     bool orders_issued = false;
     bool draw_unit_feet = false;
@@ -81,7 +103,7 @@ struct PreviewState {
     bool trace_unit_foot = false;
     bool draw_map = true;
     bool draw_navigation = false;
-    int stress_preset = 2;
+    int stress_preset = 1;
     std::vector<AoeStaticObstacleDesc> map_obstacles;
     std::uint64_t last_dynamic_queries = 0;
     std::uint64_t last_dynamic_candidates = 0;
@@ -135,7 +157,7 @@ struct MotionDecisionTraceState {
 const StressPreset& active_stress_preset(const PreviewState& state) {
     const auto it = std::find_if(StressPresets.begin(), StressPresets.end(),
         [&](const StressPreset& value) { return value.key == state.stress_preset; });
-    return it == StressPresets.end() ? StressPresets[1] : *it;
+    return it == StressPresets.end() ? StressPresets.front() : *it;
 }
 
 void update_frame_statistics(PreviewState& preview, const Time& time,
@@ -175,30 +197,30 @@ void update_frame_statistics(PreviewState& preview, const Time& time,
 AoeMapDefinition make_preview_map() {
     AoeMapDefinition result;
     result.id = "squad_preview";
-    result.origin = {-18.f, -8.f};
+    result.origin = PreviewMapOrigin;
     result.tile_size = 1.f;
-    result.width = 36;
-    result.height = 16;
+    result.width = PreviewMapWidth;
+    result.height = PreviewMapHeight;
     result.heights.assign(
         static_cast<std::size_t>(result.width + 1) * (result.height + 1), 0.f);
 
     AoeStaticObstacleDesc left;
     left.source_id = "left_gate";
     left.shape = AoeStaticObstacleShape::Aabb;
-    left.center = {-4.f, 0.f};
-    left.half_extents = {.8f, 2.5f};
+    left.center = {-16.f, 0.f};
+    left.half_extents = {1.5f, 12.f};
     result.static_obstacles.push_back(left);
 
     AoeStaticObstacleDesc right = left;
     right.source_id = "right_gate";
-    right.center = {4.f, 0.f};
+    right.center = {16.f, 0.f};
     result.static_obstacles.push_back(right);
 
     AoeStaticObstacleDesc south;
     south.source_id = "south_rock";
     south.shape = AoeStaticObstacleShape::Circle;
-    south.center = {0.f, -4.f};
-    south.radius = 1.f;
+    south.center = {0.f, -28.f};
+    south.radius = 5.f;
     result.static_obstacles.push_back(south);
     return result;
 }
@@ -266,6 +288,47 @@ glm::vec3 project_logical_position(glm::vec2 logical, float elevation = 0.f) {
             depth * DepthUnitsPerTile};
 }
 
+void fit_preview_camera_system(EcsWorld& world) {
+    const auto* preview = world.try_resource<PreviewState>();
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const auto* window = world.try_resource<Window>();
+    if (!preview || !map || !map->valid() || !window ||
+        !world.reg().valid(preview->world_camera))
+        return;
+    auto* camera = world.reg().try_get<Camera>(preview->world_camera);
+    if (!camera) return;
+
+    const glm::vec2 logical_min = map->origin();
+    const glm::vec2 logical_max = logical_min + glm::vec2(
+        map->width() * map->tile_size(),
+        map->height() * map->tile_size());
+    const std::array corners{
+        project_logical_position({logical_min.x, logical_min.y}),
+        project_logical_position({logical_max.x, logical_min.y}),
+        project_logical_position({logical_max.x, logical_max.y}),
+        project_logical_position({logical_min.x, logical_max.y})};
+    glm::vec2 projected_min{std::numeric_limits<float>::infinity()};
+    glm::vec2 projected_max{-std::numeric_limits<float>::infinity()};
+    for (const auto& corner : corners) {
+        projected_min = glm::min(projected_min, glm::vec2(corner));
+        projected_max = glm::max(projected_max, glm::vec2(corner));
+    }
+    const glm::vec2 extent = projected_max - projected_min;
+    if (!(extent.x > 0.f) || !(extent.y > 0.f) ||
+        window->width <= 0 || window->height <= 0)
+        return;
+
+    constexpr float ViewportUsage = .92f;
+    const float scale = std::min(
+        static_cast<float>(window->width) * ViewportUsage / extent.x,
+        static_cast<float>(window->height) * ViewportUsage / extent.y);
+    const glm::vec2 center = (projected_min + projected_max) * .5f;
+    glm::mat4 view{1.f};
+    view = glm::scale(view, glm::vec3(scale, scale, 1.f));
+    view = glm::translate(view, glm::vec3(-center, 0.f));
+    camera->view = view;
+}
+
 void projection_system(EcsWorld& world) {
     auto& reg = world.reg();
     const auto& clock = world.resource<AoeGameplayClock>();
@@ -325,8 +388,8 @@ entt::entity spawn_squad(EcsWorld& world, glm::vec2 center,
     const auto& preset = active_stress_preset(world.resource<PreviewState>());
     AoeSquadSpawnOptions options;
     options.composition = {
-        {"camel_scout", preset.camels, color},
-        {"archer", preset.archers, color}};
+        {"camel_scout", preset.camels_per_side, color},
+        {"archer", preset.archers_per_side, color}};
     options.center = center;
     options.forward = forward;
     options.team_id = team;
@@ -365,7 +428,8 @@ void reset_scene(EcsWorld& world) {
     state.trace_has_previous = false;
     const auto& preset = active_stress_preset(state);
     state.latest = "spawned two squads, " +
-        std::to_string(preset.total) + " units per side";
+        std::to_string(preset.units_per_side()) + " units per side, " +
+        std::to_string(preset.total_units()) + " total";
 }
 
 bool squad_operational(const entt::registry& reg, entt::entity squad) {
@@ -1150,6 +1214,7 @@ void diagnostics_system(EcsWorld& world) {
     const auto* motion_planner =
         world.try_resource<AoeGlobalMotionPlannerDiagnostics>();
     const auto* gpu_motion = world.try_resource<AoeGpuMotionDiagnostics>();
+    const auto* logic_map = world.try_resource<AoeLogicMap>();
     const auto* pool = world.try_resource<AoeGameplayPool>();
     std::size_t active_units = 0;
     for ([[maybe_unused]] const auto entity :
@@ -1176,7 +1241,8 @@ void diagnostics_system(EcsWorld& world) {
     std::ostringstream out;
     out << std::fixed << std::setprecision(2)
         << "AoE gameplay mapped squad stress preview\n"
-        << "1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload\n"
+        << "1-6 total units = 128/512/2000/5000/10000/20000"
+           " | Space attack-move | S stop | R reset | F5 reload\n"
         << "G map=" << (preview.draw_map ? "ON" : "OFF")
         << " | N navigation=" << (preview.draw_navigation ? "ON" : "OFF")
         << " | C collision=" << (preview.draw_unit_colliders ? "ON" : "OFF")
@@ -1189,9 +1255,16 @@ void diagnostics_system(EcsWorld& world) {
         << " | V vsync="
         << (world.resource<Window>().vsync ? "ON" : "OFF")
         << " | Esc quit\n"
-        << "preset=" << preset.key << " units/side=" << preset.total
+        << "preset=" << preset.key
+        << " units/side=" << preset.units_per_side()
+        << " units/total=" << preset.total_units()
         << " (debug gizmos affect stress measurements)\n"
-        << "map=squad_preview grid=36x16 pathfinder=grid_astar\n\n";
+        << "map=squad_preview grid=";
+    if (logic_map && logic_map->valid())
+        out << logic_map->width() << 'x' << logic_map->height();
+    else
+        out << "unavailable";
+    out << " pathfinder=grid_astar\n\n";
     append_squad(out, world, "BLUE", preview.blue);
     append_squad(out, world, "RED ", preview.red);
     const float displayed_fps = preview.displayed_fps > 0.f
@@ -1346,7 +1419,7 @@ void system_profile_end(EcsWorld& world) {
     const std::size_t gameplay_units = active_gameplay_units(world);
     const std::size_t render_units = world.reg().view<AoeGameplayOwner>().size();
     const std::size_t expected_units =
-        static_cast<std::size_t>(active_stress_preset(preview).total) * 2u;
+        active_stress_preset(preview).total_units();
     const bool stable = preview.orders_issued && no_gameplay_spawns && no_aoe2_spawns &&
         gameplay_units >= expected_units && render_units >= expected_units;
     if (!profile->capturing) {
@@ -1486,7 +1559,10 @@ int main() {
     PreviewState initial_preview;
     if (const char* value = std::getenv("GLD_AOE_STRESS_PRESET")) {
         const long preset = std::strtol(value, nullptr, 10);
-        if (preset >= 1 && preset <= 3)
+        if (std::ranges::any_of(StressPresets,
+                [&](const StressPreset& candidate) {
+                    return candidate.key == preset;
+                }))
             initial_preview.stress_preset = static_cast<int>(preset);
     }
     app.world.add_resource<PreviewState>(std::move(initial_preview));
@@ -1523,6 +1599,7 @@ int main() {
         camera.layers = UnitLayer;
         camera.clear_color = {.12f, .14f, .17f, 1.f};
         world.reg().emplace<Camera>(camera_entity, camera);
+        world.resource<PreviewState>().world_camera = camera_entity;
         auto& passes = emplace_registered_render_passes(world, camera_entity);
         auto& pass = passes.add(Aoe2UnitPassId);
         pass.state.depth_test = RenderStateValue::Enabled;
@@ -1564,7 +1641,9 @@ int main() {
         world.reg().emplace<RenderLayer>(preview.hud, RenderLayer{HudLayer});
         reset_scene(world);
         std::printf(
-            "Controls: 1/2/3 stress preset, Space mutual AttackMove, S stop, "
+            "Controls: 1-6 stress preset "
+            "(128/512/2000/5000/10000/20000 total), "
+            "Space mutual AttackMove, S stop, "
             "G map, N navigation, C collision, P feet, L trace, R reset, F5 rescan, "
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
             "T motion decision log, "
@@ -1578,6 +1657,7 @@ int main() {
     // fixed ticks completed for the rendered frame.
     app.add_system(Stage::PreUpdate, motion_decision_trace_system);
 #endif
+    app.add_system(Stage::Update, fit_preview_camera_system);
     app.add_system(Stage::Update, projection_system);
     app.add_system(Stage::PostUpdate, submit_map_navigation_gizmos);
     app.add_system(Stage::PostUpdate, submit_unit_collider_gizmos);
