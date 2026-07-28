@@ -1,0 +1,15 @@
+#version 430 core
+
+// Solve-B7：生成紧凑 decision SSBO。速度保留 float，不使用 RG16UI 的量化值；
+// CPU 在同一个 gameplay fixed tick 同步回读 handle+generation+速度并应用。
+layout(local_size_x=64)in;
+struct UnitData{vec4 position_radii;vec4 intent_dt;uvec4 identity_wait;};
+struct Proposal{vec4 velocity_destination;uvec4 meta;};
+struct Decision{vec4 velocity;uvec4 identity;};
+layout(std430,binding=0)readonly buffer Units{UnitData units[];};
+layout(std430,binding=1)readonly buffer Proposals{Proposal proposals[];};
+layout(std430,binding=2)writeonly buffer Decisions{Decision decisions[];};
+uniform uint unit_count;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=unit_count)return;
+ bool accepted=proposals[i].meta.w==2u;decisions[i].velocity=vec4(accepted?proposals[i].velocity_destination.xy:vec2(0.0),0.0,0.0);
+ decisions[i].identity=uvec4(units[i].identity_wait.xy,accepted?1u:0u,0u);}

@@ -67,4 +67,11 @@ namespace gld::ecs {
         std::shared_ptr<void> load_cpu(const ProgramDesc& desc, const IFileSystem& fs) override;
         std::shared_ptr<Program> finalize(std::shared_ptr<void> cpu, const ProgramDesc& desc) override;
     };
+
+    struct ComputeProgramLoader : IAssetLoader<ComputeProgramDesc> {
+        std::shared_ptr<void> load_cpu(const ComputeProgramDesc& desc,
+                                       const IFileSystem& fs) override;
+        std::shared_ptr<ComputeProgram> finalize(
+            std::shared_ptr<void> cpu, const ComputeProgramDesc& desc) override;
+    };
 }

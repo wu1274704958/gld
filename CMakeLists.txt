@@ -147,6 +147,14 @@ if(GLM_FOUND AND GLFW3_FOUND)
         target_compile_options(gld_aoe_gameplay PRIVATE /bigobj)
     endif()
 
+    # OpenGL 4.3 image-based global motion planner. Keeping this target
+    # separate preserves renderer-free/headless gld_aoe_gameplay tests.
+    add_library(gld_aoe_gpu_motion STATIC
+        aoe_gpu_motion/src/AoeGpuMotion.cpp)
+    target_include_directories(gld_aoe_gpu_motion PUBLIC
+        ${CMAKE_SOURCE_DIR}/aoe_gpu_motion/include)
+    target_link_libraries(gld_aoe_gpu_motion PUBLIC gld_aoe_gameplay)
+
     add_library(gld_aoe2_gameplay_bridge STATIC
         aoe2_gameplay/src/Aoe2GameplayBridge.cpp)
     target_include_directories(gld_aoe2_gameplay_bridge PUBLIC
@@ -258,10 +266,12 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_link_libraries(aoe2_unit_benchmark gld_aoe2)
 
     CreateExample(DIR aoe_gameplay_unit_preview FILES main.cpp)
+    target_link_libraries(aoe_gameplay_unit_preview gld_aoe_gpu_motion)
     target_link_libraries(aoe_gameplay_unit_preview gld_aoe2_gameplay_bridge)
 
     CreateExample(DIR aoe_gameplay_squad_preview FILES main.cpp)
-    target_link_libraries(aoe_gameplay_squad_preview gld_aoe2_gameplay_bridge)
+    target_link_libraries(aoe_gameplay_squad_preview
+        gld_aoe2_gameplay_bridge gld_aoe_gpu_motion)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

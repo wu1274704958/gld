@@ -1,0 +1,22 @@
+#version 430 core
+
+// Solve-B6：成功单位写目标 footprint；失败单位写回原 footprint，从而 next_image 始终
+// 是完整世界状态。reservation 已保证成功单位之间没有目标像素重叠；本 pass 之后执行 image barrier，
+// decision SSBO 同 tick 回读完毕后 CPU 才交换 current/next，不能提前 swap。
+layout(local_size_x=64)in;
+layout(binding=3,rg16ui)uniform uimage2D next_image;
+struct UnitData{vec4 position_radii;vec4 intent_dt;uvec4 identity_wait;};
+struct Proposal{vec4 velocity_destination;uvec4 meta;};
+layout(std430,binding=0)readonly buffer Units{UnitData units[];};
+layout(std430,binding=1)readonly buffer Proposals{Proposal proposals[];};
+uniform uint unit_count;uniform vec2 map_origin;uniform float pixels_per_world_unit;uniform ivec2 image_size;
+uint pack_vector(vec2 v){float s=length(v);float a=s>.00001?atan(v.y,v.x):0.0;if(a<0.0)a+=6.28318530718;
+ return (uint(round(a*(255.0/6.28318530718)))&0xFFu)|(uint(round(clamp(s/4.0,0.0,1.0)*255.0))<<8u);}
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=unit_count)return;bool accepted=proposals[i].meta.w==2u;
+ vec2 world_center=accepted?proposals[i].velocity_destination.zw:units[i].position_radii.xy;
+ vec2 final_velocity=accepted?proposals[i].velocity_destination.xy:vec2(0.0);
+ vec2 c=(world_center-map_origin)*pixels_per_world_unit;vec2 r=max(units[i].position_radii.zw*pixels_per_world_unit,vec2(.5));
+ ivec2 lo=max(ivec2(floor(c-r)),ivec2(0));ivec2 hi=min(ivec2(ceil(c+r)),image_size-1);uint pv=pack_vector(final_velocity);
+ for(int y=lo.y;y<=hi.y;++y)for(int x=lo.x;x<=hi.x;++x){vec2 q=(vec2(x,y)+vec2(.5)-c)/r;if(dot(q,q)<=1.0)
+ if(imageLoad(next_image,ivec2(x,y)).r<0xF000u)
+ imageStore(next_image,ivec2(x,y),uvec4(units[i].identity_wait.x,pv,0u,0u));}}

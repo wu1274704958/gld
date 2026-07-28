@@ -1,0 +1,47 @@
+#version 430 core
+
+// Solve-B1：从所有单位共同使用的 current_image 构建一个共享 RGBA16F 场。
+// XY=邻域平均意向，Z=动态占用压力，W=静态障碍净空近似。
+// 采样距离按 1/2/4/8 像素展开，后续还会为该纹理生成 mip pyramid，单位可同时
+// 看到近处细节和较远拥堵；这不是 per-squad flow field。
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0, rg16ui) uniform readonly uimage2D current_image;
+layout(binding = 1, rgba16f) uniform writeonly image2D shared_field;
+uniform ivec2 image_size;
+
+vec2 unpack_vector(uint encoded_vector) {
+    float angle = float(encoded_vector & 0xFFu) * (6.28318530718 / 255.0);
+    float speed = float((encoded_vector >> 8u) & 0xFFu) * (4.0 / 255.0);
+    return vec2(cos(angle), sin(angle)) * speed;
+}
+
+void sample_pixel(ivec2 p, inout vec2 sum, inout float count,
+                  inout float pressure, inout float clearance) {
+    if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, image_size))) {
+        clearance = 0.0;
+        return;
+    }
+    uvec2 value = imageLoad(current_image, p).rg;
+    if (value.r >= 0xF000u) clearance = 0.0;
+    else if (value.r != 0u) {
+        sum += unpack_vector(value.g);
+        count += 1.0;
+        pressure += 1.0;
+    }
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, image_size))) return;
+    vec2 sum = vec2(0.0); float count = 0.0; float pressure = 0.0;
+    float clearance = 1.0;
+    sample_pixel(p, sum, count, pressure, clearance);
+    const ivec2 dirs[8] = ivec2[8](ivec2(1,0), ivec2(-1,0), ivec2(0,1),
+        ivec2(0,-1), ivec2(1,1), ivec2(-1,1), ivec2(1,-1), ivec2(-1,-1));
+    for (int scale = 1; scale <= 8; scale *= 2)
+        for (int i = 0; i < 8; ++i)
+            sample_pixel(p + dirs[i] * scale, sum, count, pressure, clearance);
+    vec2 average = count > 0.0 ? sum / count : vec2(0.0);
+    imageStore(shared_field, p,
+        vec4(average, clamp(pressure / 33.0, 0.0, 1.0), clearance));
+}

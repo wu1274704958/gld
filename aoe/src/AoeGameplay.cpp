@@ -20,6 +20,7 @@ void squad_traffic_tick(EcsWorld& world, std::uint64_t tick);
 void movement_intent_tick(EcsWorld& world, std::uint64_t tick);
 void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick);
 void unit_flow_tick(EcsWorld& world, std::uint64_t tick);
+void global_motion_planner_tick(EcsWorld& world, std::uint64_t tick);
 void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick);
 
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
@@ -2586,6 +2587,52 @@ void unit_flow_tick(EcsWorld& world, std::uint64_t tick) {
             group_scale[find_root(i)];
 }
 
+void global_motion_planner_tick(EcsWorld& world, std::uint64_t tick) {
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    auto& registry = world.resource_or_add<AoeGlobalMotionPlannerRegistry>();
+    auto& diagnostics =
+        world.resource_or_add<AoeGlobalMotionPlannerDiagnostics>();
+    diagnostics.requested_backend = settings.global_motion_planner_id;
+    diagnostics.fallback_reason.clear();
+
+    std::string failure;
+    bool success = false;
+    if (auto* planner = registry.find(settings.global_motion_planner_id)) {
+        try {
+            success = (*planner)(world, tick, failure);
+        } catch (const std::exception& error) {
+            failure = error.what();
+        } catch (...) {
+            failure = "unknown planner exception";
+        }
+    } else {
+        failure = "requested backend is not registered";
+    }
+
+    if (success) {
+        diagnostics.active_backend = settings.global_motion_planner_id;
+        if (diagnostics.active_backend == "gpu_image") ++diagnostics.gpu_ticks;
+        else ++diagnostics.cpu_ticks;
+        return;
+    }
+
+    ++diagnostics.failures;
+    ++diagnostics.fallback_ticks;
+    diagnostics.fallback_reason = failure.empty()
+        ? "requested backend returned failure" : std::move(failure);
+    diagnostics.active_backend = "cpu_unit_flow";
+    if (auto* cpu = registry.find("cpu_unit_flow")) {
+        std::string ignored;
+        if ((*cpu)(world, tick, ignored)) {
+            ++diagnostics.cpu_ticks;
+            return;
+        }
+    }
+    // A malformed registry must not leave stale motion decisions behind.
+    unit_flow_tick(world, tick);
+    ++diagnostics.cpu_ticks;
+}
+
 void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
     const float dt = static_cast<float>(
@@ -2620,6 +2667,10 @@ void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick) {
         decision.safe_fraction = std::min(decision.static_safe_fraction,
                                           decision.dynamic_safe_fraction);
         if (decision.safe_fraction < 1.f - Epsilon) {
+            if (auto* planner = world.try_resource<
+                    AoeGlobalMotionPlannerDiagnostics>();
+                planner && planner->active_backend == "gpu_image")
+                ++planner->authoritative_corrections;
             if (decision.static_safe_fraction <=
                 decision.dynamic_safe_fraction + Epsilon)
                 decision.stop_reason =
@@ -3011,7 +3062,7 @@ void fixed_tick(EcsWorld& world) {
     GLD_AOE_GAMEPLAY_PHASE(world, local_avoidance_ms,
         [&] { local_avoidance_intent_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, unit_flow_ms,
-        [&] { unit_flow_tick(world, clock.tick); });
+        [&] { global_motion_planner_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, motion_safety_ms,
         [&] { global_motion_safety_tick(world, clock.tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, movement_ms,
@@ -4382,6 +4433,15 @@ void AoeGameplayPlugin::operator()(App& app) const {
     app.world.resource_or_add<AoeSquadTrafficIndex>();
     app.world.resource_or_add<AoeUnitFlowIndex>();
     app.world.resource_or_add<AoeNavigationSettings>();
+    auto& motion_planners =
+        app.world.resource_or_add<AoeGlobalMotionPlannerRegistry>();
+    if (!motion_planners.contains("cpu_unit_flow"))
+        motion_planners.bind("cpu_unit_flow",
+            [](EcsWorld& world, std::uint64_t tick, std::string&) {
+                unit_flow_tick(world, tick);
+                return true;
+            });
+    app.world.resource_or_add<AoeGlobalMotionPlannerDiagnostics>();
     app.world.resource_or_add<AoeDynamicObstacleIndex>();
     app.world.resource_or_add<AoeStaticObstacleBindings>();
     auto& pathfinders = app.world.resource_or_add<AoePathfinderRegistry>();

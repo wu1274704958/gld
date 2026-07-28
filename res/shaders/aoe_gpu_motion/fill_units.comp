@@ -1,0 +1,48 @@
+#version 430 core
+
+// Fill-A2：处理 spawn/despawn/意向与权威位置同步。
+// CPU 上传的 Unit SSBO 是本 fixed tick 的完整活跃集合；A1 已删除 despawn 的旧像素，
+// 本 pass 按椭圆碰撞体重新写入 rigid footprint。一个单位无论覆盖多少像素都只使用
+// 一个可复用 handle；generation 留在 SSBO 中，不能截断 gameplay instance_id。
+layout(local_size_x = 64) in;
+layout(binding = 0, rg16ui) uniform uimage2D current_image;
+
+struct UnitData {
+    vec4 position_radii; // xy=世界坐标中心，zw=碰撞半径
+    vec4 intent_dt;      // xy=期望速度，z=fixed dt，w=速度
+    uvec4 identity_wait; // x=handle，y=generation，z=wait ticks，w=保留
+};
+layout(std430, binding = 0) readonly buffer Units { UnitData units[]; };
+uniform uint unit_count;
+uniform vec2 map_origin;
+uniform float pixels_per_world_unit;
+uniform ivec2 image_size;
+
+uint pack_vector(vec2 velocity) {
+    float speed = length(velocity);
+    float angle = speed > 0.00001 ? atan(velocity.y, velocity.x) : 0.0;
+    if (angle < 0.0) angle += 6.28318530718;
+    uint angle_q = uint(round(angle * (255.0 / 6.28318530718))) & 0xFFu;
+    uint speed_q = uint(round(clamp(speed / 4.0, 0.0, 1.0) * 255.0));
+    return angle_q | (speed_q << 8u);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= unit_count) return;
+    UnitData unit = units[index];
+    vec2 center = (unit.position_radii.xy - map_origin) * pixels_per_world_unit;
+    vec2 radii = max(unit.position_radii.zw * pixels_per_world_unit, vec2(0.5));
+    ivec2 lo = max(ivec2(floor(center - radii)), ivec2(0));
+    ivec2 hi = min(ivec2(ceil(center + radii)), image_size - 1);
+    uint encoded_vector = pack_vector(unit.intent_dt.xy);
+    for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            vec2 q = (vec2(x, y) + vec2(0.5) - center) / radii;
+            // 静态障碍 ID 永远不能被动态 footprint 覆盖。
+            if (dot(q, q) <= 1.0 &&
+                imageLoad(current_image, ivec2(x, y)).r < 0xF000u)
+                imageStore(current_image, ivec2(x, y),
+                           uvec4(unit.identity_wait.x, encoded_vector, 0u, 0u));
+        }
+}

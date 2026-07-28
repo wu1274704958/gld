@@ -1,0 +1,11 @@
+#version 430 core
+
+// Solve-B5：准备完整 next_image。只从 current_image 复制静态障碍，动态像素清零。
+// current 与 next 必须是两张独立 RG16UI image；若对 current 原地更新，workgroup
+// 调度顺序未定义，会让其它单位随机看到新旧混合状态。
+layout(local_size_x=16,local_size_y=16)in;
+layout(binding=0,rg16ui)uniform readonly uimage2D current_image;
+layout(binding=3,rg16ui)uniform writeonly uimage2D next_image;
+uniform ivec2 image_size;
+void main(){ivec2 p=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(p,image_size)))return;
+ uvec4 v=imageLoad(current_image,p);imageStore(next_image,p,v.r>=0xF000u?v:uvec4(0u));}

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -832,6 +833,9 @@ struct AoeNavigationSettings {
     std::string unit_pathfinder_id = "grid_astar";
     std::string squad_pathfinder_id = "grid_astar";
     std::string steering_strategy_id = "local_default";
+    // The gameplay module requests the GPU planner by default. Headless builds
+    // do not register it and therefore transparently use cpu_unit_flow.
+    std::string global_motion_planner_id = "gpu_image";
     std::uint32_t blocked_repath_ticks = 12;
     std::uint32_t repath_cooldown_ticks = 3;
     std::uint32_t steering_max_neighbors = 8;
@@ -1027,6 +1031,42 @@ struct AoeUnitFlowIndex {
     std::vector<std::size_t> parents;
     std::vector<std::uint32_t> ranks;
     float maximum_reach = 0.f;
+};
+
+using AoeGlobalMotionPlanner = std::function<bool(
+    EcsWorld&, std::uint64_t, std::string&)>;
+
+class AoeGlobalMotionPlannerRegistry {
+public:
+    void bind(std::string id, AoeGlobalMotionPlanner planner) {
+        if (id.empty() || !planner)
+            throw std::invalid_argument("global motion planner binding is invalid");
+        planners_[std::move(id)] = std::move(planner);
+    }
+    bool contains(std::string_view id) const {
+        return planners_.find(std::string(id)) != planners_.end();
+    }
+    AoeGlobalMotionPlanner* find(std::string_view id) {
+        const auto it = planners_.find(std::string(id));
+        return it == planners_.end() ? nullptr : &it->second;
+    }
+    bool erase(std::string_view id) {
+        return planners_.erase(std::string(id)) != 0;
+    }
+
+private:
+    std::unordered_map<std::string, AoeGlobalMotionPlanner> planners_;
+};
+
+struct AoeGlobalMotionPlannerDiagnostics {
+    std::string requested_backend;
+    std::string active_backend;
+    std::string fallback_reason;
+    std::uint64_t gpu_ticks = 0;
+    std::uint64_t cpu_ticks = 0;
+    std::uint64_t fallback_ticks = 0;
+    std::uint64_t failures = 0;
+    std::uint64_t authoritative_corrections = 0;
 };
 
 struct AoeGameplayPlugin {

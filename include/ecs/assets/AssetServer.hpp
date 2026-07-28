@@ -180,6 +180,9 @@ namespace gld::ecs {
         Handle<Program> load_program(const std::string& vs, const std::string& fs_, const std::string& gs) {
             return load(ProgramDesc(vs, fs_, gs, "", ""));
         }
+        Handle<ComputeProgram> load_compute_program(const std::string& cs) {
+            return load(ComputeProgramDesc(cs));
+        }
         Handle<Texture<TexType::D2>> load_texture(const std::string& path,
             Channels ch = Channels::RGBA, bool flip = false, bool srgb = false) {
             return load(TextureDesc(path, ch, flip, srgb, true));
@@ -250,6 +253,8 @@ namespace gld::ecs {
 
         srv.register_loader<TextureDesc>(std::make_shared<TextureLoader>());
         srv.register_loader<ProgramDesc>(std::make_shared<ProgramLoader>());
+        srv.register_loader<ComputeProgramDesc>(
+            std::make_shared<ComputeProgramLoader>());
 
         app.world.resource_or_add<Time>();
         app.world.resource_or_add<AssetServerDiagnostics>();

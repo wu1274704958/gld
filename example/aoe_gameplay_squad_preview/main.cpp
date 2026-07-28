@@ -21,6 +21,7 @@
 #include <FindPath.hpp>
 #include <resource_mgr.hpp>
 #include <aoe/AoeGameplay.hpp>
+#include <aoe_gpu_motion/AoeGpuMotion.hpp>
 #include <aoe2/Aoe2Plugin.hpp>
 #include <aoe2_gameplay/Aoe2GameplayBridge.hpp>
 #include <ecs/App.hpp>
@@ -1146,6 +1147,9 @@ void diagnostics_system(EcsWorld& world) {
     const auto& preset = active_stress_preset(preview);
     const auto* render = world.try_resource<RenderDiagnostics>();
     const auto& gameplay = world.resource<AoeGameplayDiagnostics>();
+    const auto* motion_planner =
+        world.try_resource<AoeGlobalMotionPlannerDiagnostics>();
+    const auto* gpu_motion = world.try_resource<AoeGpuMotionDiagnostics>();
     const auto* pool = world.try_resource<AoeGameplayPool>();
     std::size_t active_units = 0;
     for ([[maybe_unused]] const auto entity :
@@ -1216,6 +1220,28 @@ void diagnostics_system(EcsWorld& world) {
         << " attacks=" << gameplay.attacks_started
         << " damage=" << gameplay.damage_events
         << " rejected=" << gameplay.commands_rejected << '\n';
+    if (motion_planner) {
+        out << "motion backend=" << motion_planner->active_backend
+            << " requested=" << motion_planner->requested_backend
+            << " gpu_ticks=" << motion_planner->gpu_ticks
+            << " cpu_ticks=" << motion_planner->cpu_ticks
+            << " fallbacks=" << motion_planner->fallback_ticks
+            << " corrections=" << motion_planner->authoritative_corrections;
+        if (!motion_planner->fallback_reason.empty())
+            out << " reason=" << motion_planner->fallback_reason;
+        out << '\n';
+    }
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    if (gpu_motion && gpu_motion->available)
+        out << "gpu-motion total_ms=" << gpu_motion->last_tick_ms
+            << " upload_ms=" << gpu_motion->upload_ms
+            << " dispatch_ms=" << gpu_motion->dispatch_ms
+            << " readback_ms=" << gpu_motion->readback_ms
+            << " map=" << gpu_motion->map_width_pixels << 'x'
+            << gpu_motion->map_height_pixels << '\n';
+#else
+    (void)gpu_motion;
+#endif
     if (dynamic) {
         const auto& value = dynamic->diagnostics();
         out << "dynamic-index units=" << value.units_indexed
@@ -1453,6 +1479,7 @@ int main() {
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(AoeGameplayPlugin{"aoe_units"});
+    app.add_plugin(AoeGpuMotionPlugin{});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(GizmoPlugin);
     app.add_plugin(RenderPlugin);

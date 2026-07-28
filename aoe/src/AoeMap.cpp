@@ -173,6 +173,13 @@ std::shared_ptr<AoeMapDefinition> AoeMapDefinitionLoader::finalize(
     return std::static_pointer_cast<AoeMapDefinition>(std::move(cpu));
 }
 
+void AoeLogicMap::visit_static_obstacles(const std::function<void(
+    AoeObstacleId, const AoeStaticObstacleDesc&)>& visitor) const {
+    if (!visitor) return;
+    for (const auto& obstacle : obstacles_)
+        visitor(obstacle.id, obstacle.desc);
+}
+
 AoeLogicMap::AoeLogicMap(const AoeMapDefinition& definition) {
     std::string error;
     if (!reset(definition, &error)) throw std::invalid_argument(error);

@@ -180,4 +180,58 @@ namespace gld::ecs {
         }
         return prog;
     }
+
+    // ---------------- ComputeProgramLoader ----------------
+    namespace {
+        struct CpuComputeProgram {
+            std::string source;
+            bool ok = false;
+        };
+    }
+
+    std::shared_ptr<void> ComputeProgramLoader::load_cpu(
+        const ComputeProgramDesc& desc, const IFileSystem& fs) {
+        auto result = std::make_shared<CpuComputeProgram>();
+        if (auto source = fs.read_text(desc.cs())) {
+            result->source = std::move(*source);
+            result->ok = true;
+        }
+        return result;
+    }
+
+    std::shared_ptr<ComputeProgram> ComputeProgramLoader::finalize(
+        std::shared_ptr<void> cpu, const ComputeProgramDesc& desc) {
+        auto source = std::static_pointer_cast<CpuComputeProgram>(std::move(cpu));
+        if (!source || !source->ok || !GLAD_GL_VERSION_4_3) return nullptr;
+        const char* text = source->source.c_str();
+        const GLuint shader_id = glCreateShader(GL_COMPUTE_SHADER);
+        glShaderSource(shader_id, 1, &text, nullptr);
+        glCompileShader(shader_id);
+        GLint compiled = GL_FALSE;
+        glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compiled);
+        Shader<ShaderType::COMPUTE> shader(shader_id);
+        if (compiled != GL_TRUE) {
+            GLint length = 0;
+            glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &length);
+            std::vector<char> log(static_cast<std::size_t>(
+                std::max(1, length)), '\0');
+            glGetShaderInfoLog(shader_id, static_cast<GLsizei>(log.size()),
+                               nullptr, log.data());
+            std::fprintf(stderr,
+                "[ComputeProgramLoader] GL_COMPUTE_SHADER compile failed cs=%s: %s\n",
+                desc.cs().c_str(), log.data());
+            return nullptr;
+        }
+        auto program = std::make_shared<ComputeProgram>();
+        program->create();
+        program->attach_shader(std::move(shader));
+        program->link();
+        auto [success, error] = program->check_link_state<400>();
+        if (!success) {
+            std::fprintf(stderr, "[ComputeProgramLoader] link failed cs=%s: %s\n",
+                         desc.cs().c_str(), error ? error->c_str() : "");
+            return nullptr;
+        }
+        return program;
+    }
 }

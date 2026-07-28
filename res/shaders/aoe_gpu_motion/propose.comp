@@ -1,0 +1,93 @@
+#version 430 core
+
+// Solve-B2：每个单位评分候选方向并提出一个刚体移动。
+// 候选为 0、±22.5、±45、±67.5、±90 度；等待达到 45 tick 后增加 180 度后退。
+// 静态障碍立即淘汰候选。相同方向的动态占用允许进入“等待依赖”状态，交给后面的
+// 固定次数 dependency propagation，而不是让整条队列永久停住。
+layout(local_size_x = 64) in;
+layout(binding = 0, rg16ui) uniform readonly uimage2D current_image;
+// build_field 写完并生成 mip 后，同一张纹理作为 sampler 读取。
+layout(binding = 0) uniform sampler2D field_sampler;
+
+struct UnitData { vec4 position_radii; vec4 intent_dt; uvec4 identity_wait; };
+struct Proposal { vec4 velocity_destination; uvec4 meta; };
+layout(std430, binding = 0) readonly buffer Units { UnitData units[]; };
+layout(std430, binding = 1) buffer Proposals { Proposal proposals[]; };
+uniform uint unit_count;
+uniform vec2 map_origin;
+uniform float pixels_per_world_unit;
+uniform ivec2 image_size;
+uniform uint candidate_round;
+
+vec2 unpack_direction(uint encoded_vector) {
+    float angle = float(encoded_vector & 0xFFu) * (6.28318530718 / 255.0);
+    return vec2(cos(angle), sin(angle));
+}
+vec2 rotate2(vec2 v, float a) {
+    float c = cos(a), s = sin(a); return vec2(c*v.x-s*v.y, s*v.x+c*v.y);
+}
+
+bool footprint_viable(UnitData unit, vec2 destination, vec2 direction,
+                      out bool dependency) {
+    vec2 center = (destination - map_origin) * pixels_per_world_unit;
+    vec2 radii = max(unit.position_radii.zw * pixels_per_world_unit, vec2(0.5));
+    ivec2 lo = max(ivec2(floor(center-radii)), ivec2(0));
+    ivec2 hi = min(ivec2(ceil(center+radii)), image_size-1);
+    if (any(lessThan(center-radii, vec2(0.0))) ||
+        any(greaterThanEqual(center+radii, vec2(image_size)))) return false;
+    dependency = false;
+    for (int y=lo.y; y<=hi.y; ++y) for (int x=lo.x; x<=hi.x; ++x) {
+        vec2 q=(vec2(x,y)+vec2(0.5)-center)/radii;
+        if (dot(q,q)>1.0) continue;
+        uvec2 value=imageLoad(current_image,ivec2(x,y)).rg;
+        if (value.r>=0xF000u) return false;
+        if (value.r!=0u && value.r!=unit.identity_wait.x) {
+            if (dot(direction, unpack_direction(value.g)) < 0.65) return false;
+            dependency=true;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint i=gl_GlobalInvocationID.x; if(i>=unit_count) return;
+    UnitData unit=units[i]; float speed=length(unit.intent_dt.xy);
+    Proposal previous=proposals[i];
+    // 已经整 footprint 获胜的单位在后续 reservation round 中保持原提案。
+    if(candidate_round>0u && previous.meta.w==2u)return;
+    uint tried_mask=candidate_round>0u?previous.meta.y:0u;
+    if(candidate_round>0u && previous.meta.z>0u)
+        tried_mask|=1u<<(previous.meta.z-1u);
+    Proposal best; best.velocity_destination=vec4(0.0,0.0,unit.position_radii.xy);
+    best.meta=uvec4((0xFFFFu-min(unit.identity_wait.z,0xFFFFu))<<16u |
+                    unit.identity_wait.x,tried_mask,0u,0u);
+    if(speed<=0.00001){ proposals[i]=best; return; }
+    vec2 intent_dir=unit.intent_dt.xy/speed; float best_score=-1e20;
+    const float angles[10]=float[10](0.0,0.39269908169,-0.39269908169,
+        0.78539816339,-0.78539816339,1.17809724510,-1.17809724510,
+        1.57079632679,-1.57079632679,3.14159265359);
+    int candidate_count=unit.identity_wait.z>=45u ? 10 : 9;
+    for(int c=0;c<candidate_count;++c){
+        if((tried_mask&(1u<<uint(c)))!=0u)continue;
+        vec2 direction=rotate2(intent_dir,angles[c]);
+        float candidate_speed=c==9 ? speed*0.25 : speed;
+        vec2 velocity=direction*candidate_speed;
+        vec2 destination=unit.position_radii.xy+velocity*unit.intent_dt.z;
+        bool dependency=false;
+        if(!footprint_viable(unit,destination,direction,dependency)) continue;
+        ivec2 fp=clamp(ivec2((destination-map_origin)*pixels_per_world_unit),
+                            ivec2(0),image_size-1);
+        vec4 field=texelFetch(field_sampler,fp,0);
+        // mip 3 汇总更远处的共同意向和拥堵，避免只拥有局部视野。
+        vec4 far_field=texelFetch(field_sampler,fp/8,3);
+        field.xy=mix(field.xy,far_field.xy,0.45);
+        field.z=max(field.z,far_field.z*0.75);
+        vec2 field_dir=length(field.xy)>0.00001?normalize(field.xy):intent_dir;
+        float score=dot(direction,intent_dir)*3.0+dot(direction,field_dir)*0.8-
+                    field.z*1.25-float(c)*0.015;
+        if(score>best_score){best_score=score;
+            best.velocity_destination=vec4(velocity,destination);
+            best.meta.z=uint(c)+1u;}
+    }
+    proposals[i]=best;
+}

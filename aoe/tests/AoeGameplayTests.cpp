@@ -216,6 +216,23 @@ struct Fixture {
 } // namespace
 
 int main() {
+    // Global motion backends are late-bound so headless gameplay does not gain
+    // an OpenGL dependency. The production default requests GPU, while the
+    // fixed pipeline owns the cpu_unit_flow fallback.
+    assert(AoeNavigationSettings{}.global_motion_planner_id == "gpu_image");
+    AoeGlobalMotionPlannerRegistry motion_registry;
+    int planner_calls = 0;
+    motion_registry.bind("test", [&](EcsWorld&, std::uint64_t tick,
+                                      std::string&) {
+        ++planner_calls;
+        return tick == 7;
+    });
+    EcsWorld planner_world;
+    std::string planner_error;
+    assert((*motion_registry.find("test"))(planner_world, 7, planner_error));
+    assert(planner_calls == 1 && motion_registry.erase("test") &&
+           !motion_registry.contains("test"));
+
     const auto parsed = parse(definition_json());
     assert(parsed && parsed->id == "test" && parsed->level == 2);
     assert(parsed->movement.speed == 2.f);

@@ -1,0 +1,16 @@
+#version 430 core
+
+// Fill-A1：清除 current_image 中上一 fixed step 的动态单位像素。
+// binding 0 是 RG16UI current_image：R16 为占用 ID，G16 为方向/速度。
+// 静态障碍使用 0xF000 以上的保留 ID，因此必须保留；不能原地同时求解移动，
+// 否则不同 invocation 会读到一半旧、一半新的 footprint。
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0, rg16ui) uniform uimage2D current_image;
+uniform ivec2 image_size;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, image_size))) return;
+    uvec4 value = imageLoad(current_image, pixel);
+    if (value.r < 0xF000u) imageStore(current_image, pixel, uvec4(0u));
+}

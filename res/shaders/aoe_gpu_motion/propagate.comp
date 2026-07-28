@@ -1,0 +1,23 @@
+#version 430 core
+
+// Solve-B4：依赖传播。CPU 在每次 dispatch 后执行 GL_SHADER_STORAGE_BARRIER_BIT，
+// 固定运行 32 次，使队首先确认、后续单位沿相同方向逐级前进。只有当前占用者已获准，
+// 且它的 next footprint 确实不再覆盖目标像素，等待者才能变为可提交。
+layout(local_size_x=64) in;
+layout(binding=0,rg16ui)uniform readonly uimage2D current_image;
+struct UnitData{vec4 position_radii;vec4 intent_dt;uvec4 identity_wait;};
+struct Proposal{vec4 velocity_destination;uvec4 meta;};
+layout(std430,binding=0)readonly buffer Units{UnitData units[];};
+layout(std430,binding=1)buffer Proposals{Proposal proposals[];};
+layout(std430,binding=3)readonly buffer HandleMap{uint handle_to_index[];};
+uniform uint unit_count;uniform vec2 map_origin;uniform float pixels_per_world_unit;uniform ivec2 image_size;
+bool covers(uint j,ivec2 pixel){vec2 c=(proposals[j].velocity_destination.zw-map_origin)*pixels_per_world_unit;
+ vec2 r=max(units[j].position_radii.zw*pixels_per_world_unit,vec2(.5));vec2 q=(vec2(pixel)+vec2(.5)-c)/r;return dot(q,q)<=1.0;}
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=unit_count||proposals[i].meta.w!=1u)return;bool ready=true;
+ vec2 c=(proposals[i].velocity_destination.zw-map_origin)*pixels_per_world_unit;vec2 r=max(units[i].position_radii.zw*pixels_per_world_unit,vec2(.5));
+ ivec2 lo=max(ivec2(floor(c-r)),ivec2(0));ivec2 hi=min(ivec2(ceil(c+r)),image_size-1);
+ for(int y=lo.y;y<=hi.y&&ready;++y)for(int x=lo.x;x<=hi.x;++x){ivec2 px=ivec2(x,y);vec2 q=(vec2(px)+vec2(.5)-c)/r;if(dot(q,q)>1.0)continue;
+  uint h=imageLoad(current_image,px).r;if(h==0u||h==units[i].identity_wait.x)continue;
+  if(h>=0xF000u){ready=false;break;}uint j=handle_to_index[h];
+  if(j==0xFFFFFFFFu||proposals[j].meta.w!=2u||covers(j,px)){ready=false;break;}}
+ if(ready)proposals[i].meta.w=2u;}

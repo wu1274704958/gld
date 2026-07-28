@@ -212,4 +212,52 @@ namespace gld{
         Glid program = 0;
         std::unordered_map<std::string,int> uniform_map;
     }; 
+
+    // Compute programs are deliberately separate from Program. Program owns
+    // a fixed graphics-stage tuple, while an OpenGL program must never combine
+    // a compute shader with vertex/fragment/geometry stages.
+    class ComputeProgram {
+    public:
+        ComputeProgram() = default;
+        ComputeProgram(const ComputeProgram&) = delete;
+        ComputeProgram& operator=(const ComputeProgram&) = delete;
+        ComputeProgram(ComputeProgram&& other) noexcept
+            : shader(std::move(other.shader)), program(other.program) {
+            other.program = 0;
+        }
+        ComputeProgram& operator=(ComputeProgram&& other) noexcept {
+            if (this == &other) return *this;
+            clean();
+            shader = std::move(other.shader);
+            program = other.program;
+            other.program = 0;
+            return *this;
+        }
+        ~ComputeProgram() { clean(); }
+
+        void create() { clean(); program = glCreateProgram(); }
+        void attach_shader(Shader<ShaderType::COMPUTE> value) {
+            shader = std::move(value);
+            glAttachShader(program, shader.get_id());
+        }
+        void link() { glLinkProgram(program); }
+        void use() const { glUseProgram(program); }
+        static void unuse() { glUseProgram(0); }
+        bool good() const { return program != 0; }
+        void clean() {
+            if (program != 0) glDeleteProgram(program);
+            program = 0;
+        }
+        Glid id() const { return program; }
+        operator Glid() const { return program; }
+
+        template<size_t ERR_INFO_SIZE>
+        std::tuple<bool, std::unique_ptr<std::string>> check_link_state() {
+            return sundry::check_link_state<ERR_INFO_SIZE>(program);
+        }
+
+    private:
+        Shader<ShaderType::COMPUTE> shader;
+        Glid program = 0;
+    };
 }

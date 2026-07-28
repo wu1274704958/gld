@@ -79,6 +79,8 @@ public:
     bool remove_static_obstacle(AoeObstacleId);
     const AoeStaticObstacleDesc* static_obstacle(AoeObstacleId) const;
     std::size_t static_obstacle_count() const { return obstacles_.size(); }
+    void visit_static_obstacles(const std::function<void(
+        AoeObstacleId, const AoeStaticObstacleDesc&)>& visitor) const;
 
     bool position_blocked(glm::vec2 point, glm::vec2 clearance) const;
     bool cell_traversable(int x, int y, glm::vec2 clearance) const;

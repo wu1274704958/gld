@@ -14,6 +14,7 @@
 #include <FindPath.hpp>
 #include <resource_mgr.hpp>
 #include <aoe/AoeGameplay.hpp>
+#include <aoe_gpu_motion/AoeGpuMotion.hpp>
 #include <aoe2/Aoe2Plugin.hpp>
 #include <aoe2_gameplay/Aoe2GameplayBridge.hpp>
 #include <ecs/App.hpp>
@@ -416,6 +417,7 @@ int main() {
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(AoeGameplayPlugin{"aoe_units"});
+    app.add_plugin(AoeGpuMotionPlugin{});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(RenderPlugin);
     app.world.add_resource<PreviewState>();

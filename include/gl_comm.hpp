@@ -9,7 +9,8 @@ namespace gld
     enum class ShaderType{
         VERTEX = 0x8B31,
         FRAGMENT = 0x8B30,
-        GEOMETRY = 0x8DD9
+        GEOMETRY = 0x8DD9,
+        COMPUTE = 0x91B9
     };
 
     enum class ArrayBufferType{

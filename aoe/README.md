@@ -426,3 +426,34 @@ a passive red Camel Scout at a random logical map position, then projects both
 with the AoE isometric mapping. Controls are Left/Right player definition, Space
 attack the enemy, M Attack Move through and beyond the enemy, A/D facing, R reuse
 the enemy after it reaches the pool, F5 rescan definitions, and Escape quit.
+
+## GPU image global motion planner
+
+`AoeNavigationSettings::global_motion_planner_id` defaults to `gpu_image`.
+Windowed gameplay examples register `AoeGpuMotionPlugin`; renderer-free tests
+and machines without OpenGL 4.3 automatically execute `cpu_unit_flow` for that
+fixed tick. `AoeGlobalMotionPlannerDiagnostics` records the requested/active
+backend, failures, fallback reason, and authoritative safety corrections.
+
+The GPU world state uses two ping-pong `GL_RG16UI` images at 16 pixels per world
+unit. R16 stores a reusable unit handle or a reserved static-obstacle ID; G16
+stores an 8-bit direction and 8-bit speed. Exact float positions, radii,
+generation values, intentions, and final velocities remain in SSBOs. Solve
+builds one shared `RGBA16F` field with mips, scores candidate directions,
+atomically reserves a temporary `R32UI` image, validates the complete rigid
+footprint, propagates same-direction dependencies for 32 passes, writes the
+complete next image, and reads the compact decision SSBO in the same gameplay
+fixed tick. The images are swapped only after commit and readback.
+
+Detailed fixed-tick map dumps are compiled only when
+`GLD_ENABLE_PERFORMANCE_MONITORING=ON`. Set the output directory before running
+either gameplay preview:
+
+```powershell
+$env:GLD_AOE_GPU_MAP_DUMP = "build/profile/gpu_map"
+```
+
+Every fixed tick produces `tick_<n>.rg16ui.bin`,
+`tick_<n>_occupancy.png`, and `tick_<n>_vector.png`. Readback uses a three-PBO
+ring; a full ring waits instead of dropping a fixed tick, while Raw/PNG encoding
+runs on a background writer.

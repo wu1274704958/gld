@@ -138,4 +138,11 @@ namespace gld::ecs {
         TextureWrap wrap_t() const { return get<8>(); }
         TextureChannelMapping channel_mapping() const { return get<9>(); }
     };
+
+    struct ComputeProgramDesc
+        : BaseAssetDesc<ComputeProgramDesc, std::string> {
+        using Asset = ComputeProgram;
+        using BaseAssetDesc::BaseAssetDesc;
+        const std::string& cs() const { return get<0>(); }
+    };
 }
