@@ -8,6 +8,9 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(binding = 0, rg16ui) uniform readonly uimage2D current_image;
 layout(binding = 1, rgba16f) uniform writeonly image2D shared_field;
 uniform ivec2 image_size;
+// 活动矩形已包含 footprint、一 Tick 位移和八像素邻域 margin。
+uniform ivec2 dispatch_origin;
+uniform ivec2 dispatch_size;
 
 vec2 unpack_vector(uint encoded_vector) {
     float angle = float(encoded_vector & 0xFFu) * (6.28318530718 / 255.0);
@@ -31,7 +34,9 @@ void sample_pixel(ivec2 p, inout vec2 sum, inout float count,
 }
 
 void main() {
-    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 local_pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local_pixel, dispatch_size))) return;
+    ivec2 p = dispatch_origin + local_pixel;
     if (any(greaterThanEqual(p, image_size))) return;
     vec2 sum = vec2(0.0); float count = 0.0; float pressure = 0.0;
     float clearance = 1.0;

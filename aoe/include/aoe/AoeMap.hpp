@@ -84,6 +84,9 @@ public:
 
     bool position_blocked(glm::vec2 point, glm::vec2 clearance) const;
     bool cell_traversable(int x, int y, glm::vec2 clearance) const;
+    // Conservative whole-cell test used by moving formation slots. True means
+    // every possible unit center inside the cell is safe for this clearance.
+    bool cell_fully_traversable(int x, int y, glm::vec2 clearance) const;
     float static_safe_fraction(glm::vec2 from, glm::vec2 to,
                                glm::vec2 clearance) const;
 

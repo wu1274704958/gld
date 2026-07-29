@@ -7,9 +7,14 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(binding = 0, rg16ui) uniform uimage2D current_image;
 uniform ivec2 image_size;
+// 只清理本 image 上次写入的脏矩形与本 Tick 活动矩形的并集。
+uniform ivec2 dispatch_origin;
+uniform ivec2 dispatch_size;
 
 void main() {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 local_pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local_pixel, dispatch_size))) return;
+    ivec2 pixel = dispatch_origin + local_pixel;
     if (any(greaterThanEqual(pixel, image_size))) return;
     uvec4 value = imageLoad(current_image, pixel);
     if (value.r < 0xF000u) imageStore(current_image, pixel, uvec4(0u));

@@ -1374,10 +1374,10 @@ int main() {
     assert(std::abs(shared_awareness_fixture.world.reg().get<AoePosition>(
                shared_awareness_squad).value.x - awareness_anchor) < 1e-5f);
 
-    // A stalled Squad member may immediately engage a different enemy that is
-    // already inside its own weapon range. The Squad keeps its Attack Move
-    // order and remains engaged; this is not the shared-candidate acquisition
-    // path, whose candidates may be outside this member's real weapon range.
+    // The default nearest-enemy policy keeps a live target locked even when the
+    // member stalls and a closer enemy enters weapon range. Once that target
+    // dies, the member reacquires the nearest valid enemy without dropping the
+    // Squad's Attack Move order.
     Fixture stalled_squad_fixture;
     AoeSquadSpawnOptions stalled_squad_options;
     stalled_squad_options.composition = {{"test", 1, 1}};
@@ -1403,6 +1403,11 @@ int main() {
             stalled_member.entity).value + glm::vec2{.6f, 0.f}, 500.f, 2);
     stalled_squad_fixture.world.reg().get<AoeLocomotionState>(
         stalled_member.entity).stalled_ticks = 1;
+    stalled_squad_fixture.advance_ticks(1);
+    assert(stalled_squad_fixture.world.reg().get<AoeAttackOrder>(
+               stalled_member.entity).target.entity == stalled_squad_primary);
+    assert(set_aoe_unit_health(
+        stalled_squad_fixture.world, stalled_squad_primary, 0.f));
     stalled_squad_fixture.advance_ticks(1);
     assert(stalled_squad_fixture.world.reg().get<AoeAttackOrder>(
                stalled_member.entity).target.entity == stalled_squad_nearby);

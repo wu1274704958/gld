@@ -385,6 +385,40 @@ bool AoeLogicMap::cell_traversable(int x, int y, glm::vec2 clearance) const {
     return !position_blocked(cell_center(x, y), clearance);
 }
 
+bool AoeLogicMap::cell_fully_traversable(
+    int x, int y, glm::vec2 clearance) const {
+    if (!valid() || x < 0 || y < 0 ||
+        x >= static_cast<int>(width_) || y >= static_cast<int>(height_))
+        return false;
+    clearance = glm::max(clearance, glm::vec2(0.f));
+    const glm::vec2 low = origin_ + glm::vec2(x, y) * tile_size_;
+    const glm::vec2 high = low + glm::vec2(tile_size_);
+    const glm::vec2 map_high = origin_ + glm::vec2(
+        width_ * tile_size_, height_ * tile_size_);
+    if (glm::any(glm::lessThan(low - clearance, origin_)) ||
+        glm::any(glm::greaterThan(high + clearance, map_high)))
+        return false;
+    for (const auto& record : obstacles_) {
+        const auto& obstacle = record.desc;
+        if (obstacle.shape == AoeStaticObstacleShape::Aabb) {
+            const glm::vec2 extent = obstacle.half_extents + clearance;
+            if (glm::all(glm::greaterThanEqual(
+                    high, obstacle.center - extent)) &&
+                glm::all(glm::lessThanEqual(
+                    low, obstacle.center + extent)))
+                return false;
+            continue;
+        }
+        const glm::vec2 extent = glm::vec2(obstacle.radius) + clearance;
+        const glm::vec2 nearest = glm::clamp(obstacle.center, low, high);
+        const glm::vec2 delta = nearest - obstacle.center;
+        if (delta.x * delta.x / (extent.x * extent.x) +
+            delta.y * delta.y / (extent.y * extent.y) <= 1.f)
+            return false;
+    }
+    return true;
+}
+
 float AoeLogicMap::static_safe_fraction(glm::vec2 from, glm::vec2 to,
                                         glm::vec2 clearance) const {
     if (!contains(from, clearance)) return 0.f;

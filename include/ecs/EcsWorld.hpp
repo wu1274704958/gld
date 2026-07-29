@@ -48,9 +48,13 @@ namespace gld::ecs {
         template<class R>
         R& resource() { return registry.ctx().get<R>(); }
         template<class R>
+        const R& resource() const { return registry.ctx().get<R>(); }
+        template<class R>
         R* try_resource() { return registry.ctx().find<R>(); }
         template<class R>
-        bool has_resource() { return registry.ctx().contains<R>(); }
+        const R* try_resource() const { return registry.ctx().find<R>(); }
+        template<class R>
+        bool has_resource() const { return registry.ctx().contains<R>(); }
         template<class R>
         bool remove_resource() { return registry.ctx().erase<R>(); }
         template<class R, class... Args>

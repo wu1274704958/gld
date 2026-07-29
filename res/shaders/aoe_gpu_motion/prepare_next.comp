@@ -7,5 +7,7 @@ layout(local_size_x=16,local_size_y=16)in;
 layout(binding=0,rg16ui)uniform readonly uimage2D current_image;
 layout(binding=3,rg16ui)uniform writeonly uimage2D next_image;
 uniform ivec2 image_size;
-void main(){ivec2 p=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(p,image_size)))return;
+uniform ivec2 dispatch_origin;uniform ivec2 dispatch_size;
+void main(){ivec2 lp=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(lp,dispatch_size)))return;
+ ivec2 p=dispatch_origin+lp;if(any(greaterThanEqual(p,image_size)))return;
  uvec4 v=imageLoad(current_image,p);imageStore(next_image,p,v.r>=0xF000u?v:uvec4(0u));}

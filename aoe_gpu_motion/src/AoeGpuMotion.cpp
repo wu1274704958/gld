@@ -17,8 +17,6 @@
 #include <mutex>
 #include <queue>
 #include <thread>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <ecs/PerformanceMonitoring.hpp>
@@ -27,7 +25,6 @@
 namespace gld::ecs::aoe {
 namespace {
 
-constexpr float PixelsPerWorldUnit = 16.f;
 constexpr std::uint16_t FirstStaticId = 0xF000u;
 constexpr std::uint16_t WallId = 0xF000u;
 constexpr std::uint16_t TreeId = 0xF001u;
@@ -61,6 +58,24 @@ struct GpuDecision { float velocity[4]; std::uint32_t identity[4]; };
 static_assert(sizeof(GpuUnitData) == 48);
 static_assert(sizeof(GpuProposal) == 32);
 static_assert(sizeof(GpuDecision) == 32);
+
+struct PixelRect {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool empty() const { return width <= 0 || height <= 0; }
+};
+
+PixelRect unite(PixelRect a, PixelRect b) {
+    if (a.empty()) return b;
+    if (b.empty()) return a;
+    const int x0 = std::min(a.x, b.x);
+    const int y0 = std::min(a.y, b.y);
+    const int x1 = std::max(a.x + a.width, b.x + b.width);
+    const int y1 = std::max(a.y + a.height, b.y + b.height);
+    return {x0, y0, x1 - x0, y1 - y0};
+}
 
 enum class Pass : std::size_t {
     ClearCurrent, FillUnits, BuildField, Propose, ClearReservation,
@@ -231,7 +246,16 @@ private:
     std::thread worker_;
 };
 
-struct HandleRecord { std::uint16_t handle = 0; std::uint16_t generation = 0; };
+struct HandleRecord {
+    std::uint16_t handle = 0;
+    std::uint16_t generation = 0;
+};
+struct GpuMotionHandleBinding {
+    std::uint64_t instance_id = 0;
+    std::uint64_t last_seen_tick = 0;
+    std::uint16_t handle = 0;
+    std::uint16_t generation = 0;
+};
 struct DumpSlot {
     GLuint pbo = 0;
     GLsync fence = nullptr;
@@ -241,10 +265,45 @@ struct DumpSlot {
     bool pending = false;
 };
 
+struct MotionBufferSlot {
+    GLuint unit = 0;
+    GLuint proposal = 0;
+    GLuint decision = 0;
+    GLuint handle_map = 0;
+    GLuint readback = 0;
+    GLsync fence = nullptr;
+    std::size_t unit_capacity = 0;
+    std::size_t proposal_capacity = 0;
+    std::size_t decision_capacity = 0;
+    std::size_t handle_capacity = 0;
+    std::size_t readback_capacity = 0;
+    std::uint64_t tick = 0;
+    bool pending = false;
+    std::vector<GpuUnitData> units;
+    std::vector<entt::entity> entities;
+    std::vector<std::uint64_t> instances;
+};
+
+struct UniformLocations {
+    GLint image_size = -1;
+    GLint unit_count = -1;
+    GLint map_origin = -1;
+    GLint pixels_per_world_unit = -1;
+    GLint candidate_round = -1;
+    GLint dispatch_origin = -1;
+    GLint dispatch_size = -1;
+};
+
 class GpuMotionRuntime {
 public:
-    explicit GpuMotionRuntime(std::string shader_root)
-        : shader_root_(std::move(shader_root)) {}
+    explicit GpuMotionRuntime(std::string shader_root,
+                              float pixels_per_world_unit,
+                              double result_fence_budget_ms,
+                              std::uint32_t solve_interval_ticks)
+        : shader_root_(std::move(shader_root)),
+          pixels_per_world_unit_(pixels_per_world_unit),
+          result_fence_budget_ms_(result_fence_budget_ms),
+          solve_interval_ticks_(solve_interval_ticks) {}
     ~GpuMotionRuntime() { shutdown(nullptr); }
 
     void shutdown(EcsWorld* world) {
@@ -252,22 +311,33 @@ public:
         released_ = true;
         if (initialized_ && glDeleteBuffers && glDeleteTextures) {
             for (auto& slot : dumps_) consume_dump(slot, true);
-            if (unit_buffer_) glDeleteBuffers(1, &unit_buffer_);
-            if (proposal_buffer_) glDeleteBuffers(1, &proposal_buffer_);
-            if (decision_buffer_) glDeleteBuffers(1, &decision_buffer_);
-            if (handle_map_buffer_) glDeleteBuffers(1, &handle_map_buffer_);
+            for (auto& slot : motion_slots_) {
+                if (slot.fence) glDeleteSync(slot.fence);
+                const std::array buffers{slot.unit, slot.proposal,
+                    slot.decision, slot.handle_map, slot.readback};
+                glDeleteBuffers(static_cast<GLsizei>(buffers.size()),
+                                buffers.data());
+                slot = {};
+            }
             glDeleteTextures(2, state_images_.data());
             if (shared_field_) glDeleteTextures(1, &shared_field_);
             if (reservation_) glDeleteTextures(1, &reservation_);
             for (auto& slot : dumps_) if (slot.pbo) glDeleteBuffers(1, &slot.pbo);
         }
-        unit_buffer_ = proposal_buffer_ = decision_buffer_ = handle_map_buffer_ = 0;
         state_images_ = {0, 0}; shared_field_ = reservation_ = 0;
         for (auto& slot : dumps_) { slot.pbo = 0; slot.pending = false; }
         for (auto& value : programs_) value = {};
-        if (world)
+        if (world) {
+            auto& reg = world->reg();
+            std::vector<entt::entity> bindings;
+            for (const auto entity : reg.view<GpuMotionHandleBinding>())
+                bindings.push_back(entity);
+            for (const auto entity : bindings)
+                if (reg.valid(entity))
+                    reg.remove<GpuMotionHandleBinding>(entity);
             if (auto* manager = world->try_resource<AssetManager>())
                 manager->store<ComputeProgram>().gc(0.0);
+        }
     }
 
     bool initialize(EcsWorld& world, std::string& error) {
@@ -289,11 +359,25 @@ public:
                 error = std::string("failed to load compute shader: ") + pass_file(pass);
                 return false;
             }
+            const GLuint id = programs_[i]->id();
+            uniforms_[i] = {
+                glGetUniformLocation(id, "image_size"),
+                glGetUniformLocation(id, "unit_count"),
+                glGetUniformLocation(id, "map_origin"),
+                glGetUniformLocation(id, "pixels_per_world_unit"),
+                glGetUniformLocation(id, "candidate_round"),
+                glGetUniformLocation(id, "dispatch_origin"),
+                glGetUniformLocation(id, "dispatch_size")};
         }
-        glGenBuffers(1, &unit_buffer_);
-        glGenBuffers(1, &proposal_buffer_);
-        glGenBuffers(1, &decision_buffer_);
-        glGenBuffers(1, &handle_map_buffer_);
+        for (auto& slot : motion_slots_) {
+            std::array<GLuint, 5> buffers{};
+            glGenBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
+            slot.unit = buffers[0];
+            slot.proposal = buffers[1];
+            slot.decision = buffers[2];
+            slot.handle_map = buffers[3];
+            slot.readback = buffers[4];
+        }
         handle_generations_.resize(FirstStaticId, 0);
         handle_to_index_.resize(FirstStaticId, InvalidIndex);
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
@@ -322,23 +406,58 @@ public:
         while (glGetError() != GL_NO_ERROR) {}
         const auto total_started = std::chrono::steady_clock::now();
         if (!ensure_map(*map, error)) return false;
-        if (!gather_units(world, tick, error)) return false;
-        const auto upload_started = std::chrono::steady_clock::now();
-        upload_buffers();
-        const auto dispatch_started = std::chrono::steady_clock::now();
+        const bool solve_demanded = evaluate_solve_requirement(world, tick);
+        solve_required_ = solve_demanded &&
+            tick % solve_interval_ticks_ == 0u;
+        public_diag.solve_required = solve_required_;
+        if (solve_required_) ++public_diag.solve_required_ticks;
+        if (solve_required_) {
+            if (!gather_units(world, tick, error)) return false;
+        } else {
+            gather_raw_motion(world, tick);
+        }
+        const auto readback_started = std::chrono::steady_clock::now();
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         download_ms_ = 0.0;
 #endif
-        dispatch_all();
-        const auto readback_started = std::chrono::steady_clock::now();
-        read_decisions(world, tick);
-        std::swap(current_index_, next_index_); // 完整提交与同 tick 回读后才能交换。
-        queue_dump(tick);
+        if (tick > 0)
+            consume_motion_result(
+                motion_slots_[(tick - 1u) % motion_slots_.size()],
+                world, tick, public_diag);
+        bool gpu_in_flight = false;
+        for (auto& pending : motion_slots_) {
+            retire_motion_slot(pending, false);
+            gpu_in_flight = gpu_in_flight || pending.pending;
+        }
+        auto& slot = motion_slots_[tick % motion_slots_.size()];
+        const auto upload_started = std::chrono::steady_clock::now();
+        const auto dispatch_started = std::chrono::steady_clock::now();
+        if (solve_required_ && !gpu_in_flight) {
+            upload_buffers(slot);
+            dispatch_all();
+            queue_motion_result(slot, tick);
+            ++public_diag.submissions_queued;
+            // OpenGL command ordering guarantees the newly queued current/next
+            // image work completes before the next dispatch that consumes it;
+            // CPU readback no longer needs to serialize this swap.
+            std::swap(current_index_, next_index_);
+            queue_dump(tick);
+        } else if (solve_required_) {
+            // Catch-up fixed ticks can occur back-to-back with no GPU time in
+            // between. Do not build an unbounded queue of results that would
+            // already be stale when read; this tick keeps the raw intent and
+            // still passes through authoritative CPU motion safety.
+            ++public_diag.async_submissions_skipped;
+        }
 
         public_diag.available = true;
         public_diag.unavailable_reason.clear();
         public_diag.map_width_pixels = width_;
         public_diag.map_height_pixels = height_;
+        public_diag.active_width_pixels =
+            static_cast<std::uint32_t>(std::max(0, active_rect_.width));
+        public_diag.active_height_pixels =
+            static_cast<std::uint32_t>(std::max(0, active_rect_.height));
         public_diag.active_units = active_unit_count_;
         public_diag.authoritative_corrections = world.resource_or_add<
             AoeGlobalMotionPlannerDiagnostics>().authoritative_corrections;
@@ -346,12 +465,9 @@ public:
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         public_diag.upload_ms = std::chrono::duration<double, std::milli>(
             dispatch_started - upload_started).count();
-        public_diag.dispatch_ms = std::max(0.0,
-            std::chrono::duration<double, std::milli>(
-                readback_started - dispatch_started).count() - download_ms_);
-        public_diag.readback_ms = download_ms_ +
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - readback_started).count();
+        public_diag.dispatch_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - dispatch_started).count();
+        public_diag.readback_ms = download_ms_;
         public_diag.last_tick_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - total_started).count();
 #else
@@ -373,20 +489,33 @@ private:
     ComputeProgram& program(Pass pass) { return *programs_[static_cast<std::size_t>(pass)]; }
     void use(Pass pass) {
         program(pass).use();
-        const GLuint id = program(pass).id();
-        if (const GLint location = glGetUniformLocation(id, "image_size"); location >= 0)
-            glUniform2i(location, static_cast<GLint>(width_), static_cast<GLint>(height_));
-        if (const GLint location = glGetUniformLocation(id, "unit_count"); location >= 0)
-            glUniform1ui(location, static_cast<GLuint>(units_.size()));
-        if (const GLint location = glGetUniformLocation(id, "map_origin"); location >= 0)
-            glUniform2f(location, map_origin_.x, map_origin_.y);
-        if (const GLint location = glGetUniformLocation(id, "pixels_per_world_unit"); location >= 0)
-            glUniform1f(location, PixelsPerWorldUnit);
-        if (const GLint location = glGetUniformLocation(id, "candidate_round"); location >= 0)
-            glUniform1ui(location, candidate_round_);
+        const auto& location = uniforms_[static_cast<std::size_t>(pass)];
+        if (location.image_size >= 0)
+            glUniform2i(location.image_size, static_cast<GLint>(width_),
+                        static_cast<GLint>(height_));
+        if (location.unit_count >= 0)
+            glUniform1ui(location.unit_count,
+                         static_cast<GLuint>(units_.size()));
+        if (location.map_origin >= 0)
+            glUniform2f(location.map_origin, map_origin_.x, map_origin_.y);
+        if (location.pixels_per_world_unit >= 0)
+            glUniform1f(location.pixels_per_world_unit,
+                        pixels_per_world_unit_);
+        if (location.candidate_round >= 0)
+            glUniform1ui(location.candidate_round, candidate_round_);
+        if (location.dispatch_origin >= 0)
+            glUniform2i(location.dispatch_origin, dispatch_rect_.x,
+                        dispatch_rect_.y);
+        if (location.dispatch_size >= 0)
+            glUniform2i(location.dispatch_size, dispatch_rect_.width,
+                        dispatch_rect_.height);
     }
-    void dispatch_pixels(Pass pass) {
-        use(pass); glDispatchCompute((width_ + 15u) / 16u, (height_ + 15u) / 16u, 1);
+    void dispatch_pixels(Pass pass, PixelRect rect) {
+        if (rect.empty()) return;
+        dispatch_rect_ = rect;
+        use(pass);
+        glDispatchCompute((static_cast<GLuint>(rect.width) + 15u) / 16u,
+                          (static_cast<GLuint>(rect.height) + 15u) / 16u, 1);
     }
     void dispatch_units(Pass pass) {
         use(pass); if (!units_.empty()) glDispatchCompute(
@@ -395,9 +524,9 @@ private:
 
     bool ensure_map(const AoeLogicMap& map, std::string&) {
         const std::uint32_t width = static_cast<std::uint32_t>(std::ceil(
-            map.width() * map.tile_size() * PixelsPerWorldUnit));
+            map.width() * map.tile_size() * pixels_per_world_unit_));
         const std::uint32_t height = static_cast<std::uint32_t>(std::ceil(
-            map.height() * map.tile_size() * PixelsPerWorldUnit));
+            map.height() * map.tile_size() * pixels_per_world_unit_));
         const bool recreate = width != width_ || height != height_ ||
                               map.origin() != map_origin_;
         if (recreate) {
@@ -416,13 +545,11 @@ private:
             }
             glGenTextures(1, &shared_field_);
             glBindTexture(GL_TEXTURE_2D, shared_field_);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            const int levels = 1 + static_cast<int>(std::floor(std::log2(
-                static_cast<float>(std::max(width_, height_)))));
-            glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA16F, width_, height_);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, width_, height_);
             glGenTextures(1, &reservation_);
             glBindTexture(GL_TEXTURE_2D, reservation_);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -430,6 +557,7 @@ private:
             glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, width_, height_, 0,
                          GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
             current_index_ = 0; next_index_ = 1; static_revision_ = 0;
+            state_dirty_ = {};
         }
         if (static_revision_ != map.static_revision()) upload_static(map);
         return true;
@@ -448,13 +576,13 @@ private:
             glm::vec2 half = obstacle.shape == AoeStaticObstacleShape::Circle
                 ? glm::vec2(obstacle.radius) : obstacle.half_extents;
             glm::ivec2 lo = glm::max(glm::ivec2(glm::floor(
-                (obstacle.center - half - map_origin_) * PixelsPerWorldUnit)), glm::ivec2(0));
+                (obstacle.center - half - map_origin_) * pixels_per_world_unit_)), glm::ivec2(0));
             glm::ivec2 hi = glm::min(glm::ivec2(glm::ceil(
-                (obstacle.center + half - map_origin_) * PixelsPerWorldUnit)),
+                (obstacle.center + half - map_origin_) * pixels_per_world_unit_)),
                 glm::ivec2(width_ - 1u, height_ - 1u));
             for (int y = lo.y; y <= hi.y; ++y) for (int x = lo.x; x <= hi.x; ++x) {
                 const glm::vec2 point = map_origin_ +
-                    (glm::vec2(x, y) + glm::vec2(.5f)) / PixelsPerWorldUnit;
+                    (glm::vec2(x, y) + glm::vec2(.5f)) / pixels_per_world_unit_;
                 bool inside = obstacle.shape == AoeStaticObstacleShape::Circle
                     ? glm::dot(point - obstacle.center, point - obstacle.center) <=
                         obstacle.radius * obstacle.radius
@@ -470,45 +598,66 @@ private:
         static_revision_ = map.static_revision();
     }
 
-    HandleRecord acquire_handle(std::uint64_t instance_id) {
-        if (const auto it = handles_.find(instance_id); it != handles_.end()) return it->second;
+    HandleRecord allocate_handle() {
         std::uint16_t handle = 0;
         if (!free_handles_.empty()) { handle = free_handles_.back(); free_handles_.pop_back(); }
         else if (next_handle_ <= MaximumUnitHandle) handle = static_cast<std::uint16_t>(next_handle_++);
         if (!handle) return {};
         std::uint16_t generation = ++handle_generations_[handle];
         if (!generation) generation = ++handle_generations_[handle];
-        return handles_.emplace(instance_id, HandleRecord{handle, generation}).first->second;
+        return {handle, generation};
     }
 
     bool gather_units(EcsWorld& world, std::uint64_t tick, std::string& error) {
-        units_.clear(); entities_.clear(); live_instances_.clear();
+        units_.clear(); entities_.clear(); instance_ids_.clear();
         active_unit_count_ = 0;
-        std::fill(handle_to_index_.begin(), handle_to_index_.end(), InvalidIndex);
+        for (const auto handle : mapped_handles_)
+            handle_to_index_[handle] = InvalidIndex;
+        mapped_handles_.clear();
         auto& reg = world.reg();
         auto& index = world.resource_or_add<AoeUnitFlowIndex>();
         auto& diag = world.resource_or_add<AoeGameplayDiagnostics>();
         index.records.clear(); index.candidates.clear(); index.selected.clear(); index.maximum_reach = 0.f;
-        for (auto entity : reg.view<AoeGlobalMotionDecision>())
-            reg.get<AoeGlobalMotionDecision>(entity).valid = false;
         const float dt = static_cast<float>(world.resource<AoeGameplaySettings>().fixed_dt);
-        for (auto entity : reg.view<AoePosition, AoeCollider,
-                                    AoeGameplayIdentity, AoeTeam>(
-                 entt::exclude<AoePooledUnit, AoeRecyclePending>)) {
+        const auto* snapshot = world.try_resource<AoeGameplayTickSnapshot>();
+        if (!snapshot || snapshot->tick != tick) {
+            error = "fixed-tick unit snapshot is unavailable";
+            return false;
+        }
+        for (const auto& captured : snapshot->units) {
+            const auto entity = captured.entity;
+            if (!reg.valid(entity)) continue;
             const auto* intent = reg.try_get<AoeMovementIntent>(entity);
             const bool active = intent && intent->valid &&
                 intent->produced_tick == tick &&
                 glm::length(intent->velocity) > .00001f;
-            const auto instance = reg.get<AoeGameplayIdentity>(entity).instance_id;
-            const HandleRecord handle = acquire_handle(instance);
+            const auto instance = captured.instance_id;
+            auto* binding = reg.try_get<GpuMotionHandleBinding>(entity);
+            if (binding && binding->instance_id != instance) {
+                free_handles_.push_back(binding->handle);
+                reg.remove<GpuMotionHandleBinding>(entity);
+                binding = nullptr;
+            }
+            if (!binding) {
+                const auto allocated = allocate_handle();
+                if (!allocated.handle) {
+                    error = "GPU unit handle space (0x0001-0xEFFF) exhausted";
+                    return false;
+                }
+                binding = &reg.emplace<GpuMotionHandleBinding>(entity,
+                    GpuMotionHandleBinding{instance, tick,
+                        allocated.handle, allocated.generation});
+            } else {
+                binding->last_seen_tick = tick;
+            }
+            const HandleRecord handle{binding->handle, binding->generation};
             if (!handle.handle) { error = "GPU unit handle space (0x0001-0xEFFF) exhausted"; return false; }
-            live_instances_.insert(instance);
-            const auto& position = reg.get<AoePosition>(entity);
-            const auto& collider = reg.get<AoeCollider>(entity);
             const auto& state = reg.get_or_emplace<AoeGlobalMotionState>(entity);
             GpuUnitData unit{};
-            unit.position_radii[0] = position.value.x; unit.position_radii[1] = position.value.y;
-            unit.position_radii[2] = collider.radius_x; unit.position_radii[3] = collider.radius_y;
+            unit.position_radii[0] = captured.position.x;
+            unit.position_radii[1] = captured.position.y;
+            unit.position_radii[2] = captured.radii.x;
+            unit.position_radii[3] = captured.radii.y;
             const glm::vec2 velocity = active ? intent->velocity : glm::vec2{0.f};
             unit.intent_dt[0] = velocity.x; unit.intent_dt[1] = velocity.y;
             unit.intent_dt[2] = dt; unit.intent_dt[3] = glm::length(velocity);
@@ -516,45 +665,199 @@ private:
             unit.identity_wait[2] = state.wait_ticks;
             unit.identity_wait[3] = active ? 1u : 0u;
             handle_to_index_[handle.handle] = static_cast<std::uint32_t>(units_.size());
-            units_.push_back(unit); entities_.push_back(entity);
+            mapped_handles_.push_back(handle.handle);
+            units_.push_back(unit);
+            entities_.push_back(entity);
+            instance_ids_.push_back(instance);
             if (active) {
                 ++active_unit_count_;
-                entt::entity squad = entt::null;
-                if (auto* member = reg.try_get<AoeSquadMember>(entity)) squad = member->squad;
-                index.records.push_back({entity, instance, squad, reg.get<AoeTeam>(entity).id,
-                    intent->kind, position.value, {collider.radius_x, collider.radius_y}, velocity});
+                index.records.push_back({entity, instance, captured.squad,
+                    captured.team_id, intent->kind, captured.position,
+                    captured.radii, velocity});
                 index.maximum_reach = std::max(index.maximum_reach,
-                    std::max(collider.radius_x, collider.radius_y) + glm::length(velocity));
-                reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
-                    AoeGlobalMotionDecision{.velocity = velocity,
-                        .produced_tick = tick, .valid = true});
+                    std::max(captured.radii.x, captured.radii.y) +
+                    glm::length(velocity));
+                const AoeGlobalMotionDecision raw{
+                    .velocity = velocity,
+                    .produced_tick = tick,
+                    .valid = true};
+                if (auto* decision =
+                        reg.try_get<AoeGlobalMotionDecision>(entity))
+                    *decision = raw;
+                else
+                    reg.emplace<AoeGlobalMotionDecision>(entity, raw);
                 if (intent->locally_infeasible) ++diag.flow_infeasible_assignments;
             }
         }
-        for (auto it = handles_.begin(); it != handles_.end();) {
-            if (!live_instances_.contains(it->first)) {
-                free_handles_.push_back(it->second.handle); it = handles_.erase(it);
-            } else ++it;
+        stale_handle_entities_.clear();
+        for (const auto entity : reg.view<GpuMotionHandleBinding>()) {
+            const auto& binding = reg.get<GpuMotionHandleBinding>(entity);
+            if (binding.last_seen_tick == tick) continue;
+            free_handles_.push_back(binding.handle);
+            stale_handle_entities_.push_back(entity);
         }
+        for (const auto entity : stale_handle_entities_)
+            if (reg.valid(entity)) reg.remove<GpuMotionHandleBinding>(entity);
         diag.flow_active_intents += active_unit_count_;
+        update_active_rect();
         return true;
     }
 
-    void upload_buffers() {
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, unit_buffer_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, units_.size() * sizeof(GpuUnitData),
-                     units_.empty() ? nullptr : units_.data(), GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, proposal_buffer_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, units_.size() * sizeof(GpuProposal), nullptr, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, decision_buffer_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, units_.size() * sizeof(GpuDecision), nullptr, GL_STREAM_READ);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, handle_map_buffer_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, handle_to_index_.size() * sizeof(std::uint32_t),
-                     handle_to_index_.data(), GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, unit_buffer_);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, proposal_buffer_);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, decision_buffer_);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, handle_map_buffer_);
+    bool evaluate_solve_requirement(EcsWorld& world, std::uint64_t tick) {
+        const auto* snapshot = world.try_resource<AoeGameplayTickSnapshot>();
+        if (!snapshot || snapshot->tick != tick) return true;
+        auto& reg = world.reg();
+        std::size_t active = 0;
+        std::size_t blocked = 0;
+        for (const auto& unit : snapshot->units) {
+            const auto* intent = reg.try_get<AoeMovementIntent>(unit.entity);
+            if (!intent || !intent->valid || intent->produced_tick != tick ||
+                glm::length(intent->velocity) <= .00001f)
+                continue;
+            ++active;
+            if (unit.squad == entt::null) return true;
+            const auto* state = reg.try_get<AoeGlobalMotionState>(unit.entity);
+            if ((state && state->wait_ticks >= 4u) ||
+                intent->locally_infeasible)
+                ++blocked;
+        }
+        if (blocked >= std::max<std::size_t>(32u, active / 100u))
+            return true;
+        constexpr float ConflictMargin = 1.f;
+        for (std::size_t i = 0; i < snapshot->squad_bounds.size(); ++i) {
+            const auto& a = snapshot->squad_bounds[i];
+            const auto* a_team = reg.try_get<AoeTeam>(a.squad);
+            if (!a_team) continue;
+            for (std::size_t j = i + 1;
+                 j < snapshot->squad_bounds.size(); ++j) {
+                const auto& b = snapshot->squad_bounds[j];
+                const auto* b_team = reg.try_get<AoeTeam>(b.squad);
+                if (!b_team || a_team->id == b_team->id) continue;
+                const bool overlap = glm::all(glm::greaterThanEqual(
+                    a.high + glm::vec2(ConflictMargin), b.low)) &&
+                    glm::all(glm::greaterThanEqual(
+                        b.high + glm::vec2(ConflictMargin), a.low));
+                if (overlap) return true;
+            }
+        }
+        return false;
+    }
+
+    void gather_raw_motion(EcsWorld& world, std::uint64_t tick) {
+        units_.clear();
+        entities_.clear();
+        instance_ids_.clear();
+        active_unit_count_ = 0;
+        auto& reg = world.reg();
+        auto& index = world.resource_or_add<AoeUnitFlowIndex>();
+        index.records.clear();
+        index.candidates.clear();
+        index.selected.clear();
+        index.maximum_reach = 0.f;
+        const auto& snapshot = world.resource<AoeGameplayTickSnapshot>();
+        for (const auto& unit : snapshot.units) {
+            const auto* intent = reg.try_get<AoeMovementIntent>(unit.entity);
+            if (!intent || !intent->valid || intent->produced_tick != tick ||
+                glm::length(intent->velocity) <= .00001f)
+                continue;
+            ++active_unit_count_;
+            index.records.push_back({unit.entity, unit.instance_id,
+                unit.squad, unit.team_id, intent->kind, unit.position,
+                unit.radii, intent->velocity});
+            index.maximum_reach = std::max(index.maximum_reach,
+                std::max(unit.radii.x, unit.radii.y) +
+                glm::length(intent->velocity));
+            (void)reg.get_or_emplace<AoeGlobalMotionState>(unit.entity);
+            const AoeGlobalMotionDecision raw{
+                .velocity = intent->velocity,
+                .produced_tick = tick,
+                .valid = true};
+            if (auto* decision =
+                    reg.try_get<AoeGlobalMotionDecision>(unit.entity))
+                *decision = raw;
+            else
+                reg.emplace<AoeGlobalMotionDecision>(unit.entity, raw);
+        }
+        world.resource_or_add<AoeGameplayDiagnostics>().flow_active_intents +=
+            active_unit_count_;
+        active_rect_ = {};
+    }
+
+    void update_active_rect() {
+        if (units_.empty() || width_ == 0 || height_ == 0) {
+            active_rect_ = {};
+            return;
+        }
+        int min_x = static_cast<int>(width_);
+        int min_y = static_cast<int>(height_);
+        int max_x = -1;
+        int max_y = -1;
+        for (const auto& unit : units_) {
+            const glm::vec2 start{unit.position_radii[0],
+                                  unit.position_radii[1]};
+            const glm::vec2 velocity{unit.intent_dt[0], unit.intent_dt[1]};
+            const glm::vec2 end = start + velocity * unit.intent_dt[2];
+            const glm::vec2 radii{unit.position_radii[2],
+                                  unit.position_radii[3]};
+            const glm::vec2 low = (glm::min(start, end) - radii -
+                                   map_origin_) * pixels_per_world_unit_;
+            const glm::vec2 high = (glm::max(start, end) + radii -
+                                    map_origin_) * pixels_per_world_unit_;
+            min_x = std::min(min_x, static_cast<int>(std::floor(low.x)));
+            min_y = std::min(min_y, static_cast<int>(std::floor(low.y)));
+            max_x = std::max(max_x, static_cast<int>(std::ceil(high.x)));
+            max_y = std::max(max_y, static_cast<int>(std::ceil(high.y)));
+        }
+        // build_field.comp samples up to eight pixels away. Two extra pixels
+        // cover raster rounding and the next fixed step's reservation edge.
+        constexpr int Margin = 10;
+        min_x = std::clamp(min_x - Margin, 0, static_cast<int>(width_));
+        min_y = std::clamp(min_y - Margin, 0, static_cast<int>(height_));
+        max_x = std::clamp(max_x + Margin, -1,
+                           static_cast<int>(width_) - 1);
+        max_y = std::clamp(max_y + Margin, -1,
+                           static_cast<int>(height_) - 1);
+        active_rect_ = max_x >= min_x && max_y >= min_y
+            ? PixelRect{min_x, min_y, max_x - min_x + 1,
+                        max_y - min_y + 1}
+            : PixelRect{};
+    }
+
+    void upload_buffers(MotionBufferSlot& slot) {
+        const auto ensure_capacity = [](GLuint buffer, std::size_t bytes,
+                                        std::size_t& capacity, GLenum usage) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
+            if (bytes > capacity) {
+                // Geometric high-water growth avoids redefining storage every
+                // fixed tick while squads spawn or recycle in small batches.
+                capacity = std::max(bytes, capacity ? capacity * 2u : bytes);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, capacity, nullptr, usage);
+            }
+        };
+        const std::size_t unit_bytes = units_.size() * sizeof(GpuUnitData);
+        const std::size_t proposal_bytes = units_.size() * sizeof(GpuProposal);
+        const std::size_t decision_bytes = units_.size() * sizeof(GpuDecision);
+        const std::size_t handle_bytes =
+            handle_to_index_.size() * sizeof(std::uint32_t);
+
+        ensure_capacity(slot.unit, unit_bytes, slot.unit_capacity,
+                        GL_DYNAMIC_DRAW);
+        if (unit_bytes)
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, unit_bytes,
+                            units_.data());
+        ensure_capacity(slot.proposal, proposal_bytes,
+                        slot.proposal_capacity, GL_DYNAMIC_DRAW);
+        ensure_capacity(slot.decision, decision_bytes,
+                        slot.decision_capacity, GL_STREAM_COPY);
+        ensure_capacity(slot.handle_map, handle_bytes,
+                        slot.handle_capacity, GL_DYNAMIC_DRAW);
+        if (handle_bytes)
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, handle_bytes,
+                            handle_to_index_.data());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, slot.unit);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, slot.proposal);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, slot.decision);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, slot.handle_map);
     }
 
     void dispatch_all() {
@@ -564,20 +867,21 @@ private:
         glBindImageTexture(2, reservation_, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
         glBindImageTexture(3, state_images_[next_index_], 0, GL_FALSE, 0,
                            GL_READ_WRITE, GL_RG16UI);
-        dispatch_pixels(Pass::ClearCurrent);
+        const PixelRect clear_current = unite(
+            state_dirty_[current_index_], active_rect_);
+        const PixelRect prepare_next = unite(
+            state_dirty_[next_index_], active_rect_);
+        dispatch_pixels(Pass::ClearCurrent, clear_current);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         dispatch_units(Pass::FillUnits);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-        dispatch_pixels(Pass::BuildField);
+        dispatch_pixels(Pass::BuildField, active_rect_);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shared_field_);
-        glGenerateMipmap(GL_TEXTURE_2D);
-        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
         for (int round = 0; round < ReservationRounds; ++round) {
             candidate_round_ = static_cast<std::uint32_t>(round);
             dispatch_units(Pass::Propose);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-            dispatch_pixels(Pass::ClearReservation);
+            dispatch_pixels(Pass::ClearReservation, active_rect_);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             dispatch_units(Pass::Reserve);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -592,44 +896,107 @@ private:
                 }
             }
         }
-        dispatch_pixels(Pass::PrepareNext);
+        dispatch_pixels(Pass::PrepareNext, prepare_next);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         dispatch_units(Pass::Commit);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         dispatch_units(Pass::WriteDecisions);
         glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+        state_dirty_[next_index_] = active_rect_;
     }
 
-    void download_decisions() {
+    void retire_motion_slot(MotionBufferSlot& slot, bool wait) {
+        if (!slot.pending) return;
+        GLenum status = glClientWaitSync(slot.fence,
+            wait ? GL_SYNC_FLUSH_COMMANDS_BIT : 0,
+            wait ? 1000000000ull : 0ull);
+        while (wait && status == GL_TIMEOUT_EXPIRED)
+            status = glClientWaitSync(
+                slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        if (!wait && status == GL_TIMEOUT_EXPIRED) return;
+        glDeleteSync(slot.fence);
+        slot.fence = nullptr;
+        slot.pending = false;
+    }
+
+    void queue_motion_result(MotionBufferSlot& slot, std::uint64_t tick) {
+        const std::size_t bytes = units_.size() * sizeof(GpuDecision);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, slot.readback);
+        if (bytes > slot.readback_capacity) {
+            slot.readback_capacity = std::max(
+                bytes, slot.readback_capacity
+                    ? slot.readback_capacity * 2u : bytes);
+            glBufferData(GL_COPY_WRITE_BUFFER, slot.readback_capacity,
+                         nullptr, GL_STREAM_READ);
+        }
+        if (bytes) {
+            glBindBuffer(GL_COPY_READ_BUFFER, slot.decision);
+            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
+                                0, 0, bytes);
+        }
+        slot.units = units_;
+        slot.entities = entities_;
+        slot.instances = instance_ids_;
+        slot.tick = tick;
+        slot.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        slot.pending = true;
+    }
+
+    void consume_motion_result(MotionBufferSlot& slot, EcsWorld& world,
+                               std::uint64_t tick,
+                               AoeGpuMotionDiagnostics& public_diag) {
+        if (!slot.pending || slot.tick + 1u != tick) return;
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         const auto started = std::chrono::steady_clock::now();
 #endif
-        decisions_.resize(units_.size());
+        const GLuint64 budget_ns = static_cast<GLuint64>(
+            std::max(0.0, result_fence_budget_ms_) * 1000000.0);
+        const GLenum status = glClientWaitSync(
+            slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, budget_ns);
+        if (status == GL_TIMEOUT_EXPIRED) {
+            ++public_diag.async_deadline_misses;
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+            download_ms_ += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+#endif
+            return;
+        }
+        if (status == GL_WAIT_FAILED) {
+            ++public_diag.async_deadline_misses;
+            retire_motion_slot(slot, true);
+            return;
+        }
+        decisions_.resize(slot.units.size());
         if (!decisions_.empty()) {
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, decision_buffer_);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+            glBindBuffer(GL_COPY_WRITE_BUFFER, slot.readback);
+            glGetBufferSubData(GL_COPY_WRITE_BUFFER, 0,
                 decisions_.size() * sizeof(GpuDecision), decisions_.data());
         }
-#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
-        download_ms_ += std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started).count();
-#endif
-    }
-
-    void read_decisions(EcsWorld& world, std::uint64_t tick) {
-        download_decisions();
         auto& reg = world.reg();
         auto& gameplay_diag = world.resource_or_add<AoeGameplayDiagnostics>();
         for (std::size_t i = 0; i < decisions_.size(); ++i) {
             const auto& gpu = decisions_[i];
-            if (gpu.identity[0] != units_[i].identity_wait[0] ||
-                gpu.identity[1] != units_[i].identity_wait[1]) continue;
-            if (units_[i].identity_wait[3] == 0u) continue;
-            auto& decision = reg.get<AoeGlobalMotionDecision>(entities_[i]);
+            if (gpu.identity[0] != slot.units[i].identity_wait[0] ||
+                gpu.identity[1] != slot.units[i].identity_wait[1] ||
+                slot.units[i].identity_wait[3] == 0u ||
+                !reg.valid(slot.entities[i])) continue;
+            const auto* identity =
+                reg.try_get<AoeGameplayIdentity>(slot.entities[i]);
+            const auto* intent =
+                reg.try_get<AoeMovementIntent>(slot.entities[i]);
+            if (!identity || identity->instance_id != slot.instances[i] ||
+                !intent || !intent->valid || intent->produced_tick != tick)
+                continue;
+            auto* decision_ptr =
+                reg.try_get<AoeGlobalMotionDecision>(slot.entities[i]);
+            if (!decision_ptr) continue;
+            auto& decision = *decision_ptr;
             decision.velocity = {gpu.velocity[0], gpu.velocity[1]};
             decision.produced_tick = tick; decision.valid = true;
-            auto& state = reg.get_or_emplace<AoeGlobalMotionState>(entities_[i]);
-            const bool waiting = gpu.identity[2] != 2u && units_[i].intent_dt[3] > .00001f;
+            auto& state = reg.get_or_emplace<AoeGlobalMotionState>(
+                slot.entities[i]);
+            const bool waiting = gpu.identity[2] != 2u &&
+                                 slot.units[i].intent_dt[3] > .00001f;
             if (waiting) {
                 decision.wait_ticks = state.wait_ticks;
                 decision.mode = state.wait_ticks >= 45u
@@ -646,6 +1013,14 @@ private:
             }
             state.mode = decision.mode;
         }
+        glDeleteSync(slot.fence);
+        slot.fence = nullptr;
+        slot.pending = false;
+        ++public_diag.async_results_applied;
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        download_ms_ += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+#endif
     }
 
     void consume_dump(DumpSlot& slot, bool wait) {
@@ -692,24 +1067,33 @@ private:
     bool available_ = false;
     bool released_ = false;
     std::array<Handle<ComputeProgram>, static_cast<std::size_t>(Pass::Count)> programs_;
+    std::array<UniformLocations, static_cast<std::size_t>(Pass::Count)>
+        uniforms_{};
     std::array<GLuint, 2> state_images_{0, 0};
     GLuint shared_field_ = 0, reservation_ = 0;
-    GLuint unit_buffer_ = 0, proposal_buffer_ = 0, decision_buffer_ = 0,
-           handle_map_buffer_ = 0;
+    std::array<MotionBufferSlot, 3> motion_slots_{};
     std::uint32_t width_ = 0, height_ = 0;
     std::uint32_t active_unit_count_ = 0;
+    float pixels_per_world_unit_ = 8.f;
+    double result_fence_budget_ms_ = 1.0;
+    std::uint32_t solve_interval_ticks_ = 2;
+    bool solve_required_ = false;
+    PixelRect active_rect_{};
+    PixelRect dispatch_rect_{};
+    std::array<PixelRect, 2> state_dirty_{};
     glm::vec2 map_origin_{std::numeric_limits<float>::max()};
     std::uint64_t static_revision_ = 0;
     int current_index_ = 0, next_index_ = 1;
     std::uint32_t candidate_round_ = 0;
     std::uint32_t next_handle_ = 1;
-    std::unordered_map<std::uint64_t, HandleRecord> handles_;
     std::vector<std::uint16_t> free_handles_, handle_generations_;
     std::vector<std::uint32_t> handle_to_index_;
-    std::unordered_set<std::uint64_t> live_instances_;
+    std::vector<std::uint16_t> mapped_handles_;
+    std::vector<entt::entity> stale_handle_entities_;
     std::vector<GpuUnitData> units_;
     std::vector<GpuDecision> decisions_;
     std::vector<entt::entity> entities_;
+    std::vector<std::uint64_t> instance_ids_;
     std::filesystem::path dump_root_;
     std::array<DumpSlot, 3> dumps_{};
     std::size_t dump_cursor_ = 0;
@@ -722,7 +1106,19 @@ private:
 } // namespace
 
 void AoeGpuMotionPlugin::operator()(App& app) const {
-    auto runtime = std::make_shared<GpuMotionRuntime>(shader_root);
+    if (!std::isfinite(pixels_per_world_unit) || pixels_per_world_unit <= 0.f)
+        throw std::invalid_argument(
+            "AoeGpuMotionPlugin requires positive pixels_per_world_unit");
+    if (!std::isfinite(result_fence_budget_ms) ||
+        result_fence_budget_ms < 0.0)
+        throw std::invalid_argument(
+            "AoeGpuMotionPlugin requires non-negative result_fence_budget_ms");
+    if (solve_interval_ticks == 0)
+        throw std::invalid_argument(
+            "AoeGpuMotionPlugin requires positive solve_interval_ticks");
+    auto runtime = std::make_shared<GpuMotionRuntime>(
+        shader_root, pixels_per_world_unit, result_fence_budget_ms,
+        solve_interval_ticks);
     auto& planners = app.world.resource_or_add<AoeGlobalMotionPlannerRegistry>();
     planners.bind("gpu_image",
         [runtime](EcsWorld& world, std::uint64_t tick, std::string& error) {

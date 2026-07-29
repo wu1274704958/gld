@@ -1433,10 +1433,22 @@ void system_profile_end(EcsWorld& world) {
                "render_units,projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
                "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
+               "g_snapshot_ms,g_team_index_build_ms,g_acquisition_field_ms,"
                "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,"
+               "g_squad_engagement_ms,g_squad_slots_ms,g_squad_layout_ms,"
                "g_acquisition_ms,g_navigation_ms,g_movement_intent_ms,"
                "g_local_avoidance_ms,g_unit_flow_ms,g_motion_safety_ms,"
+               "gpu_motion_total_ms,gpu_motion_upload_ms,gpu_motion_dispatch_ms,"
+               "gpu_motion_readback_ms,gpu_motion_active_w,gpu_motion_active_h,"
+               "gpu_motion_solve_required,gpu_motion_solve_ticks,"
+               "gpu_motion_submissions,gpu_motion_results_applied,"
+               "gpu_motion_deadline_misses,gpu_motion_submissions_skipped,"
                "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
+               "target_initial_attempts,target_initial_successes,"
+               "target_reacquisition_attempts,target_reacquisition_successes,"
+               "target_reacquisition_failures,target_reacquisition_cooldown_skips,"
+               "target_reacquisition_budget_deferrals,target_candidates_considered,"
+               "team_index_queries,team_index_candidates,team_index_memberships,"
                "move_speed_samples,move_base_avg,move_effective_avg,move_desired_avg,"
                "move_steering_avg,move_actual_avg,move_actual_base_ratio,"
                "move_actual_effective_ratio,move_squad_limited,move_arrive_limited,"
@@ -1454,10 +1466,25 @@ void system_profile_end(EcsWorld& world) {
     }
 
     const auto& gameplay = world.resource<AoeGameplayPerformanceDiagnostics>();
+    const auto& gameplay_counters = world.resource<AoeGameplayDiagnostics>();
     const auto& bridge = world.resource<Aoe2GameplayBridgePerformanceDiagnostics>();
     const auto& transform = world.resource<TransformDiagnostics>();
     const auto& render = world.resource<RenderDiagnostics>();
     const auto& clock = world.resource<AoeGameplayClock>();
+    const auto& gpu_motion = world.resource<AoeGpuMotionDiagnostics>();
+    std::uint64_t team_index_queries = 0;
+    std::uint64_t team_index_candidates = 0;
+    std::uint64_t team_index_memberships = 0;
+    if (const auto* teams =
+            world.try_resource<AoeTeamDynamicObstacleIndices>()) {
+        for (const auto& [team, index] : teams->by_team) {
+            (void)team;
+            const auto& values = index.diagnostics();
+            team_index_queries += values.queries;
+            team_index_candidates += values.candidates;
+            team_index_memberships += values.cell_memberships;
+        }
+    }
     const double speed_samples = static_cast<double>(
         gameplay.movement_speed_samples);
     const double base_average = speed_samples > 0.0
@@ -1498,13 +1525,36 @@ void system_profile_end(EcsWorld& world) {
         << gameplay.position_history_ms << ',' << gameplay.squad_spawn_resolution_ms << ','
         << gameplay.static_obstacle_index_ms << ',' << gameplay.dynamic_obstacle_index_ms << ','
         << gameplay.squad_command_ms << ',' << gameplay.command_ms << ','
+        << gameplay.tick_snapshot_ms << ',' << gameplay.team_index_build_ms << ','
+        << gameplay.acquisition_field_build_ms << ','
         << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
-        << gameplay.squad_control_ms << ','
+        << gameplay.squad_control_ms << ',' << gameplay.squad_engagement_ms << ','
+        << gameplay.squad_slots_ms << ',' << gameplay.squad_layout_ms << ','
         << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
         << gameplay.movement_intent_ms << ',' << gameplay.local_avoidance_ms << ','
         << gameplay.unit_flow_ms << ',' << gameplay.motion_safety_ms << ','
+        << gpu_motion.last_tick_ms << ',' << gpu_motion.upload_ms << ','
+        << gpu_motion.dispatch_ms << ',' << gpu_motion.readback_ms << ','
+        << gpu_motion.active_width_pixels << ','
+        << gpu_motion.active_height_pixels << ','
+        << (gpu_motion.solve_required ? 1 : 0) << ','
+        << gpu_motion.solve_required_ticks << ','
+        << gpu_motion.submissions_queued << ','
+        << gpu_motion.async_results_applied << ','
+        << gpu_motion.async_deadline_misses << ','
+        << gpu_motion.async_submissions_skipped << ','
         << gameplay.movement_ms << ',' << gameplay.combat_ms << ','
         << gameplay.projectile_ms << ',' << gameplay.lifecycle_ms << ','
+        << gameplay_counters.target_initial_attempts << ','
+        << gameplay_counters.target_initial_successes << ','
+        << gameplay_counters.target_reacquisition_attempts << ','
+        << gameplay_counters.target_reacquisition_successes << ','
+        << gameplay_counters.target_reacquisition_failures << ','
+        << gameplay_counters.target_reacquisition_cooldown_skips << ','
+        << gameplay_counters.target_reacquisition_budget_deferrals << ','
+        << gameplay_counters.target_candidates_considered << ','
+        << team_index_queries << ',' << team_index_candidates << ','
+        << team_index_memberships << ','
         << gameplay.movement_speed_samples << ',' << base_average << ','
         << effective_average << ',' << desired_average << ','
         << steering_average << ',' << actual_average << ','
@@ -1552,6 +1602,10 @@ int main() {
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(AoeGameplayPlugin{"aoe_units"});
+    // Stress presets prioritize the authoritative 30 Hz gameplay clock over
+    // presentation. A slow render frame may therefore execute a larger fixed
+    // catch-up batch instead of time-dilating the simulation.
+    app.world.resource<AoeGameplaySettings>().max_catchup_ticks = 128;
     app.add_plugin(AoeGpuMotionPlugin{});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(GizmoPlugin);

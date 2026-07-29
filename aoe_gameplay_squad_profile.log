@@ -1,0 +1,490 @@
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=idle members=128/128 render=128
+  center=(-11.00,0.00) forward=(1.00,0.00) speed=0.96
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=128 M=0 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=none traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=idle members=128/128 render=128
+  center=(11.00,0.00) forward=(-1.00,0.00) speed=0.96
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=128 M=0 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=none traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=3.79 frame_dt_ms=512.25 p95_ms=0.00 max_ms=0.00 fixed_ticks=3 dropped_s=0.00
+cadence fixed_hz=0.00 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=518 peak=518 gameplay=256 render=256 squads=2 batches=0 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=3 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=4.33 upload_ms=0.03 dispatch_ms=4.29 readback_ms=0.00 map=576x256
+dynamic-index units=256 memberships=554 interval_queries=0 candidates=0
+steering fast=0 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=0 facing-committed=0
+unit-flow intents=0 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.01 peak=0.01
+aoe2 anim_ms=0.14 batch_ms=0.23 units=256 groups=0 rebuilt=0 unchanged=0
+render draws=1 instances=22 uploads=0 upload_kib=0.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-10.80,0.09) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(10.80,0.09) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=3.79 frame_dt_ms=1.05 p95_ms=0.00 max_ms=0.00 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=0.00 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=518 peak=518 gameplay=256 render=256 squads=2 batches=0 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=10 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=3.25 upload_ms=0.04 dispatch_ms=2.99 readback_ms=0.12 map=576x256
+dynamic-index units=256 memberships=564 interval_queries=1806 candidates=31428
+steering fast=1792 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=319 facing-committed=280
+unit-flow intents=1792 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.05 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.04 units=256 groups=0 rebuilt=0 unchanged=0
+render draws=1 instances=1960 uploads=0 upload_kib=0.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-10.57,0.20) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(10.57,0.20) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=343.91 frame_dt_ms=2.91 p95_ms=4.90 max_ms=512.25 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=16.95 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=518 peak=518 gameplay=256 render=256 squads=2 batches=0 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=18 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=4.03 upload_ms=0.03 dispatch_ms=3.74 readback_ms=0.14 map=576x256
+dynamic-index units=256 memberships=518 interval_queries=2064 candidates=36842
+steering fast=3840 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=488 facing-committed=426
+unit-flow intents=3840 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.08 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.03 units=256 groups=0 rebuilt=0 unchanged=0
+render draws=1 instances=2069 uploads=0 upload_kib=0.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-10.33,0.31) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(10.33,0.31) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=343.91 frame_dt_ms=2.91 p95_ms=4.90 max_ms=512.25 fixed_ticks=1 dropped_s=0.00
+cadence fixed_hz=16.95 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=518 peak=518 gameplay=256 render=256 squads=2 batches=0 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=26 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=7.67 upload_ms=0.05 dispatch_ms=7.30 readback_ms=0.16 map=576x256
+dynamic-index units=256 memberships=524 interval_queries=2064 candidates=37652
+steering fast=5888 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=670 facing-committed=581
+unit-flow intents=5888 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.11 peak=0.22
+aoe2 anim_ms=0.02 batch_ms=0.09 units=256 groups=0 rebuilt=0 unchanged=0
+render draws=1 instances=2074 uploads=0 upload_kib=0.00 upload_ms=0.00 submit_ms=0.01
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-10.10,0.42) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(10.10,0.42) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=343.91 frame_dt_ms=2.91 p95_ms=4.90 max_ms=512.25 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=16.95 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=34 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=2.85 upload_ms=0.02 dispatch_ms=2.62 readback_ms=0.11 map=576x256
+dynamic-index units=256 memberships=540 interval_queries=2064 candidates=37798
+steering fast=7936 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=859 facing-committed=747
+unit-flow intents=7936 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.11 peak=0.22
+aoe2 anim_ms=0.02 batch_ms=0.11 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2586 uploads=4 upload_kib=24.00 upload_ms=0.01 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-9.90,0.51) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(9.90,0.51) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=0
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=343.91 frame_dt_ms=2.91 p95_ms=4.90 max_ms=512.25 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=16.95 pose_change_hz=0.00 pose_changes_s=0.00
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=41 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=3.23 upload_ms=0.02 dispatch_ms=2.94 readback_ms=0.14 map=576x256
+dynamic-index units=256 memberships=538 interval_queries=1806 candidates=33060
+steering fast=9728 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=964 facing-committed=843
+unit-flow intents=9728 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.10 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.04 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2589 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-9.67,0.62) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=1
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(9.67,0.62) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=1
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=949.91 frame_dt_ms=1.05 p95_ms=1.97 max_ms=36.72 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=29.97 pose_change_hz=21.97 pose_changes_s=5051.19
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=49 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=2.82 upload_ms=0.02 dispatch_ms=2.57 readback_ms=0.14 map=576x256
+dynamic-index units=256 memberships=526 interval_queries=2064 candidates=37734
+steering fast=11776 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1024 facing-committed=909
+unit-flow intents=11776 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.04 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.06 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2587 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-9.46,0.72) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=2
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(9.46,0.72) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=2
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=949.91 frame_dt_ms=1.05 p95_ms=1.97 max_ms=36.72 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=29.97 pose_change_hz=21.97 pose_changes_s=5051.19
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=56 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=4.05 upload_ms=0.03 dispatch_ms=3.84 readback_ms=0.09 map=576x256
+dynamic-index units=256 memberships=538 interval_queries=1806 candidates=32906
+steering fast=13568 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1064 facing-committed=952
+unit-flow intents=13568 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.08 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.05 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2593 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-9.23,0.83) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=3
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(9.23,0.83) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=3
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=949.91 frame_dt_ms=1.05 p95_ms=1.97 max_ms=36.72 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=29.97 pose_change_hz=21.97 pose_changes_s=5051.19
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=64 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=2.79 upload_ms=0.02 dispatch_ms=2.51 readback_ms=0.16 map=576x256
+dynamic-index units=256 memberships=542 interval_queries=2064 candidates=37908
+steering fast=15616 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1086 facing-committed=972
+unit-flow intents=15616 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.04 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.05 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2593 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-9.03,0.92) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=4
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(9.03,0.92) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=0 escape=0 elastic-slot=4
+  global-motion side=0 pass=0 yield=0 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=949.91 frame_dt_ms=1.05 p95_ms=1.97 max_ms=36.72 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=29.97 pose_change_hz=21.97 pose_changes_s=5051.19
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=71 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=3.24 upload_ms=0.02 dispatch_ms=2.93 readback_ms=0.21 map=576x256
+dynamic-index units=256 memberships=534 interval_queries=1806 candidates=33620
+steering fast=17408 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1119 facing-committed=999
+unit-flow intents=17408 checks=0 conflicts=0 follow=0 pass=0 yield=0 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.05 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.07 units=256 groups=4 rebuilt=512 unchanged=0
+render draws=5 instances=2593 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-8.80,1.03) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=3 escape=0 elastic-slot=6
+  global-motion side=0 pass=0 yield=2 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(8.80,1.03) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=3 escape=0 elastic-slot=6
+  global-motion side=0 pass=0 yield=2 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=1094.84 frame_dt_ms=0.91 p95_ms=1.93 max_ms=12.67 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=30.00 pose_change_hz=30.00 pose_changes_s=7652.86
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=79 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=3.12 upload_ms=0.02 dispatch_ms=2.63 readback_ms=0.38 map=576x256
+dynamic-index units=256 memberships=520 interval_queries=2064 candidates=38294
+steering fast=19456 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1155 facing-committed=1018
+unit-flow intents=19456 checks=0 conflicts=0 follow=0 pass=0 yield=6 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.04 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.05 units=252 groups=4 rebuilt=504 unchanged=0
+render draws=5 instances=2593 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-8.59,1.12) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=3 escape=0 elastic-slot=8
+  global-motion side=0 pass=0 yield=3 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(8.59,1.12) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=3 escape=0 elastic-slot=8
+  global-motion side=0 pass=0 yield=3 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=1094.84 frame_dt_ms=0.91 p95_ms=1.93 max_ms=12.67 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=30.00 pose_change_hz=30.00 pose_changes_s=7652.86
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=86 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=8.30 upload_ms=0.02 dispatch_ms=7.33 readback_ms=0.86 map=576x256
+dynamic-index units=256 memberships=522 interval_queries=1806 candidates=33288
+steering fast=21248 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1198 facing-committed=1033
+unit-flow intents=21248 checks=0 conflicts=0 follow=0 pass=0 yield=32 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.05 peak=0.22
+aoe2 anim_ms=0.02 batch_ms=0.16 units=250 groups=4 rebuilt=500 unchanged=0
+render draws=5 instances=2595 uploads=4 upload_kib=24.00 upload_ms=0.01 submit_ms=0.01
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-8.36,1.23) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=1 escape=0 elastic-slot=10
+  global-motion side=0 pass=0 yield=1 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(8.36,1.23) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=1 escape=0 elastic-slot=10
+  global-motion side=0 pass=0 yield=1 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=1094.84 frame_dt_ms=0.91 p95_ms=1.93 max_ms=12.67 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=30.00 pose_change_hz=30.00 pose_changes_s=7652.86
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=94 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=4.41 upload_ms=0.03 dispatch_ms=3.80 readback_ms=0.46 map=576x256
+dynamic-index units=256 memberships=553 interval_queries=2064 candidates=38216
+steering fast=23296 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1248 facing-committed=1064
+unit-flow intents=23296 checks=0 conflicts=0 follow=0 pass=0 yield=52 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.07 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.05 units=254 groups=4 rebuilt=508 unchanged=0
+render draws=5 instances=2596 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove
+AoE gameplay mapped squad stress preview
+1/2/3 = 16/64/128 per side | Space attack-move | S stop | R reset | F5 reload
+G map=ON | N navigation=OFF | C collision=OFF | P feet=OFF | L trace=OFF | T motion-log=OFF | V vsync=OFF | Esc quit
+preset=3 units/side=128 (debug gizmos affect stress measurements)
+map=squad_preview grid=36x16 pathfinder=grid_astar
+
+BLUE squad=3 team=1 spawn=ready phase=moving members=128/128 render=128
+  center=(-8.16,1.33) forward=(0.91,0.42) speed=0.96 destination=(11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=1 escape=0 elastic-slot=12
+  global-motion side=0 pass=0 yield=1 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+RED  squad=132 team=2 spawn=ready phase=moving members=128/128 render=128
+  center=(8.16,1.33) forward=(-0.91,0.42) speed=0.96 destination=(-11.00,0.00)
+  types camel=48 archer=80 hp=5760.00/5760.00
+  states I=0 M=128 A=0 D=0 X=0 no-path=0 dyn-repath-failed=0 beyond-leash=0
+  locomotion stalled=2 escape=0 elastic-slot=12
+  global-motion side=0 pass=0 yield=1 back=0 infeasible=0
+  guide=0/3 no-path=no dynamic=no traffic=clear speed-scale=1.00 lateral=0.00
+
+PERFORMANCE render_fps=1094.84 frame_dt_ms=0.91 p95_ms=1.93 max_ms=12.67 fixed_ticks=0 dropped_s=0.00
+cadence fixed_hz=30.00 pose_change_hz=30.00 pose_changes_s=7652.86
+entities live=522 peak=522 gameplay=256 render=256 squads=2 batches=4 other=4
+gameplay pooled=0 projectiles=0 projectile-render=0 attacks=0 damage=0 rejected=0
+motion backend=gpu_image requested=gpu_image gpu_ticks=101 cpu_ticks=0 fallbacks=0 corrections=0
+gpu-motion total_ms=6.68 upload_ms=0.02 dispatch_ms=6.38 readback_ms=0.20 map=576x256
+dynamic-index units=256 memberships=550 interval_queries=1806 candidates=34018
+steering fast=25088 full=0 cached=0 imminent=0 neighbors=0
+continuity side-switch=0 facing-suppressed=1327 facing-committed=1080
+unit-flow intents=25088 checks=0 conflicts=0 follow=0 pass=0 yield=60 back=0 infeasible=0 projections=0 escalations=0
+movement ms=0.08 peak=0.22
+aoe2 anim_ms=0.01 batch_ms=0.04 units=254 groups=4 rebuilt=508 unchanged=0
+render draws=5 instances=2598 uploads=4 upload_kib=24.00 upload_ms=0.00 submit_ms=0.00
+latest: both squads received AttackMove

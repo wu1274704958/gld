@@ -153,6 +153,67 @@ struct AoePosition { glm::vec2 value{0.f}; };
 struct AoePositionHistory { glm::vec2 previous{0.f}; };
 struct AoeMovement { float speed = 1.f; };
 
+// Compact authoritative unit data captured once at the beginning of a fixed
+// tick. Spatial indexing and GPU upload share this storage; gameplay state is
+// still owned by ECS components and movement writes only AoePosition.
+struct AoeGameplayTickUnit {
+    entt::entity entity{entt::null};
+    std::uint64_t instance_id = 0;
+    entt::entity squad{entt::null};
+    glm::vec2 position{0.f};
+    glm::vec2 radii{0.f};
+    glm::vec2 velocity{0.f};
+    float movement_speed = 0.f;
+    std::uint32_t team_id = 0;
+    bool targetable = false;
+};
+
+struct AoeGameplayTickSquadBounds {
+    entt::entity squad{entt::null};
+    glm::vec2 low{0.f};
+    glm::vec2 high{0.f};
+    float movement_speed = 0.f;
+};
+
+struct AoeGameplayTickUnitRef {
+    entt::entity entity{entt::null};
+    std::uint64_t instance_id = 0;
+};
+
+struct AoeGameplayTickSquadEngagement {
+    std::uint32_t live_lock_count = 0;
+    std::vector<AoeGameplayTickUnitRef> newly_invalid;
+};
+
+struct AoeGameplayTickSnapshot {
+    std::uint64_t tick = 0;
+    std::vector<AoeGameplayTickUnit> units;
+    std::vector<AoeGameplayTickSquadBounds> squad_bounds;
+    std::unordered_map<entt::entity, std::size_t> squad_bound_lookup;
+    std::unordered_map<entt::entity, AoeGameplayTickSquadEngagement>
+        squad_engagements;
+};
+
+// Read-only fixed-tick spatial partitions used by team-filtered gameplay
+// queries. The all-unit AoeDynamicObstacleIndex remains authoritative for
+// collision and steering; these partitions avoid rescanning dense allies for
+// acquisition and squad-awareness queries.
+struct AoeTeamDynamicObstacleIndices {
+    struct AcquisitionField {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::vector<std::uint16_t> distance;
+        float max_target_radius = 0.f;
+        float max_target_speed = 0.f;
+    };
+
+    AoeLogicMap query_map;
+    std::unordered_map<std::uint32_t, AoeDynamicObstacleIndex> by_team;
+    std::unordered_map<std::uint32_t, AcquisitionField> acquisition_fields;
+    std::uint64_t acquisition_field_build_tick = 0;
+    std::uint64_t acquisition_field_max_instance_id = 0;
+};
+
 enum class AoeMovementIntentKind {
     None, Move, FormationSlot, AttackApproach
 };
@@ -442,6 +503,11 @@ struct AoeTargetAcquisitionContext {
     std::span<const AoeUnitTarget> excluded{};
     std::span<const AoeUnitTarget> candidates{};
     bool use_candidates = false;
+    // Optional per-call instrumentation. Strategies increment this before
+    // applying gameplay filters so callers can distinguish a costly spatial
+    // scan from ordinary ECS/control overhead without changing the strategy
+    // interface or enabling the full performance monitor.
+    std::uint64_t* candidates_considered = nullptr;
 };
 
 template<class T>
@@ -669,6 +735,9 @@ struct AoeSquadFormation {
     // Attack Move performs one role-preserving nearest-slot rematch after its
     // anchor reaches the destination. Engagement or a new order resets it.
     bool arrival_reflow_done = false;
+    std::uint64_t last_layout_tick = 0;
+    bool layout_urgent = false;
+    bool slot_follow_initialized = false;
 };
 struct AoeSquadCombatSettings {
     AoeTargetAcquisitionType acquisition_strategy =
@@ -690,6 +759,7 @@ struct AoeSquadMember {
     std::uint32_t ordinal = 0;
 };
 struct AoeSquadMoveSpeedLimit { float value = 0.f; };
+struct AoeSharedSquadNavigation {};
 
 enum class AoeSquadTrafficMode {
     Clear, Following, PassingLeft, PassingRight, Yielding, Recovering
@@ -713,6 +783,22 @@ struct AoeSquadSlotFollowState {
     glm::vec2 navigation_destination{0.f};
     bool elastic = false;
     std::uint32_t recovery_ticks = 0;
+};
+struct AoeTargetReacquisitionState {
+    std::uint64_t last_attempt_tick = 0;
+};
+
+struct AoeMapClearanceMask {
+    std::uint64_t map_revision = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t clearance_x = 0;
+    std::uint32_t clearance_y = 0;
+    std::vector<std::uint8_t> fully_safe;
+};
+
+struct AoeMapClearanceCache {
+    std::vector<AoeMapClearanceMask> masks;
 };
 
 enum class AoeSquadCommandType {
@@ -839,6 +925,30 @@ struct AoeNavigationSettings {
     // The gameplay module requests the GPU planner by default. Headless builds
     // do not register it and therefore transparently use cpu_unit_flow.
     std::string global_motion_planner_id = "gpu_image";
+    // Large formations share their squad guide for macro navigation. Members
+    // only request an individual A* after the authoritative movement pipeline
+    // reports that the shared short-range slot path is blocked.
+    std::uint32_t crowd_navigation_min_squad_members = 256;
+    float crowd_navigation_clearance_quantum = .25f;
+    // Large formations stagger slot refreshes; movement continues every fixed
+    // tick toward the last slot, so this does not reduce authoritative motion.
+    std::uint32_t crowd_slot_update_interval = 8;
+    // Membership churn during combat is coalesced for large formations. Live
+    // slots remain usable between rebuilds; explicit/non-combat layout changes
+    // are still applied immediately.
+    std::uint32_t crowd_engagement_layout_interval = 120;
+    // Dynamic unit obstacles can invalidate many shared member paths at once.
+    // Bound the expensive individual A* recovery work per fixed tick; pending
+    // members retain their request and are served deterministically later.
+    std::uint32_t crowd_dynamic_repath_budget = 1;
+    std::uint32_t crowd_static_repath_check_budget = 16;
+    // Optional stalled-target replacement is staggered for large formations.
+    // Current targets remain locked and combat itself still updates every tick.
+    std::uint32_t crowd_target_recheck_interval = 4;
+    // Bounds expensive member reacquisition work after a target-death wave.
+    std::uint32_t crowd_target_reacquisition_budget = 16;
+    std::uint32_t crowd_target_reacquisition_cooldown_ticks = 120;
+    std::uint32_t crowd_acquisition_field_update_interval = 8;
     std::uint32_t blocked_repath_ticks = 12;
     std::uint32_t repath_cooldown_ticks = 3;
     std::uint32_t steering_max_neighbors = 8;
@@ -926,7 +1036,17 @@ struct AoeGameplayDiagnostics {
     std::uint64_t facing_changes_committed = 0;
     std::uint64_t steering_escape_solves = 0;
     std::uint64_t dynamic_repath_failures = 0;
+    std::uint64_t crowd_dynamic_repaths = 0;
+    std::uint64_t crowd_dynamic_repaths_deferred = 0;
     std::uint64_t elastic_slot_uses = 0;
+    std::uint64_t target_initial_attempts = 0;
+    std::uint64_t target_initial_successes = 0;
+    std::uint64_t target_reacquisition_attempts = 0;
+    std::uint64_t target_reacquisition_successes = 0;
+    std::uint64_t target_reacquisition_failures = 0;
+    std::uint64_t target_reacquisition_cooldown_skips = 0;
+    std::uint64_t target_reacquisition_budget_deferrals = 0;
+    std::uint64_t target_candidates_considered = 0;
     std::uint64_t squad_traffic_conflicts = 0;
     std::uint64_t flow_active_intents = 0;
     std::uint64_t flow_neighbor_checks = 0;
@@ -956,10 +1076,16 @@ struct AoeGameplayPerformanceDiagnostics {
     double squad_spawn_resolution_ms = 0.0;
     double static_obstacle_index_ms = 0.0;
     double dynamic_obstacle_index_ms = 0.0;
+    double tick_snapshot_ms = 0.0;
+    double team_index_build_ms = 0.0;
+    double acquisition_field_build_ms = 0.0;
     double squad_command_ms = 0.0;
     double command_ms = 0.0;
     double membership_cleanup_ms = 0.0;
     double squad_control_ms = 0.0;
+    double squad_engagement_ms = 0.0;
+    double squad_slots_ms = 0.0;
+    double squad_layout_ms = 0.0;
     double squad_traffic_ms = 0.0;
     double attack_move_acquisition_ms = 0.0;
     double navigation_ms = 0.0;
