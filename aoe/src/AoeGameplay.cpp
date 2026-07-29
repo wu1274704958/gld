@@ -1478,7 +1478,7 @@ std::vector<AoeUnitTarget> collect_squad_targets(
     if (!have_member) return result;
 
     const auto consider = [&](entt::entity entity,
-                              std::uint64_t instance_id) {
+                              std::uint64_t instance_id, bool already_bounded) {
         if (!reg.valid(entity) ||
             !reg.all_of<AoeTeam, AoePosition, AoeCollider, AoeHealth,
                         AoeActionState, AoeGameplayIdentity,
@@ -1486,7 +1486,12 @@ std::vector<AoeUnitTarget> collect_squad_targets(
             reg.get<AoeTeam>(entity).id == seeker_team)
             return;
         const AoeUnitTarget target{entity, instance_id};
-        if (!target_valid(reg, target) ||
+        if (!target_valid(reg, target)) return;
+        // The spatial query already restricts entries to the squad's bounding
+        // box inflated by `radius`, so the per-candidate all-members surface-gap
+        // scan (O(candidates * members)) is redundant on that path. The precise
+        // nearest-target choice still happens per member in select_member_target.
+        if (!already_bounded &&
             !target_within_squad_radius(reg, members, target, radius))
             return;
         result.push_back(target);
@@ -1498,7 +1503,7 @@ std::vector<AoeUnitTarget> collect_squad_targets(
         dynamic->query(*map, low - glm::vec2(radius),
                        high + glm::vec2(radius),
             [&](const AoeDynamicObstacleEntry& entry) {
-                consider(entry.entity, entry.instance_id);
+                consider(entry.entity, entry.instance_id, true);
             });
     } else {
         for (const auto entity : reg.view<
@@ -1506,7 +1511,7 @@ std::vector<AoeUnitTarget> collect_squad_targets(
                  AoeActionState, AoeGameplayIdentity, AoeUnitDefinitionRef>(
                  entt::exclude<AoePooledUnit, AoeRecyclePending>))
             consider(entity,
-                reg.get<AoeGameplayIdentity>(entity).instance_id);
+                reg.get<AoeGameplayIdentity>(entity).instance_id, false);
     }
     return result;
 }
@@ -2031,6 +2036,10 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
             }
         }
         if (needs_path) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+            ++world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
+                  .navigation_repath_units;
+#endif
             if (!plan_navigation_path(world, entity, goal.destination,
                                       include_dynamic, goal.target.entity,
                                       tick)) {
@@ -3722,6 +3731,29 @@ AoePathResult GridAStarPathfinderLogic::find(
     EcsWorld& world, const AoePathRequest& request) {
     auto* map = world.try_resource<AoeLogicMap>();
     if (!map || !map->valid()) return DirectPathfinderLogic::find(world, request);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    std::size_t profiled_cells = 0;
+    std::size_t profiled_segments = 0;
+    const auto profiled_start = std::chrono::steady_clock::now();
+    struct FindProfiler {
+        EcsWorld& world;
+        std::chrono::steady_clock::time_point start;
+        const std::size_t& cells;
+        const std::size_t& segments;
+        ~FindProfiler() {
+            auto& diagnostics =
+                world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            ++diagnostics.navigation_astar_calls;
+            diagnostics.navigation_astar_find_ms += ms;
+            diagnostics.navigation_astar_find_peak_ms =
+                std::max(diagnostics.navigation_astar_find_peak_ms, ms);
+            diagnostics.navigation_astar_cells_expanded += cells;
+            diagnostics.navigation_clear_segment_calls += segments;
+        }
+    } find_profiler{world, profiled_start, profiled_cells, profiled_segments};
+#endif
     if (!std::isfinite(request.start.x) || !std::isfinite(request.start.y) ||
         !map->contains(request.start, request.clearance))
         return {AoePathStatus::InvalidStart, {}, map->static_revision()};
@@ -3752,6 +3784,25 @@ AoePathResult GridAStarPathfinderLogic::find(
     };
     const std::size_t start = index_of(start_cell->x, start_cell->y);
     const std::size_t goal = index_of(goal_cell->x, goal_cell->y);
+
+    const auto* dynamic = request.include_dynamic_obstacles
+        ? world.try_resource<AoeDynamicObstacleIndex>() : nullptr;
+    const auto clear_segment = [&](glm::vec2 from, glm::vec2 to) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        ++profiled_segments;
+#endif
+        if (map->static_safe_fraction(from, to, request.clearance) < 1.f)
+            return false;
+        return !dynamic || dynamic->dynamic_safe_fraction(
+            *map, from, to, request.clearance, request.subject,
+            request.squad) >= 1.f;
+    };
+    // Fast path: a clear straight shot to the goal skips the full grid search.
+    // This dominates formation-slot following on open terrain, where members
+    // would otherwise re-run A* every tick toward a nearby, moving slot.
+    if (clear_segment(request.start, request.goal))
+        return {AoePathStatus::Ready, {request.goal}, map->static_revision()};
+
     auto& workspace = world.resource_or_add<AStarWorkspace>();
     workspace.begin(count);
     workspace.generations[start] = workspace.generation;
@@ -3763,15 +3814,6 @@ AoePathResult GridAStarPathfinderLogic::find(
     std::push_heap(workspace.open.begin(), workspace.open.end(),
                    AStarOpenCompare{});
 
-    const auto* dynamic = request.include_dynamic_obstacles
-        ? world.try_resource<AoeDynamicObstacleIndex>() : nullptr;
-    const auto clear_segment = [&](glm::vec2 from, glm::vec2 to) {
-        if (map->static_safe_fraction(from, to, request.clearance) < 1.f)
-            return false;
-        return !dynamic || dynamic->dynamic_safe_fraction(
-            *map, from, to, request.clearance, request.subject,
-            request.squad) >= 1.f;
-    };
     const auto traversable = [&](int x, int y, bool is_goal = false) {
         if (!map->cell_traversable(x, y, request.clearance)) return false;
         return !dynamic || !dynamic->cell_occupied(
@@ -3791,6 +3833,9 @@ AoePathResult GridAStarPathfinderLogic::find(
         if (workspace.generations[current.index] != workspace.generation ||
             current.cost > workspace.costs[current.index] + Epsilon) continue;
         workspace.closed[current.index] = workspace.generation;
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        ++profiled_cells;
+#endif
         if (current.index == goal) { found = true; break; }
         const auto cell = coords(current.index);
         for (const auto offset : Neighbors) {

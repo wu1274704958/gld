@@ -254,14 +254,18 @@ public:
             for (auto& slot : dumps_) consume_dump(slot, true);
             if (unit_buffer_) glDeleteBuffers(1, &unit_buffer_);
             if (proposal_buffer_) glDeleteBuffers(1, &proposal_buffer_);
-            if (decision_buffer_) glDeleteBuffers(1, &decision_buffer_);
+            if (decision_ring_[0]) glDeleteBuffers(1, &decision_ring_[0]);
+            if (decision_ring_[1]) glDeleteBuffers(1, &decision_ring_[1]);
             if (handle_map_buffer_) glDeleteBuffers(1, &handle_map_buffer_);
             glDeleteTextures(2, state_images_.data());
             if (shared_field_) glDeleteTextures(1, &shared_field_);
             if (reservation_) glDeleteTextures(1, &reservation_);
             for (auto& slot : dumps_) if (slot.pbo) glDeleteBuffers(1, &slot.pbo);
         }
+        if (pending_.fence) { glDeleteSync(pending_.fence); pending_.fence = nullptr; }
+        pending_.active = false;
         unit_buffer_ = proposal_buffer_ = decision_buffer_ = handle_map_buffer_ = 0;
+        decision_ring_ = {0, 0}; decision_write_ = 0;
         state_images_ = {0, 0}; shared_field_ = reservation_ = 0;
         for (auto& slot : dumps_) { slot.pbo = 0; slot.pending = false; }
         for (auto& value : programs_) value = {};
@@ -292,7 +296,7 @@ public:
         }
         glGenBuffers(1, &unit_buffer_);
         glGenBuffers(1, &proposal_buffer_);
-        glGenBuffers(1, &decision_buffer_);
+        glGenBuffers(2, decision_ring_.data());
         glGenBuffers(1, &handle_map_buffer_);
         handle_generations_.resize(FirstStaticId, 0);
         handle_to_index_.resize(FirstStaticId, InvalidIndex);
@@ -331,7 +335,10 @@ public:
 #endif
         dispatch_all();
         const auto readback_started = std::chrono::steady_clock::now();
-        read_decisions(world, tick);
+        // Consume the previous tick's finished solve (no GPU stall), then fence
+        // this tick's solve for the next frame to read.
+        apply_pending(world, tick);
+        record_pending(tick);
         std::swap(current_index_, next_index_); // 完整提交与同 tick 回读后才能交换。
         queue_dump(tick);
 
@@ -482,7 +489,7 @@ private:
     }
 
     bool gather_units(EcsWorld& world, std::uint64_t tick, std::string& error) {
-        units_.clear(); entities_.clear(); live_instances_.clear();
+        units_.clear(); entities_.clear(); instances_.clear(); live_instances_.clear();
         active_unit_count_ = 0;
         std::fill(handle_to_index_.begin(), handle_to_index_.end(), InvalidIndex);
         auto& reg = world.reg();
@@ -517,6 +524,7 @@ private:
             unit.identity_wait[3] = active ? 1u : 0u;
             handle_to_index_[handle.handle] = static_cast<std::uint32_t>(units_.size());
             units_.push_back(unit); entities_.push_back(entity);
+            instances_.push_back(instance);
             if (active) {
                 ++active_unit_count_;
                 entt::entity squad = entt::null;
@@ -541,6 +549,7 @@ private:
     }
 
     void upload_buffers() {
+        decision_buffer_ = decision_ring_[decision_write_];
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, unit_buffer_);
         glBufferData(GL_SHADER_STORAGE_BUFFER, units_.size() * sizeof(GpuUnitData),
                      units_.empty() ? nullptr : units_.data(), GL_DYNAMIC_DRAW);
@@ -600,13 +609,34 @@ private:
         glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
     }
 
-    void download_decisions() {
+    void record_pending(std::uint64_t tick) {
+        if (pending_.fence) { glDeleteSync(pending_.fence); pending_.fence = nullptr; }
+        pending_.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        pending_.buffer = decision_write_;
+        pending_.tick = tick;
+        pending_.units = units_;
+        pending_.entities = entities_;
+        pending_.instances = instances_;
+        pending_.active = true;
+        decision_write_ ^= 1;
+    }
+
+    void apply_pending(EcsWorld& world, std::uint64_t tick) {
+        if (!pending_.active) return;
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         const auto started = std::chrono::steady_clock::now();
 #endif
-        decisions_.resize(units_.size());
+        if (pending_.fence) {
+            GLenum status = glClientWaitSync(pending_.fence,
+                GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+            while (status == GL_TIMEOUT_EXPIRED)
+                status = glClientWaitSync(pending_.fence,
+                    GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            glDeleteSync(pending_.fence); pending_.fence = nullptr;
+        }
+        decisions_.resize(pending_.units.size());
         if (!decisions_.empty()) {
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, decision_buffer_);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, decision_ring_[pending_.buffer]);
             glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
                 decisions_.size() * sizeof(GpuDecision), decisions_.data());
         }
@@ -614,37 +644,42 @@ private:
         download_ms_ += std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started).count();
 #endif
-    }
-
-    void read_decisions(EcsWorld& world, std::uint64_t tick) {
-        download_decisions();
         auto& reg = world.reg();
         auto& gameplay_diag = world.resource_or_add<AoeGameplayDiagnostics>();
         for (std::size_t i = 0; i < decisions_.size(); ++i) {
             const auto& gpu = decisions_[i];
-            if (gpu.identity[0] != units_[i].identity_wait[0] ||
-                gpu.identity[1] != units_[i].identity_wait[1]) continue;
-            if (units_[i].identity_wait[3] == 0u) continue;
-            auto& decision = reg.get<AoeGlobalMotionDecision>(entities_[i]);
-            decision.velocity = {gpu.velocity[0], gpu.velocity[1]};
-            decision.produced_tick = tick; decision.valid = true;
-            auto& state = reg.get_or_emplace<AoeGlobalMotionState>(entities_[i]);
-            const bool waiting = gpu.identity[2] != 2u && units_[i].intent_dt[3] > .00001f;
+            if (gpu.identity[0] != pending_.units[i].identity_wait[0] ||
+                gpu.identity[1] != pending_.units[i].identity_wait[1]) continue;
+            if (pending_.units[i].identity_wait[3] == 0u) continue;
+            const entt::entity entity = pending_.entities[i];
+            if (!reg.valid(entity)) continue;
+            const auto* id = reg.try_get<AoeGameplayIdentity>(entity);
+            if (!id || id->instance_id != pending_.instances[i]) continue;
+            auto* decision = reg.try_get<AoeGlobalMotionDecision>(entity);
+            // Only refine units that gather_units marked active *this* tick, so a
+            // one-tick-stale solve never revives a stopped or recycled unit.
+            if (!decision || !decision->valid || decision->produced_tick != tick)
+                continue;
+            decision->velocity = {gpu.velocity[0], gpu.velocity[1]};
+            auto& state = reg.get_or_emplace<AoeGlobalMotionState>(entity);
+            const bool waiting = gpu.identity[2] != 2u &&
+                pending_.units[i].intent_dt[3] > .00001f;
             if (waiting) {
-                decision.wait_ticks = state.wait_ticks;
-                decision.mode = state.wait_ticks >= 45u
+                decision->wait_ticks = state.wait_ticks;
+                decision->mode = state.wait_ticks >= 45u
                     ? AoeGlobalMotionMode::Backing : AoeGlobalMotionMode::Yielding;
-                decision.reason = state.wait_ticks >= 45u
+                decision->reason = state.wait_ticks >= 45u
                     ? AoeMotionDecisionReason::DeadlockEscape
                     : AoeMotionDecisionReason::SideBlocked;
                 ++gameplay_diag.flow_wait_ticks;
-                if (decision.mode == AoeGlobalMotionMode::Backing) ++gameplay_diag.flow_backing;
+                if (decision->mode == AoeGlobalMotionMode::Backing)
+                    ++gameplay_diag.flow_backing;
                 else ++gameplay_diag.flow_yielding;
             } else {
-                decision.wait_ticks = state.wait_ticks;
-                decision.mode = AoeGlobalMotionMode::Clear;
+                decision->wait_ticks = state.wait_ticks;
+                decision->mode = AoeGlobalMotionMode::Clear;
             }
-            state.mode = decision.mode;
+            state.mode = decision->mode;
         }
     }
 
@@ -701,6 +736,20 @@ private:
     glm::vec2 map_origin_{std::numeric_limits<float>::max()};
     std::uint64_t static_revision_ = 0;
     int current_index_ = 0, next_index_ = 1;
+    // Double-buffered decision SSBO + fence so the CPU consumes the *previous*
+    // tick's finished solve instead of stalling on this tick's. Global-motion
+    // decisions lag one fixed tick; the safety pass still clamps every tick.
+    std::array<GLuint, 2> decision_ring_{0, 0};
+    int decision_write_ = 0;
+    struct PendingReadback {
+        bool active = false;
+        GLsync fence = nullptr;
+        int buffer = 0;
+        std::uint64_t tick = 0;
+        std::vector<GpuUnitData> units;
+        std::vector<entt::entity> entities;
+        std::vector<std::uint64_t> instances;
+    } pending_;
     std::uint32_t candidate_round_ = 0;
     std::uint32_t next_handle_ = 1;
     std::unordered_map<std::uint64_t, HandleRecord> handles_;
@@ -710,6 +759,7 @@ private:
     std::vector<GpuUnitData> units_;
     std::vector<GpuDecision> decisions_;
     std::vector<entt::entity> entities_;
+    std::vector<std::uint64_t> instances_;
     std::filesystem::path dump_root_;
     std::array<DumpSlot, 3> dumps_{};
     std::size_t dump_cursor_ = 0;

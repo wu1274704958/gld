@@ -1446,7 +1446,10 @@ void system_profile_end(EcsWorld& world) {
                "transform_ms,render_prepare_ms,render_upload_ms,render_submit_ms,"
                "render_gpu_ms,present_ms,animation_frame_changes,frame_dirty_instances,"
                "transform_dirty_instances,unchanged_instances,transform_changed,"
-               "known_cpu_ms,residual_ms\n";
+               "known_cpu_ms,residual_ms,"
+               "nav_astar_calls,nav_cells_expanded,nav_clear_segment_calls,"
+               "nav_repath_units,nav_find_ms,nav_find_peak_ms,"
+               "gpu_total_ms,gpu_upload_ms,gpu_dispatch_ms,gpu_readback_ms\n";
         profile->csv << std::fixed << std::setprecision(6);
         std::printf("[aoe_squad_profile] stable; capturing %.1f seconds\n",
                     profile->capture_target_seconds);
@@ -1482,6 +1485,17 @@ void system_profile_end(EcsWorld& world) {
         transform.cpu_ms + aoe2.render_prepare_ms + aoe2.render_submit_ms +
         render.present_ms;
     const double residual = std::max(0.0, frame_ms - known_cpu);
+    const auto* gpu_motion_profile = world.try_resource<AoeGpuMotionDiagnostics>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    const double gpu_upload_total = gpu_motion_profile ? gpu_motion_profile->last_tick_ms : 0.0;
+    const double gpu_upload_ms_v = gpu_motion_profile ? gpu_motion_profile->upload_ms : 0.0;
+    const double gpu_dispatch_ms_v = gpu_motion_profile ? gpu_motion_profile->dispatch_ms : 0.0;
+    const double gpu_readback_ms_v = gpu_motion_profile ? gpu_motion_profile->readback_ms : 0.0;
+#else
+    const double gpu_upload_total = 0.0, gpu_upload_ms_v = 0.0,
+                 gpu_dispatch_ms_v = 0.0, gpu_readback_ms_v = 0.0;
+    (void)gpu_motion_profile;
+#endif
     // Time::raw_dt is measured at the beginning of this tick, so it describes
     // the preceding start-to-start interval. Use it for wall-clock capture
     // length, while frame_ms and all named system timings describe this row's
@@ -1524,7 +1538,15 @@ void system_profile_end(EcsWorld& world) {
         << aoe2.animation_frame_changes << ',' << aoe2.frame_dirty_instances << ','
         << aoe2.transform_dirty_instances << ',' << aoe2.unchanged_instances << ','
         << transform.changed << ','
-        << known_cpu << ',' << residual << '\n';
+        << known_cpu << ',' << residual << ','
+        << gameplay.navigation_astar_calls << ','
+        << gameplay.navigation_astar_cells_expanded << ','
+        << gameplay.navigation_clear_segment_calls << ','
+        << gameplay.navigation_repath_units << ','
+        << gameplay.navigation_astar_find_ms << ','
+        << gameplay.navigation_astar_find_peak_ms << ','
+        << gpu_upload_total << ',' << gpu_upload_ms_v << ','
+        << gpu_dispatch_ms_v << ',' << gpu_readback_ms_v << '\n';
     if (profile->capture_seconds >= profile->capture_target_seconds)
         write_system_profile(*profile, world);
 }

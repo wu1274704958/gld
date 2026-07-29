@@ -1,5 +1,15 @@
   ### 万单位实际验证
 
+  > 性能优化记录（导航热点）：`GridAStarPathfinderLogic::find` 增加直线视野快速路径
+  > （起终点直线可达即跳过整个网格 A\*），使 navigation 在 5000 单位场景由约
+  > 141ms 降到约 7–12ms、20000 场景由约 1426ms 降到约 63–79ms（≈12–22×），
+  > 且各交战阶段稳定。GPU 全局运动（`aoe_gpu_motion`）回读由同步 `glGetBufferSubData`
+  > 改为双缓冲 SSBO+fence 异步流水线（决策滞后 1 fixed tick，安全钳制仍每 tick 执行），
+  > 消除每 tick 的同步 GPU stall。`collect_squad_targets` 的候选收集由
+  > O(candidates×members) 降为 O(candidates)。navigation 已不再是主导项；持续满交战下
+  > 主导项转为 GPU unit_flow（万单位下 GPU 解本身饱和）与前线 squad_control。
+  > 现有 `aoe_map_tests`/`aoe_gameplay_tests`/`aoe2_gameplay_bridge_tests` 全部通过。
+
   使用启用了 GLD_ENABLE_PERFORMANCE_MONITORING 的 Profile 构建运行了：
 
   $env:GLD_AOE_STRESS_PRESET = "6"

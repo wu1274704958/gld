@@ -983,6 +983,17 @@ struct AoeGameplayPerformanceDiagnostics {
     std::uint64_t movement_steering_limited = 0;
     std::uint64_t movement_safe_limited = 0;
 
+    // Navigation hotspot instrumentation (Phase 0). Populated only under
+    // GLD_ENABLE_PERFORMANCE_MONITORING; reset every render frame.
+    std::uint64_t navigation_astar_calls = 0;
+    std::uint64_t navigation_astar_cells_expanded = 0;
+    std::uint64_t navigation_clear_segment_calls = 0;
+    std::uint64_t navigation_repath_units = 0;
+    std::uint64_t navigation_goal_cache_hits = 0;
+    std::uint64_t navigation_distinct_goals = 0;
+    double navigation_astar_find_ms = 0.0;
+    double navigation_astar_find_peak_ms = 0.0;
+
     void begin_frame() { *this = {}; }
 };
 
