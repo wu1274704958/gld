@@ -109,11 +109,13 @@ int main() {
     // A locomotion intent that has entered escape/stalled handling presents
     // idle instead of freezing an arbitrary walk frame. Clearing the stalled
     // state restores walk without changing the authoritative action state.
-    moving_locomotion.escape_steering = true;
+    auto& moving_avoidance = world.reg().emplace<AoeLocalAvoidanceState>(
+        gameplay);
+    moving_avoidance.escape_steering = true;
     aoe2_gameplay_presentation_system(world);
     assert(world.reg().get<Aoe2SpawnRequest>(first_child).options.animation ==
            "idleA");
-    moving_locomotion.escape_steering = false;
+    moving_avoidance.escape_steering = false;
     aoe2_gameplay_presentation_system(world);
     assert(world.reg().get<Aoe2SpawnRequest>(first_child).options.animation ==
            "walkA");

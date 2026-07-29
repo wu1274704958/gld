@@ -47,6 +47,8 @@ using namespace gld::ecs::aoe2;
 using namespace gld::ecs::aoe2_gameplay;
 namespace fs = std::filesystem;
 
+using SquadGameplayDef = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
+
 namespace {
 constexpr std::uint32_t UnitLayer = 0x1u;
 constexpr std::uint32_t HudLayer = 0x2u;
@@ -1105,8 +1107,11 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
         if (const auto* locomotion =
                 reg.try_get<AoeLocomotionState>(member.entity)) {
             if (locomotion->stalled_ticks > 0) ++stalled;
-            if (locomotion->escape_steering) ++escaping;
-            if (locomotion->local_avoidance_infeasible) ++flow_infeasible;
+        }
+        if (const auto* avoidance =
+                reg.try_get<AoeLocalAvoidanceState>(member.entity)) {
+            if (avoidance->escape_steering) ++escaping;
+            if (avoidance->infeasible) ++flow_infeasible;
         }
         if (const auto* flow =
                 reg.try_get<AoeGlobalMotionDecision>(member.entity)) {
@@ -1244,6 +1249,8 @@ void diagnostics_system(EcsWorld& world) {
         << "1-6 total units = 128/512/2000/5000/10000/20000"
            " | Space attack-move | S stop | R reset | F5 reload\n"
         << "G map=" << (preview.draw_map ? "ON" : "OFF")
+        << " | local-avoidance="
+        << SquadGameplayDef::LocalAvoidancePlugin::name << " (static)"
         << " | N navigation=" << (preview.draw_navigation ? "ON" : "OFF")
         << " | C collision=" << (preview.draw_unit_colliders ? "ON" : "OFF")
         << " | P feet=" << (preview.draw_unit_feet ? "ON" : "OFF")
@@ -1430,7 +1437,7 @@ void system_profile_end(EcsWorld& world) {
         profile->csv
             << "frame,capture_s,frame_ms,preceding_raw_dt_ms,time_fps,hud_fps,hud_avg_ms,"
                "hud_p95_ms,hud_max_ms,fixed_ticks,dropped_s,gameplay_units,"
-               "render_units,projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
+               "render_units,local_avoidance_backend,projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
                "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
                "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,"
@@ -1507,6 +1514,7 @@ void system_profile_end(EcsWorld& world) {
         << preview.displayed_frame_dt_ms << ',' << preview.displayed_frame_p95_ms << ','
         << preview.displayed_frame_max_ms << ',' << clock.ticks_this_frame << ','
         << clock.dropped_seconds << ',' << gameplay_units << ',' << render_units << ','
+        << SquadGameplayDef::LocalAvoidancePlugin::name << ','
         << projectiles << ',' << gameplay.clear_events_ms << ',' << gameplay.spawn_ms << ','
         << gameplay.fixed_total_ms << ',' << gameplay.recycle_ms << ','
         << gameplay.position_history_ms << ',' << gameplay.squad_spawn_resolution_ms << ','
@@ -1573,7 +1581,7 @@ int main() {
     app.add_plugin(TextPlugin);
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
-    app.add_plugin(AoeGameplayPlugin{"aoe_units"});
+    app.add_plugin(SquadGameplayDef{"aoe_units"});
     app.add_plugin(AoeGpuMotionPlugin{});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(GizmoPlugin);
@@ -1666,7 +1674,8 @@ int main() {
             "Controls: 1-6 stress preset "
             "(128/512/2000/5000/10000/20000 total), "
             "Space mutual AttackMove, S stop, "
-            "G map, N navigation, C collision, P feet, L trace, R reset, F5 rescan, "
+            "G map, N navigation, C collision, P feet, "
+            "L trace, R reset, F5 rescan, "
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
             "T motion decision log, "
 #endif

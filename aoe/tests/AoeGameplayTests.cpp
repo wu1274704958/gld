@@ -49,24 +49,6 @@ struct InvalidFormation {
     }
 };
 
-struct KnownLocalSteering {
-    static inline std::uint32_t calls = 0;
-    static inline glm::vec2 velocity{0.f};
-
-    static AoeSteeringResult steer(const AoeSteeringContext&) {
-        ++calls;
-        return AoeSteeringResult{.target_velocity = velocity};
-    }
-};
-
-struct ContactLocalSteering {
-    static AoeSteeringResult steer(const AoeSteeringContext& context) {
-        return AoeSteeringResult{.target_velocity =
-            context.position.x < 4.2f
-                ? glm::vec2{1.f, 0.f} : glm::vec2{-1.f, 0.f}};
-    }
-};
-
 nlohmann::json definition_json(int schema = 2) {
     nlohmann::json value = {
         {"schema_version", schema}, {"kind", "aoe_gameplay_unit"}, {"id", "test"},
@@ -145,6 +127,7 @@ AoeMapDefinition squad_stress_map() {
     return result;
 }
 
+template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -176,6 +159,12 @@ struct Fixture {
         // exact positions/facing. Unit-flow behavior is enabled explicitly by
         // its dedicated traffic fixtures below.
         navigation.unit_flow_enabled = false;
+        if constexpr (std::is_same_v<
+                          LocalAvoidancePlugin,
+                          AoeFullLocalAvoidancePlugin>) {
+            world.resource_or_add<AoeLocalAvoidanceSettings>();
+            world.resource_or_add<AoeLocalAvoidanceScratch>();
+        }
         world.resource_or_add<AoeFormationRegistry>()
             .bind<AoeFormationType::Skirmish, DefaultSkirmishFormation>();
         world.resource_or_add<AoeProjectileRegistry>()
@@ -209,11 +198,24 @@ struct Fixture {
     void advance_ticks(int count) {
         for (int i = 0; i < count; ++i) {
             world.resource<Time>().dt = 0.1f;
-            aoe_gameplay_fixed_system(world);
+            gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
+                LocalAvoidancePlugin>(world);
         }
     }
 };
 } // namespace
+
+using FullGameplayDef = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
+using PassThroughGameplayDef =
+    AoeGameplayDef<AoePassThroughLocalAvoidancePlugin>;
+static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
+static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
+static_assert(std::same_as<
+    AoeGameplayPlugin::LocalAvoidancePlugin,
+    AoeFullLocalAvoidancePlugin>);
+static_assert(std::same_as<
+    PassThroughGameplayDef::LocalAvoidancePlugin,
+    AoePassThroughLocalAvoidancePlugin>);
 
 int main() {
     // Global motion backends are late-bound so headless gameplay does not gain
@@ -264,16 +266,13 @@ int main() {
     assert(aoe_target_acquisition_name(
                AoeTargetAcquisitionType::NearestEnemy) == "nearest_enemy");
 
-    AoeSteeringRegistry steering_registry;
-    steering_registry.bind<DefaultLocalSteeringLogic>("local_default");
-    assert(steering_registry.contains("local_default"));
     const AoeSteeringContext unobstructed_steering{
         .instance_id = 1,
         .preferred_velocity = {2.f, 0.f},
         .goal = {10.f, 0.f},
         .max_speed = 2.f};
-    assert(glm::length(steering_registry.steer(
-               "local_default", unobstructed_steering).target_velocity -
+    assert(glm::length(DefaultLocalSteeringLogic::steer(
+               unobstructed_steering).target_velocity -
            glm::vec2(2.f, 0.f)) < 1e-5f);
     const std::array<AoeSteeringNeighbor, 1> head_on_neighbor{{
         {entt::entity{2}, 2, {1.f, 0.f}, {.2f, .2f}, {-2.f, 0.f}}}};
@@ -287,11 +286,11 @@ int main() {
         .goal = {10.f, 0.f},
         .max_speed = 2.f,
         .neighbors = head_on_neighbor};
-    const auto head_on_result = steering_registry.steer(
-        "local_default", head_on_steering);
+    const auto head_on_result = DefaultLocalSteeringLogic::steer(
+        head_on_steering);
     assert(std::abs(head_on_result.target_velocity.y) > .1f);
-    assert(head_on_result.target_velocity == steering_registry.steer(
-        "local_default", head_on_steering).target_velocity);
+    assert(head_on_result.target_velocity == DefaultLocalSteeringLogic::steer(
+        head_on_steering).target_velocity);
     const std::array<AoeSteeringNeighbor, 1> reverse_neighbor{{
         {entt::entity{1}, 1, {0.f, 0.f}, {.2f, .2f}, {2.f, 0.f}}}};
     AoeSteeringContext reverse_head_on = head_on_steering;
@@ -302,8 +301,8 @@ int main() {
     reverse_head_on.preferred_velocity = {-2.f, 0.f};
     reverse_head_on.goal = {-10.f, 0.f};
     reverse_head_on.neighbors = reverse_neighbor;
-    const auto reverse_result = steering_registry.steer(
-        "local_default", reverse_head_on);
+    const auto reverse_result = DefaultLocalSteeringLogic::steer(
+        reverse_head_on);
     assert(head_on_result.target_velocity.y *
                reverse_result.target_velocity.y < 0.f);
     head_on_steering.preferred_avoidance_side =
@@ -312,8 +311,8 @@ int main() {
     auto perturbed_neighbor = head_on_neighbor;
     perturbed_neighbor[0].position.y = .01f;
     head_on_steering.neighbors = perturbed_neighbor;
-    const auto held_side_result = steering_registry.steer(
-        "local_default", head_on_steering);
+    const auto held_side_result = DefaultLocalSteeringLogic::steer(
+        head_on_steering);
     assert(held_side_result.avoidance_side ==
            head_on_result.avoidance_side);
 
@@ -337,8 +336,8 @@ int main() {
         .map = &tangent_map,
         .candidate_angle_step = .39269908169f,
         .candidate_max_angle = 1.57079632679f};
-    const auto tangent_result = steering_registry.steer(
-        "local_default", tangent_context);
+    const auto tangent_result = DefaultLocalSteeringLogic::steer(
+        tangent_context);
     assert(std::abs(tangent_result.target_velocity.y) > .5f);
     assert(tangent_result.target_velocity.x >= -1e-5f);
 
@@ -496,7 +495,9 @@ int main() {
            glm::vec2(.1f, 0.f)) < 1e-5f);
     history_fixture.world.resource<AoeGameplayClock>().accumulator = 0.0;
     history_fixture.world.resource<Time>().dt = .3f;
-    aoe_gameplay_fixed_system(history_fixture.world);
+    gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
+        AoeFullLocalAvoidancePlugin>(
+        history_fixture.world);
     assert(glm::length(history_fixture.world.reg()
                .get<AoePositionHistory>(interpolated_mover).previous -
            glm::vec2(.6f, 0.f)) < 1e-5f);
@@ -609,8 +610,8 @@ int main() {
 
     Fixture cached_steering_fixture;
     cached_steering_fixture.world.add_resource<AoeLogicMap>(flat_map());
-    cached_steering_fixture.world.resource<AoeNavigationSettings>()
-        .steering_imminent_collision_seconds = 0.f;
+    cached_steering_fixture.world.resource<AoeLocalAvoidanceSettings>()
+        .imminent_collision_seconds = 0.f;
     cached_steering_fixture.world.resource<AoeNavigationSettings>()
         .steering_max_acceleration = 0.f;
     const auto cached_follower = cached_steering_fixture.unit(
@@ -629,18 +630,13 @@ int main() {
     assert(cached_steering_fixture.world.resource<AoeGameplayDiagnostics>()
                .steering_cached_solves > 0);
 
-    // The local solver owns the direction/length intent. Global planning is
-    // the next consumer and movement must not invoke local steering again.
+    // The full static plugin owns the local intent and creates its private
+    // settings, scratch and per-unit cache without a runtime registry lookup.
     Fixture pipeline_fixture;
     pipeline_fixture.world.add_resource<AoeLogicMap>(flat_map());
     auto& pipeline_navigation =
         pipeline_fixture.world.resource<AoeNavigationSettings>();
-    pipeline_navigation.steering_strategy_id = "known_test";
     pipeline_navigation.unit_flow_enabled = false;
-    pipeline_fixture.world.resource_or_add<AoeSteeringRegistry>()
-        .bind<KnownLocalSteering>("known_test");
-    KnownLocalSteering::calls = 0;
-    KnownLocalSteering::velocity = {.75f, 1.25f};
     const auto pipeline_unit = pipeline_fixture.unit({2.f, 2.f}, 50.f, 1);
     assert(request_aoe_move(pipeline_fixture.world,
                             pipeline_unit, {10.f, 2.f}));
@@ -651,35 +647,70 @@ int main() {
         .get<AoeMovementIntent>(pipeline_unit);
     const auto& pipeline_decision = pipeline_fixture.world.reg()
         .get<AoeGlobalMotionDecision>(pipeline_unit);
-    assert(KnownLocalSteering::calls == 1);
     assert(glm::length(pipeline_request.velocity - glm::vec2(2.f, 0.f)) <
            1e-5f);
-    assert(glm::length(pipeline_intent.velocity -
-                       KnownLocalSteering::velocity) < 1e-5f);
+    assert(glm::length(pipeline_intent.velocity - pipeline_request.velocity) <
+           1e-5f);
     assert(glm::length(pipeline_decision.velocity -
                        pipeline_intent.velocity) < 1e-5f);
     assert(glm::length(pipeline_fixture.world.reg()
                .get<AoeLocomotionState>(pipeline_unit).velocity -
            pipeline_decision.velocity) < 1e-5f);
 
+    assert(pipeline_fixture.world.reg().all_of<AoeLocalAvoidanceState>(
+        pipeline_unit));
+    assert(pipeline_fixture.world.try_resource<AoeLocalAvoidanceSettings>());
+    assert(pipeline_fixture.world.try_resource<AoeLocalAvoidanceScratch>());
+
+    // The pass-through plugin is a distinct compile-time pipeline. It creates
+    // no full-plugin resources or per-unit cache, and emits a neutral raw
+    // intent for global planning and final collision safety.
+    Fixture<AoePassThroughLocalAvoidancePlugin> local_bypass_fixture;
+    local_bypass_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    auto& local_bypass_navigation =
+        local_bypass_fixture.world.resource<AoeNavigationSettings>();
+    local_bypass_navigation.unit_flow_enabled = false;
+    const auto local_bypass_unit = local_bypass_fixture.unit(
+        {2.f, 2.f}, 50.f, 1);
+    assert(request_aoe_move(local_bypass_fixture.world,
+                            local_bypass_unit, {10.f, 2.f}));
+    local_bypass_fixture.advance_ticks(1);
+    const auto& bypass_request = local_bypass_fixture.world.reg()
+        .get<AoePathMotionRequest>(local_bypass_unit);
+    const auto& bypass_intent = local_bypass_fixture.world.reg()
+        .get<AoeMovementIntent>(local_bypass_unit);
+    const auto& bypass_decision = local_bypass_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(local_bypass_unit);
+    assert(glm::length(bypass_intent.velocity - bypass_request.velocity) <
+           1e-5f);
+    assert(glm::length(bypass_intent.raw_path_velocity -
+                       bypass_request.velocity) < 1e-5f);
+    assert(bypass_intent.neighbor_count == 0 &&
+           bypass_intent.avoidance_side == 0 &&
+           !bypass_intent.threatened && !bypass_intent.locally_infeasible);
+    assert(glm::length(bypass_decision.velocity - bypass_intent.velocity) <
+           1e-5f);
+    assert(!local_bypass_fixture.world.reg().all_of<
+        AoeLocalAvoidanceState>(local_bypass_unit));
+    assert(!local_bypass_fixture.world.try_resource<
+        AoeLocalAvoidanceSettings>());
+    assert(!local_bypass_fixture.world.try_resource<
+        AoeLocalAvoidanceScratch>());
+
     // The last safety stage may shorten the displacement, but it cannot
     // rotate the direction selected by global planning.
-    Fixture safety_fixture;
+    Fixture<AoePassThroughLocalAvoidancePlugin> safety_fixture;
     safety_fixture.world.add_resource<AoeLogicMap>(flat_map());
     auto& safety_navigation =
         safety_fixture.world.resource<AoeNavigationSettings>();
-    safety_navigation.steering_strategy_id = "known_test";
+    safety_navigation.unit_pathfinder_id = "direct";
     safety_navigation.unit_flow_enabled = false;
-    safety_fixture.world.resource_or_add<AoeSteeringRegistry>()
-        .bind<KnownLocalSteering>("known_test");
     AoeStaticObstacleDesc safety_wall;
     safety_wall.shape = AoeStaticObstacleShape::Aabb;
     safety_wall.center = {2.35f, 2.f};
     safety_wall.half_extents = {.05f, 1.f};
     safety_fixture.world.resource<AoeLogicMap>()
         .add_static_obstacle(safety_wall);
-    KnownLocalSteering::calls = 0;
-    KnownLocalSteering::velocity = {2.f, 0.f};
     const auto safety_unit = safety_fixture.unit({2.f, 2.f}, 50.f, 1);
     assert(request_aoe_move(safety_fixture.world,
                             safety_unit, {10.f, 2.f}));
@@ -742,14 +773,11 @@ int main() {
     // Exact/shallow contact must participate in the global projection too.
     // Otherwise the final safety stage clips an approaching pair to zero on
     // every tick even though both units have valid motion intents.
-    Fixture contact_flow_fixture;
+    Fixture<AoePassThroughLocalAvoidancePlugin> contact_flow_fixture;
     contact_flow_fixture.world.add_resource<AoeLogicMap>(flat_map());
     auto& contact_settings =
         contact_flow_fixture.world.resource<AoeNavigationSettings>();
     contact_settings.unit_flow_enabled = true;
-    contact_settings.steering_strategy_id = "contact_test";
-    contact_flow_fixture.world.resource_or_add<AoeSteeringRegistry>()
-        .bind<ContactLocalSteering>("contact_test");
     const auto contact_left =
         contact_flow_fixture.unit({4.f, 3.f}, 50.f, 1);
     const auto contact_right =
@@ -827,8 +855,6 @@ int main() {
             .mode = AoeGlobalMotionMode::Yielding,
             .produced_tick = 0,
             .valid = true});
-    backing_flow_fixture.world.reg().get<AoeLocomotionState>(
-        backing_yielder).local_avoidance_infeasible = true;
     const int backing_facing = backing_flow_fixture.world.reg()
         .get<AoeFacing>(backing_yielder).direction;
     backing_flow_fixture.advance_ticks(1);

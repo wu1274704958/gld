@@ -140,7 +140,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     add_library(gld_aoe_gameplay STATIC
         aoe/src/AoeMap.cpp
-        aoe/src/AoeGameplay.cpp)
+        aoe/src/AoeGameplay.cpp
+        aoe/src/AoeLocalAvoidance.cpp
+        aoe/src/AoeLocalAvoidanceFallback.cpp)
     target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
     target_link_libraries(gld_aoe_gameplay PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
     if(MSVC)

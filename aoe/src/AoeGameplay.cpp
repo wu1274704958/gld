@@ -18,7 +18,6 @@ using json = nlohmann::json;
 constexpr float Epsilon = 1e-5f;
 void squad_traffic_tick(EcsWorld& world, std::uint64_t tick);
 void movement_intent_tick(EcsWorld& world, std::uint64_t tick);
-void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick);
 void unit_flow_tick(EcsWorld& world, std::uint64_t tick);
 void global_motion_planner_tick(EcsWorld& world, std::uint64_t tick);
 void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick);
@@ -34,39 +33,6 @@ void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick);
 #else
 #define GLD_AOE_GAMEPLAY_PHASE(world_value, field_name, function) do { function(); } while (false)
 #endif
-
-float steering_dynamic_safe_fraction(
-    glm::vec2 from, glm::vec2 to, glm::vec2 radii,
-    std::span<const AoeSteeringNeighbor> neighbors) {
-    float result = 1.f;
-    const glm::vec2 delta = to - from;
-    for (const auto& neighbor : neighbors) {
-        const glm::vec2 combined = radii + neighbor.radii;
-        if (!(combined.x > 0.f) || !(combined.y > 0.f)) continue;
-        const glm::vec2 start = from - neighbor.position;
-        const float rx2 = combined.x * combined.x;
-        const float ry2 = combined.y * combined.y;
-        const float a = delta.x * delta.x / rx2 +
-                        delta.y * delta.y / ry2;
-        const float b = 2.f * (start.x * delta.x / rx2 +
-                               start.y * delta.y / ry2);
-        const float c = start.x * start.x / rx2 +
-                        start.y * start.y / ry2 - 1.f;
-        float enter = 1.f;
-        if (c <= 0.f) enter = b >= -Epsilon ? 1.f : 0.f;
-        else if (a > Epsilon) {
-            const float discriminant = b * b - 4.f * a * c;
-            if (discriminant >= 0.f) {
-                const float root = std::sqrt(std::max(0.f, discriminant));
-                const float value = (-b - root) / (2.f * a);
-                if (value >= 0.f && value <= 1.f) enter = value;
-            }
-        }
-        if (enter < 1.f)
-            result = std::min(result, std::max(0.f, enter - .0001f));
-    }
-    return result;
-}
 
 struct AStarOpenNode {
     std::size_t index = 0;
@@ -2107,18 +2073,43 @@ void movement_intent_tick(EcsWorld& world, std::uint64_t tick) {
     }
 }
 
+#if 0 // Moved to AoeLocalAvoidance.cpp and AoeLocalAvoidanceFallback.cpp.
 void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
     for (const auto entity : reg.view<AoeMovementIntent>())
         reg.get<AoeMovementIntent>(entity).valid = false;
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    if (!settings.local_avoidance_enabled) {
+        // A disabled local layer is a true pass-through: do not query dynamic
+        // neighbors or invoke a steering strategy. Clear cached local choices
+        // so enabling it again always starts from current motion state.
+        for (const auto entity : reg.view<AoeLocomotionState>()) {
+            auto& locomotion = reg.get<AoeLocomotionState>(entity);
+            locomotion.cached_target_velocity = {0.f, 0.f};
+            locomotion.last_steering_tick = 0;
+            locomotion.threat_signature = 0;
+            locomotion.avoidance_side = 0;
+            locomotion.avoidance_side_hold_ticks = 0;
+            locomotion.escape_steering = false;
+            locomotion.local_avoidance_infeasible = false;
+        }
+        for (const auto entity : reg.view<AoePathMotionRequest, AoePosition,
+                                          AoeCollider, AoeLocomotionState>()) {
+            const auto& request = reg.get<AoePathMotionRequest>(entity);
+            if (!request.valid || request.produced_tick != tick) continue;
+            reg.emplace_or_replace<AoeMovementIntent>(entity,
+                AoeMovementIntent{request.kind, request.velocity,
+                    request.velocity, request.local_goal, 0, 0, false, false,
+                    tick, true});
+        }
+        return;
+    }
     world.resource_or_add<AoeSteeringRegistry>();
     world.resource_or_add<AoeCrowdSteeringScratch>();
-    world.resource_or_add<AoeNavigationSettings>();
     world.resource_or_add<AoeGameplayDiagnostics>();
     auto& steering = world.resource<AoeSteeringRegistry>();
     if (!steering.contains("local_default"))
         steering.bind<DefaultLocalSteeringLogic>("local_default");
-    const auto& settings = world.resource<AoeNavigationSettings>();
     auto& diagnostics = world.resource<AoeGameplayDiagnostics>();
     auto& neighbors = world.resource<AoeCrowdSteeringScratch>().nearest_neighbors;
     neighbors.clear();
@@ -2292,6 +2283,7 @@ void local_avoidance_intent_tick(EcsWorld& world, std::uint64_t tick) {
                 result.infeasible, tick, true});
     }
 }
+#endif
 
 namespace {
 float unit_flow_radius(const AoeUnitFlowRecord& value) {
@@ -2958,7 +2950,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         if (state.state == UnitState::Attacking || is_terminal(state.state)) {
             locomotion.velocity = {0.f, 0.f};
             locomotion.stalled_ticks = 0;
-            locomotion.escape_steering = false;
             continue;
         }
         if (path.no_path) {
@@ -3054,9 +3045,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 navigation.steering_stalled_speed * dt;
         if (!made_progress) {
             ++locomotion.stalled_ticks;
-            const auto* intent = reg.try_get<AoeMovementIntent>(entity);
-            locomotion.local_avoidance_infeasible = intent &&
-                intent->locally_infeasible;
             const std::uint32_t traffic_limit =
                 navigation.unit_flow_backing_threshold_ticks +
                 navigation.unit_flow_backing_max_ticks;
@@ -3064,8 +3052,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 decision->wait_ticks < traffic_limit;
             if (!traffic_grace) {
                 ++path.blocked_ticks;
-                locomotion.escape_steering = locomotion.stalled_ticks >=
-                    std::max(1u, navigation.steering_escape_stalled_ticks);
                 const auto trigger = std::max(1u,
                     navigation.blocked_repath_ticks);
                 if (path.blocked_ticks >= trigger) {
@@ -3086,8 +3072,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         } else {
             path.blocked_ticks = 0;
             locomotion.stalled_ticks = 0;
-            locomotion.escape_steering = false;
-            locomotion.local_avoidance_infeasible = false;
         }
         state.state = UnitState::Moving;
     }
@@ -3116,7 +3100,6 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         locomotion.velocity = {0.f, 0.f};
         locomotion.actual_speed = 0.f;
         locomotion.stalled_ticks = 0;
-        locomotion.escape_steering = false;
     }
     GLD_PERF_MONITOR(
         diagnostics.movement_last_ms =
@@ -3281,9 +3264,7 @@ void capture_position_history_tick(EcsWorld& world) {
     }
 }
 
-void fixed_tick(EcsWorld& world) {
-    auto& clock = world.resource<AoeGameplayClock>();
-    ++clock.tick;
+void fixed_before_local(EcsWorld& world, std::uint64_t tick) {
     GLD_AOE_GAMEPLAY_PHASE(world, position_history_ms,
         [&] { capture_position_history_tick(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_spawn_resolution_ms,
@@ -3293,35 +3274,36 @@ void fixed_tick(EcsWorld& world) {
     GLD_AOE_GAMEPLAY_PHASE(world, dynamic_obstacle_index_ms,
         [&] { aoe_dynamic_obstacle_index_system(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_command_ms,
-        [&] { squad_command_tick(world, clock.tick); });
+        [&] { squad_command_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, command_ms,
-        [&] { command_tick(world, clock.tick); });
+        [&] { command_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, membership_cleanup_ms,
         [&] { squad_membership_cleanup_tick(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_traffic_ms,
-        [&] { squad_traffic_tick(world, clock.tick); });
+        [&] { squad_traffic_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_control_ms,
-        [&] { squad_control_tick(world, clock.tick); });
+        [&] { squad_control_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, attack_move_acquisition_ms,
-        [&] { attack_move_acquisition_tick(world, clock.tick); });
+        [&] { attack_move_acquisition_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, navigation_ms,
-        [&] { navigation_tick(world, clock.tick); });
+        [&] { navigation_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, movement_intent_ms,
-        [&] { movement_intent_tick(world, clock.tick); });
-    GLD_AOE_GAMEPLAY_PHASE(world, local_avoidance_ms,
-        [&] { local_avoidance_intent_tick(world, clock.tick); });
+        [&] { movement_intent_tick(world, tick); });
+}
+
+void fixed_after_local(EcsWorld& world, std::uint64_t tick) {
     GLD_AOE_GAMEPLAY_PHASE(world, unit_flow_ms,
-        [&] { global_motion_planner_tick(world, clock.tick); });
+        [&] { global_motion_planner_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, motion_safety_ms,
-        [&] { global_motion_safety_tick(world, clock.tick); });
+        [&] { global_motion_safety_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, movement_ms,
-        [&] { movement_tick(world, clock.tick); });
+        [&] { movement_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, combat_ms,
-        [&] { combat_tick(world, clock.tick); });
+        [&] { combat_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, projectile_ms,
-        [&] { aoe_projectile_tick(world, clock.tick); });
+        [&] { aoe_projectile_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, lifecycle_ms,
-        [&] { lifecycle_tick(world, clock.tick); });
+        [&] { lifecycle_tick(world, tick); });
 }
 
 void squad_traffic_tick(EcsWorld& world, std::uint64_t tick) {
@@ -3520,6 +3502,16 @@ void squad_traffic_tick(EcsWorld& world, std::uint64_t tick) {
 }
 } // namespace
 
+namespace detail {
+void aoe_gameplay_fixed_before_local(EcsWorld& world, std::uint64_t tick) {
+    fixed_before_local(world, tick);
+}
+
+void aoe_gameplay_fixed_after_local(EcsWorld& world, std::uint64_t tick) {
+    fixed_after_local(world, tick);
+}
+} // namespace detail
+
 std::string PresentationDefinition::animation(const std::string& semantic) const {
     const auto it = animations.find(semantic);
     return it == animations.end() ? std::string{} : it->second;
@@ -3557,6 +3549,7 @@ AoePathResult AoePathfinderRegistry::find(
         : it->second(world, request);
 }
 
+#if 0 // Replaced by compile-time local-avoidance plugins.
 void AoeSteeringRegistry::bind_erased(std::string id, SteerFn function) {
     if (id.empty() || !function)
         throw std::invalid_argument(
@@ -3717,6 +3710,7 @@ AoeSteeringResult DefaultLocalSteeringLogic::steer(
     }
     return {best, best_side, true};
 }
+#endif
 
 AoePathResult DirectPathfinderLogic::find(
     EcsWorld&, const AoePathRequest& request) {
@@ -4613,7 +4607,8 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
         reg.emplace_or_replace<AoeGameplayIdentity>(entity, AoeGameplayIdentity{
             instance, mix64(settings.random_seed ^ instance)});
         reg.remove<AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,
-                   AoeNavigationPath, AoeRecyclePending>(entity);
+                   AoeNavigationPath, AoeLocalAvoidanceState,
+                   AoeRecyclePending>(entity);
         completed.push_back(entity);
     }
     for (auto entity : completed)
@@ -4621,39 +4616,6 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
             reg.remove<AoeGameplaySpawnRequest>(entity);
     GLD_PERF_MONITOR(
         world.resource_or_add<AoeGameplayPerformanceDiagnostics>().spawn_ms =
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - started).count();
-    );
-}
-
-void aoe_gameplay_fixed_system(EcsWorld& world) {
-    GLD_PERF_TIME_POINT(started);
-    auto& clock = world.resource<AoeGameplayClock>();
-    const auto& settings = world.resource<AoeGameplaySettings>();
-    const auto* time = world.try_resource<Time>();
-    if (!time || !(settings.fixed_dt > 0.0)) {
-        GLD_PERF_MONITOR(
-            world.resource_or_add<AoeGameplayPerformanceDiagnostics>().fixed_total_ms =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - started).count();
-        );
-        return;
-    }
-    clock.accumulator += std::max(0.f, time->dt);
-    clock.ticks_this_frame = 0;
-    while (clock.accumulator + 1e-12 >= settings.fixed_dt &&
-           clock.ticks_this_frame < settings.max_catchup_ticks) {
-        clock.accumulator -= settings.fixed_dt;
-        fixed_tick(world);
-        ++clock.ticks_this_frame;
-    }
-    if (clock.accumulator >= settings.fixed_dt) {
-        const double kept = std::fmod(clock.accumulator, settings.fixed_dt);
-        clock.dropped_seconds += clock.accumulator - kept;
-        clock.accumulator = kept;
-    }
-    GLD_PERF_MONITOR(
-        world.resource_or_add<AoeGameplayPerformanceDiagnostics>().fixed_total_ms =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - started).count();
     );
@@ -4671,7 +4633,8 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
                    AoeHealth, AoeLevel, AoeCollider, AoePosition,
                    AoePositionHistory, AoeMovement, AoeTeam,
                    AoeLocomotionState, AoePathMotionRequest,
-                   AoeMovementIntent, AoeGlobalMotionState,
+                   AoeMovementIntent, AoeLocalAvoidanceState,
+                   AoeGlobalMotionState,
                    AoeGlobalMotionDecision,
                    AoeFacing,
                    AoePresentationOptions, AoeActionState, AoeGameplayIdentity,
@@ -4692,10 +4655,13 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
     );
 }
 
-void AoeGameplayPlugin::operator()(App& app) const {
+void detail::install_aoe_gameplay_base(
+    App& app, const std::string& definitions_root,
+    const AoeGameplaySettings& settings) {
     if (!std::isfinite(settings.fixed_dt) || settings.fixed_dt <= 0.0 ||
         settings.max_catchup_ticks == 0)
-        throw std::invalid_argument("AoeGameplayPlugin requires positive finite fixed_dt and max_catchup_ticks");
+        throw std::invalid_argument(
+            "AoeGameplayDef requires positive finite fixed_dt and max_catchup_ticks");
     auto& server = app.world.resource<AssetServer>();
     server.register_loader<AoeUnitDefinitionDesc>(std::make_shared<AoeUnitDefinitionLoader>());
     server.register_loader<AoeMapDefinitionDesc>(
@@ -4714,7 +4680,6 @@ void AoeGameplayPlugin::operator()(App& app) const {
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     app.world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
 #endif
-    app.world.resource_or_add<AoeCrowdSteeringScratch>();
     app.world.resource_or_add<AoeSquadTrafficIndex>();
     app.world.resource_or_add<AoeUnitFlowIndex>();
     app.world.resource_or_add<AoeNavigationSettings>();
@@ -4734,9 +4699,6 @@ void AoeGameplayPlugin::operator()(App& app) const {
         pathfinders.bind<DirectPathfinderLogic>("direct");
     if (!pathfinders.contains("grid_astar"))
         pathfinders.bind<GridAStarPathfinderLogic>("grid_astar");
-    auto& steering = app.world.resource_or_add<AoeSteeringRegistry>();
-    if (!steering.contains("local_default"))
-        steering.bind<DefaultLocalSteeringLogic>("local_default");
     auto& formations = app.world.resource_or_add<AoeFormationRegistry>();
     if (!formations.contains(AoeFormationType::Skirmish))
         formations.bind<AoeFormationType::Skirmish,
@@ -4746,7 +4708,6 @@ void AoeGameplayPlugin::operator()(App& app) const {
         projectiles.bind<ArrowProjectileLogic>("arrow");
     app.add_system(Stage::First, clear_aoe_gameplay_events);
     app.add_system(Stage::PreUpdate, spawn_aoe_gameplay_unit_system);
-    app.add_system(Stage::PreUpdate, aoe_gameplay_fixed_system);
     app.add_system(Stage::PostUpdate, aoe_gameplay_recycle_system);
 }
 

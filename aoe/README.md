@@ -240,6 +240,12 @@ old direct waypoint behavior. `AoeCrowdSteeringScratch` retains movement scratch
 capacity across fixed ticks, and `AoeGameplayDiagnostics` exposes fast, full,
 cached and imminent solve counts plus side/facing changes and movement timing.
 
+`AoeNavigationSettings::local_avoidance_enabled` defaults to `true`. When it is
+disabled, path-following velocity passes directly to global motion planning
+without dynamic-neighbor collection or a local steering solve. GPU/CPU global
+coordination and final static/dynamic collision safety remain active, so this is
+a local-layer performance switch rather than a permit for unit penetration.
+
 `AoeLocomotionState` exposes actual velocity, actual speed, previous velocity,
 cumulative travelled distance, and `effective_max_speed`. The latter is the
 base movement speed after persistent gameplay limits such as a mixed squad's
@@ -378,8 +384,9 @@ fallback. Keys 1 through 6 rebuild both sides with a total of
 is 128 total, while the maximum preset contains 10,000 units per side. The main
 camera automatically fits the complete isometric map and updates after a window
 resize. Space reissues mutual Attack Move, S stops both squads, and R respawns
-the current preset. G toggles map boundaries and
-obstacles, N toggles anchor/member paths and formation slots, P toggles rendered
+the current preset. G toggles map boundaries and obstacles, while O toggles
+local avoidance without rebuilding either squad; global motion and collision
+safety remain enabled. N toggles anchor/member paths and formation slots, P toggles rendered
 SLD foot markers, C toggles the interpolated gameplay collision ellipses, and L
 traces one blue Archer to the console. Collision, navigation, foot, and trace
 diagnostics are disabled when comparing performance because they add

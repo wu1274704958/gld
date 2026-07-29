@@ -4,6 +4,7 @@
 #include <concepts>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -12,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -233,7 +235,6 @@ struct AoeGlobalMotionDecision {
 struct AoeLocomotionState {
     glm::vec2 velocity{0.f};
     glm::vec2 previous_velocity{0.f};
-    glm::vec2 cached_target_velocity{0.f};
     // Maximum speed after persistent gameplay limits (for example a squad's
     // slowest-member cap), but before transient arrive/steering/collision
     // reductions. Presentation uses this to distinguish commanded slow travel
@@ -241,13 +242,7 @@ struct AoeLocomotionState {
     float effective_max_speed = 0.f;
     float actual_speed = 0.f;
     double distance_travelled = 0.0;
-    std::uint64_t last_steering_tick = 0;
-    std::uint64_t threat_signature = 0;
-    std::int8_t avoidance_side = 0;
-    std::uint8_t avoidance_side_hold_ticks = 0;
     std::uint32_t stalled_ticks = 0;
-    bool escape_steering = false;
-    bool local_avoidance_infeasible = false;
     int pending_facing_direction = -1;
     std::uint8_t pending_facing_ticks = 0;
 };
@@ -364,66 +359,6 @@ struct DirectPathfinderLogic {
 
 struct GridAStarPathfinderLogic {
     static AoePathResult find(EcsWorld&, const AoePathRequest&);
-};
-
-struct AoeSteeringNeighbor {
-    entt::entity entity{entt::null};
-    std::uint64_t instance_id = 0;
-    glm::vec2 position{0.f};
-    glm::vec2 radii{0.f};
-    glm::vec2 velocity{0.f};
-};
-
-struct AoeSteeringContext {
-    entt::entity subject{entt::null};
-    std::uint64_t instance_id = 0;
-    glm::vec2 position{0.f};
-    glm::vec2 radii{0.f};
-    glm::vec2 current_velocity{0.f};
-    glm::vec2 preferred_velocity{0.f};
-    glm::vec2 goal{0.f};
-    float max_speed = 0.f;
-    float prediction_seconds = .6f;
-    float separation_padding = .15f;
-    const AoeLogicMap* map = nullptr;
-    std::span<const AoeSteeringNeighbor> neighbors{};
-    int preferred_avoidance_side = 0;
-    float side_switch_margin = .35f;
-    float candidate_angle_step = .39269908169f;
-    float candidate_max_angle = .78539816339f;
-    float minimum_safe_fraction = .05f;
-};
-
-struct AoeSteeringResult {
-    glm::vec2 target_velocity{0.f};
-    int avoidance_side = 0;
-    bool threatened = false;
-    bool infeasible = false;
-};
-
-template<class T>
-concept AoeSteeringLogic = requires(const AoeSteeringContext& context) {
-    { T::steer(context) } -> std::same_as<AoeSteeringResult>;
-};
-
-class AoeSteeringRegistry {
-public:
-    using SteerFn = AoeSteeringResult (*)(const AoeSteeringContext&);
-
-    template<AoeSteeringLogic T>
-    void bind(std::string id) { bind_erased(std::move(id), &T::steer); }
-
-    bool contains(std::string_view id) const;
-    AoeSteeringResult steer(std::string_view id,
-                            const AoeSteeringContext&) const;
-
-private:
-    void bind_erased(std::string id, SteerFn function);
-    std::unordered_map<std::string, SteerFn> entries_;
-};
-
-struct DefaultLocalSteeringLogic {
-    static AoeSteeringResult steer(const AoeSteeringContext&);
 };
 
 enum class AoeNavigationEventStatus { Ready, Blocked, NoPath };
@@ -835,32 +770,19 @@ struct AoeGameplaySettings {
 struct AoeNavigationSettings {
     std::string unit_pathfinder_id = "grid_astar";
     std::string squad_pathfinder_id = "grid_astar";
-    std::string steering_strategy_id = "local_default";
     // The gameplay module requests the GPU planner by default. Headless builds
     // do not register it and therefore transparently use cpu_unit_flow.
     std::string global_motion_planner_id = "gpu_image";
     std::uint32_t blocked_repath_ticks = 12;
     std::uint32_t repath_cooldown_ticks = 3;
-    std::uint32_t steering_max_neighbors = 8;
-    std::uint32_t steering_full_solve_interval = 2;
-    std::uint32_t steering_side_hold_ticks = 6;
     std::uint32_t steering_facing_stable_ticks = 2;
-    float steering_prediction_seconds = .6f;
-    float steering_separation_padding = .15f;
-    float steering_imminent_collision_seconds = .2f;
-    float steering_side_switch_margin = .35f;
     float steering_max_acceleration = 4.f;
     float steering_max_turn_radians_per_second = 6.28318530718f;
     float steering_stalled_speed = .05f;
     float squad_leash = 3.f;
     float slot_repath_distance = .5f;
-    std::uint32_t steering_escape_stalled_ticks = 4;
     std::uint32_t formation_slot_recovery_ticks = 4;
     std::uint32_t squad_traffic_hold_ticks = 6;
-    float steering_candidate_angle_step = .39269908169f;
-    float steering_normal_max_angle = .78539816339f;
-    float steering_escape_max_angle = 1.57079632679f;
-    float steering_minimum_safe_fraction = .05f;
     float squad_traffic_prediction_seconds = 1.5f;
     float squad_traffic_same_direction_dot = .65f;
     float squad_traffic_head_on_dot = -.5f;
@@ -997,13 +919,6 @@ struct AoeGameplayPerformanceDiagnostics {
     void begin_frame() { *this = {}; }
 };
 
-// Fixed-tick scratch is a world resource so its high-water capacities are
-// reused instead of allocating temporary vectors for every movement tick.
-struct AoeCrowdSteeringScratch {
-    std::vector<entt::entity> arrived;
-    std::vector<AoeSteeringNeighbor> nearest_neighbors;
-};
-
 struct AoeSquadTrafficRecord {
     entt::entity squad{entt::null};
     glm::vec2 center{0.f};
@@ -1083,12 +998,6 @@ struct AoeGlobalMotionPlannerDiagnostics {
     std::uint64_t authoritative_corrections = 0;
 };
 
-struct AoeGameplayPlugin {
-    std::string definitions_root = "aoe_units";
-    AoeGameplaySettings settings{};
-    void operator()(App& app) const;
-};
-
 entt::entity spawn_aoe_gameplay_unit(EcsWorld&, const AoeUnitSpawnOptions&);
 entt::entity spawn_aoe_gameplay_squad(EcsWorld&, const AoeSquadSpawnOptions&);
 bool request_aoe_attack(EcsWorld&, entt::entity attacker, entt::entity target);
@@ -1118,10 +1027,120 @@ float aoe_surface_gap(const AoePosition&, const AoeCollider&,
                       const AoePosition&, const AoeCollider&);
 void clear_aoe_gameplay_events(EcsWorld&);
 void spawn_aoe_gameplay_unit_system(EcsWorld&);
-void aoe_gameplay_fixed_system(EcsWorld&);
 void aoe_gameplay_recycle_system(EcsWorld&);
 void aoe_projectile_tick(EcsWorld&, std::uint64_t tick);
 void aoe_map_static_obstacle_system(EcsWorld&);
 void aoe_dynamic_obstacle_index_system(EcsWorld&);
+
+namespace detail {
+void install_aoe_gameplay_base(
+    App&, const std::string& definitions_root,
+    const AoeGameplaySettings& settings);
+void aoe_gameplay_fixed_before_local(EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_fixed_after_local(EcsWorld&, std::uint64_t tick);
+}
+
+} // namespace gld::ecs::aoe
+
+#include <aoe/AoeLocalAvoidance.hpp>
+
+namespace gld::ecs::aoe {
+
+template<class T>
+concept AoeGameplayStaticPlugin = requires(
+    App& app, EcsWorld& world, std::uint64_t tick) {
+    typename T::phase;
+    { T::name } -> std::convertible_to<std::string_view>;
+    { T::install(app) } -> std::same_as<void>;
+    { T::fixed_tick(world, tick) } -> std::same_as<void>;
+};
+
+namespace detail {
+template<class Phase, class... Plugins>
+inline constexpr std::size_t gameplay_phase_count_v =
+    (std::size_t{0} + ... +
+     (std::is_same_v<typename Plugins::phase, Phase> ? 1u : 0u));
+
+template<class Phase, class First, class... Rest>
+struct GameplayPluginForPhase {
+    using type = std::conditional_t<
+        std::is_same_v<typename First::phase, Phase>, First,
+        typename GameplayPluginForPhase<Phase, Rest...>::type>;
+};
+
+template<class Phase, class Last>
+struct GameplayPluginForPhase<Phase, Last> {
+    using type = std::conditional_t<
+        std::is_same_v<typename Last::phase, Phase>, Last, void>;
+};
+
+template<class Phase, class... Plugins>
+using gameplay_plugin_for_phase_t =
+    typename GameplayPluginForPhase<Phase, Plugins...>::type;
+
+template<class LocalAvoidancePlugin>
+void aoe_gameplay_fixed_system(EcsWorld& world) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    const auto started = std::chrono::steady_clock::now();
+#endif
+    auto& clock = world.resource<AoeGameplayClock>();
+    const auto& settings = world.resource<AoeGameplaySettings>();
+    const auto* time = world.try_resource<Time>();
+    if (!time || !(settings.fixed_dt > 0.0)) {
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
+            .fixed_total_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+#endif
+        return;
+    }
+    clock.accumulator += std::max(0.f, time->dt);
+    clock.ticks_this_frame = 0;
+    while (clock.accumulator + 1e-12 >= settings.fixed_dt &&
+           clock.ticks_this_frame < settings.max_catchup_ticks) {
+        clock.accumulator -= settings.fixed_dt;
+        ++clock.tick;
+        aoe_gameplay_fixed_before_local(world, clock.tick);
+        LocalAvoidancePlugin::fixed_tick(world, clock.tick);
+        aoe_gameplay_fixed_after_local(world, clock.tick);
+        ++clock.ticks_this_frame;
+    }
+    if (clock.accumulator >= settings.fixed_dt) {
+        const double kept = std::fmod(clock.accumulator, settings.fixed_dt);
+        clock.dropped_seconds += clock.accumulator - kept;
+        clock.accumulator = kept;
+    }
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
+        .fixed_total_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+#endif
+}
+} // namespace detail
+
+template<AoeGameplayStaticPlugin... Plugins>
+struct AoeGameplayDef {
+    static_assert(sizeof...(Plugins) > 0,
+        "AoeGameplayDef requires at least one static gameplay plugin");
+    static_assert(detail::gameplay_phase_count_v<
+                      AoeLocalAvoidancePhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one local-avoidance phase plugin");
+
+    using LocalAvoidancePlugin = detail::gameplay_plugin_for_phase_t<
+        AoeLocalAvoidancePhase, Plugins...>;
+
+    std::string definitions_root = "aoe_units";
+    AoeGameplaySettings settings{};
+
+    void operator()(App& app) const {
+        detail::install_aoe_gameplay_base(app, definitions_root, settings);
+        (Plugins::install(app), ...);
+        app.add_system(Stage::PreUpdate, [](EcsWorld& world) {
+            detail::aoe_gameplay_fixed_system<LocalAvoidancePlugin>(world);
+        });
+    }
+};
+
+using AoeGameplayPlugin = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
 
 } // namespace gld::ecs::aoe
