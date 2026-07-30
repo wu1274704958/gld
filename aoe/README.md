@@ -236,15 +236,43 @@ retry after a three-tick cooldown with a small deterministic per-entity offset.
 Static no-path results wait until the map
 revision changes. `AoeNavigationEvent` reports `Ready`, `Blocked`, and `NoPath`.
 Without an `AoeLogicMap` resource, navigation deliberately falls back to the
-old direct waypoint behavior. `AoeCrowdSteeringScratch` retains movement scratch
-capacity across fixed ticks, and `AoeGameplayDiagnostics` exposes fast, full,
-cached and imminent solve counts plus side/facing changes and movement timing.
+old direct waypoint behavior. The default `AoeGameplayPlugin` uses
+`AoeFullLocalAvoidancePlugin`; its `AoeLocalAvoidanceScratch` retains neighbor
+storage capacity across fixed ticks, and `AoeGameplayDiagnostics` exposes fast,
+full, cached and imminent solve counts plus side/facing changes and movement
+timing.
 
-`AoeNavigationSettings::local_avoidance_enabled` defaults to `true`. When it is
-disabled, path-following velocity passes directly to global motion planning
-without dynamic-neighbor collection or a local steering solve. GPU/CPU global
-coordination and final static/dynamic collision safety remain active, so this is
-a local-layer performance switch rather than a permit for unit penetration.
+Local avoidance is selected statically when the gameplay plugin is composed.
+`AoeGameplayDef<AoePassThroughLocalAvoidancePlugin,
+AoeDefaultGlobalMotionPlugin>` forwards path-following velocity directly to
+global motion planning without dynamic-neighbor collection, a local steering
+solve, or full-plugin per-unit state. GPU/CPU global coordination and final
+static/dynamic collision safety remain active, so this combination removes only
+the local layer rather than permitting unit penetration.
+
+Global motion is a second required static phase. The default
+`AoeDefaultGlobalMotionPlugin` retains the late-bound `gpu_image` planner and
+the headless `cpu_unit_flow` fallback. `AoePassThroughGlobalMotionPlugin` is a
+performance-floor backend: it preserves acceleration limiting and final static
+obstacle safety, but deliberately omits dynamic unit coordination and dynamic
+pair safety. Neither static phase can be switched at runtime; select the plugin
+types when composing the application or benchmark.
+
+For a Global Motion A/B, keep local avoidance fixed and change only the second
+template argument before rebuilding the same executable:
+
+```cpp
+using ProductionGameplay = AoeGameplayDef<
+    AoeFullLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
+using GlobalMotionFloorGameplay = AoeGameplayDef<
+    AoeFullLocalAvoidancePlugin, AoePassThroughGlobalMotionPlugin>;
+```
+
+The squad preview's `SquadGameplayDef` is the intended benchmark edit point.
+Its GPU plugin is installed only when the selected Global Motion phase uses the
+runtime planner registry. Restore `AoeDefaultGlobalMotionPlugin` after measuring;
+the pass-through result is a cost floor, not a behavior-equivalent production
+configuration.
 
 `AoeLocomotionState` exposes actual velocity, actual speed, previous velocity,
 cumulative travelled distance, and `effective_max_speed`. The latter is the
@@ -273,16 +301,21 @@ settings.unit_pathfinder_id = "my_pathfinder";
 settings.squad_pathfinder_id = "my_pathfinder";
 ```
 
-Local steering uses the parallel static registry interface:
+Local avoidance is extended by defining a static phase plugin and composing a
+gameplay definition with it:
 
 ```cpp
-struct MySteering {
-    static AoeSteeringResult steer(const AoeSteeringContext& context);
+struct MyLocalAvoidancePlugin {
+    using phase = AoeLocalAvoidancePhase;
+    static constexpr std::string_view name = "my_local_avoidance";
+
+    static void install(App& app);
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick);
 };
 
-auto& steering = world.resource_or_add<AoeSteeringRegistry>();
-steering.bind<MySteering>("my_steering");
-settings.steering_strategy_id = "my_steering";
+using MyGameplay = AoeGameplayDef<
+    MyLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
+app.add_plugin(MyGameplay{"aoe_units"});
 ```
 
 Squads plan a static-obstacle guide for a moving virtual anchor. Each member
@@ -384,11 +417,11 @@ fallback. Keys 1 through 6 rebuild both sides with a total of
 is 128 total, while the maximum preset contains 10,000 units per side. The main
 camera automatically fits the complete isometric map and updates after a window
 resize. Space reissues mutual Attack Move, S stops both squads, and R respawns
-the current preset. G toggles map boundaries and obstacles, while O toggles
-local avoidance without rebuilding either squad; global motion and collision
-safety remain enabled. N toggles anchor/member paths and formation slots, P toggles rendered
-SLD foot markers, C toggles the interpolated gameplay collision ellipses, and L
-traces one blue Archer to the console. Collision, navigation, foot, and trace
+the current preset. G toggles map boundaries and obstacles, N toggles
+anchor/member paths and formation slots, P toggles rendered SLD foot markers, C
+toggles the interpolated gameplay collision ellipses, and L traces one blue
+Archer to the console. The HUD and profile CSV identify the statically selected
+local-avoidance backend. Collision, navigation, foot, and trace
 diagnostics are disabled when comparing performance because they add
 intentional debug work. F5 rescans unit definitions and respawns, and Escape
 exits. The stress preview disables VSync by default so its FPS reflects actual

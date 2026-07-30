@@ -47,7 +47,9 @@ using namespace gld::ecs::aoe2;
 using namespace gld::ecs::aoe2_gameplay;
 namespace fs = std::filesystem;
 
-using SquadGameplayDef = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
+using SquadGameplayDef = AoeGameplayDef<
+    AoePassThroughFormationPlugin, AoePassThroughLocalAvoidancePlugin,
+    AoePassThroughGlobalMotionPlugin>;
 
 namespace {
 constexpr std::uint32_t UnitLayer = 0x1u;
@@ -1249,8 +1251,12 @@ void diagnostics_system(EcsWorld& world) {
         << "1-6 total units = 128/512/2000/5000/10000/20000"
            " | Space attack-move | S stop | R reset | F5 reload\n"
         << "G map=" << (preview.draw_map ? "ON" : "OFF")
+        << " | formation="
+        << SquadGameplayDef::FormationPlugin::name << " (static)"
         << " | local-avoidance="
         << SquadGameplayDef::LocalAvoidancePlugin::name << " (static)"
+        << " | global-motion="
+        << SquadGameplayDef::GlobalMotionPlugin::name << " (static)"
         << " | N navigation=" << (preview.draw_navigation ? "ON" : "OFF")
         << " | C collision=" << (preview.draw_unit_colliders ? "ON" : "OFF")
         << " | P feet=" << (preview.draw_unit_feet ? "ON" : "OFF")
@@ -1437,10 +1443,11 @@ void system_profile_end(EcsWorld& world) {
         profile->csv
             << "frame,capture_s,frame_ms,preceding_raw_dt_ms,time_fps,hud_fps,hud_avg_ms,"
                "hud_p95_ms,hud_max_ms,fixed_ticks,dropped_s,gameplay_units,"
-               "render_units,local_avoidance_backend,projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
+               "render_units,formation_backend,local_avoidance_backend,global_motion_backend,"
+               "projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
                "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
-               "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,"
+               "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,g_formation_ms,"
                "g_acquisition_ms,g_navigation_ms,g_movement_intent_ms,"
                "g_local_avoidance_ms,g_unit_flow_ms,g_motion_safety_ms,"
                "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
@@ -1514,14 +1521,16 @@ void system_profile_end(EcsWorld& world) {
         << preview.displayed_frame_dt_ms << ',' << preview.displayed_frame_p95_ms << ','
         << preview.displayed_frame_max_ms << ',' << clock.ticks_this_frame << ','
         << clock.dropped_seconds << ',' << gameplay_units << ',' << render_units << ','
+        << SquadGameplayDef::FormationPlugin::name << ','
         << SquadGameplayDef::LocalAvoidancePlugin::name << ','
+        << SquadGameplayDef::GlobalMotionPlugin::name << ','
         << projectiles << ',' << gameplay.clear_events_ms << ',' << gameplay.spawn_ms << ','
         << gameplay.fixed_total_ms << ',' << gameplay.recycle_ms << ','
         << gameplay.position_history_ms << ',' << gameplay.squad_spawn_resolution_ms << ','
         << gameplay.static_obstacle_index_ms << ',' << gameplay.dynamic_obstacle_index_ms << ','
         << gameplay.squad_command_ms << ',' << gameplay.command_ms << ','
         << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
-        << gameplay.squad_control_ms << ','
+        << gameplay.squad_control_ms << ',' << gameplay.formation_ms << ','
         << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
         << gameplay.movement_intent_ms << ',' << gameplay.local_avoidance_ms << ','
         << gameplay.unit_flow_ms << ',' << gameplay.motion_safety_ms << ','
@@ -1555,7 +1564,11 @@ void system_profile_end(EcsWorld& world) {
         << gameplay.navigation_astar_find_peak_ms << ','
         << gpu_upload_total << ',' << gpu_upload_ms_v << ','
         << gpu_dispatch_ms_v << ',' << gpu_readback_ms_v << '\n';
-    if (profile->capture_seconds >= profile->capture_target_seconds)
+    // Closing the window is the marker for an interactive profile: flush in
+    // Stage::Last while the ECS resources still exist, before run_app shuts
+    // the application down.
+    if (profile->capture_seconds >= profile->capture_target_seconds ||
+        world.resource<Window>().should_close)
         write_system_profile(*profile, world);
 }
 #endif
@@ -1582,7 +1595,9 @@ int main() {
     TextBatchPlugin(app);
     app.add_plugin(Aoe2Plugin{"aoe2de_cache"});
     app.add_plugin(SquadGameplayDef{"aoe_units"});
-    app.add_plugin(AoeGpuMotionPlugin{});
+    if constexpr (
+        SquadGameplayDef::GlobalMotionPlugin::uses_runtime_planner)
+        app.add_plugin(AoeGpuMotionPlugin{});
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(GizmoPlugin);
     app.add_plugin(RenderPlugin);

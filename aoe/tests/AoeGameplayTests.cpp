@@ -49,6 +49,61 @@ struct InvalidFormation {
     }
 };
 
+struct StaticGameplayPluginProbeState {
+    std::uint32_t formation_calls = 0;
+    std::uint32_t local_calls = 0;
+    std::uint32_t global_calls = 0;
+    std::uint32_t sequence = 0;
+    std::uint64_t last_tick = 0;
+};
+
+struct StaticFormationProbe {
+    using phase = AoeFormationPhase;
+    static constexpr std::string_view name = "test_formation_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<StaticGameplayPluginProbeState>();
+    }
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.formation_calls;
+        probe.sequence = probe.sequence == 0 ? 1 : 99;
+        probe.last_tick = tick;
+    }
+};
+
+struct StaticLocalAvoidanceProbe {
+    using phase = AoeLocalAvoidancePhase;
+    static constexpr std::string_view name = "test_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<StaticGameplayPluginProbeState>();
+    }
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.local_calls;
+        probe.sequence = probe.sequence == 1 ? 2 : 99;
+        probe.last_tick = tick;
+    }
+};
+
+struct StaticGlobalMotionProbe {
+    using phase = AoeGlobalMotionPhase;
+    static constexpr std::string_view name = "test_global_probe";
+    static constexpr bool uses_runtime_planner = false;
+
+    static void install(App&) {}
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.global_calls;
+        probe.sequence = probe.sequence == 2 ? 3 : 99;
+        probe.last_tick = tick;
+    }
+};
+
 nlohmann::json definition_json(int schema = 2) {
     nlohmann::json value = {
         {"schema_version", schema}, {"kind", "aoe_gameplay_unit"}, {"id", "test"},
@@ -127,7 +182,9 @@ AoeMapDefinition squad_stress_map() {
     return result;
 }
 
-template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin>
+template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
+         class GlobalMotionPlugin = AoeDefaultGlobalMotionPlugin,
+         class FormationPlugin = AoeFullFormationPlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -199,29 +256,103 @@ struct Fixture {
         for (int i = 0; i < count; ++i) {
             world.resource<Time>().dt = 0.1f;
             gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-                LocalAvoidancePlugin>(world);
+                FormationPlugin, LocalAvoidancePlugin,
+                GlobalMotionPlugin>(world);
         }
     }
 };
 } // namespace
 
-using FullGameplayDef = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
+using FullGameplayDef = AoeGameplayDef<
+    AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+    AoeDefaultGlobalMotionPlugin>;
 using PassThroughGameplayDef =
-    AoeGameplayDef<AoePassThroughLocalAvoidancePlugin>;
+    AoeGameplayDef<AoeFullFormationPlugin,
+                   AoePassThroughLocalAvoidancePlugin,
+                   AoeDefaultGlobalMotionPlugin>;
+using MotionFloorGameplayDef =
+    AoeGameplayDef<AoePassThroughFormationPlugin,
+                   AoePassThroughLocalAvoidancePlugin,
+                   AoePassThroughGlobalMotionPlugin>;
+using ProbeGameplayDef =
+    AoeGameplayDef<StaticFormationProbe, StaticLocalAvoidanceProbe,
+                   StaticGlobalMotionProbe>;
+static_assert(AoeGameplayStaticPlugin<AoeFullFormationPlugin>);
+static_assert(AoeGameplayStaticPlugin<AoePassThroughFormationPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
+static_assert(AoeGameplayStaticPlugin<AoeDefaultGlobalMotionPlugin>);
+static_assert(AoeGameplayStaticPlugin<AoePassThroughGlobalMotionPlugin>);
+static_assert(std::same_as<
+    AoeGameplayPlugin::FormationPlugin,
+    AoeFullFormationPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::LocalAvoidancePlugin,
     AoeFullLocalAvoidancePlugin>);
 static_assert(std::same_as<
+    AoeGameplayPlugin::GlobalMotionPlugin,
+    AoeDefaultGlobalMotionPlugin>);
+static_assert(std::same_as<
     PassThroughGameplayDef::LocalAvoidancePlugin,
     AoePassThroughLocalAvoidancePlugin>);
+static_assert(std::same_as<
+    MotionFloorGameplayDef::GlobalMotionPlugin,
+    AoePassThroughGlobalMotionPlugin>);
 
 int main() {
+    // Install and schedule a real statically composed gameplay definition.
+    // A phase probe avoids feeding a deliberately partial unit into the
+    // production pipeline while proving that App::tick reaches the selected
+    // static plugin with the authoritative fixed tick.
+    {
+        App app;
+        auto app_fs = std::make_shared<MemoryFileSystem>();
+        FileSystemPlugin(app, app_fs);
+        auto& app_server = app.world.add_resource<AssetServer>();
+        app_server.world = &app.world;
+        app_server.fs = app_fs;
+        app.world.resource_or_add<Time>();
+        app.add_plugin(ProbeGameplayDef{
+            "units", AoeGameplaySettings{0.1, 4, 1234}});
+        const auto& installed_probe =
+            app.world.resource<StaticGameplayPluginProbeState>();
+        assert(installed_probe.formation_calls == 0 &&
+               installed_probe.local_calls == 0 &&
+               installed_probe.global_calls == 0 &&
+               installed_probe.sequence == 0 &&
+               installed_probe.last_tick == 0);
+        auto& app_time = app.world.resource<Time>();
+        app_time.dt = .1f;
+        app_time.raw_dt = 0.f;
+        app.tick();
+        const auto& app_clock = app.world.resource<AoeGameplayClock>();
+        assert(app_clock.tick == 1 && app_clock.ticks_this_frame == 1);
+        const auto& ran_probe =
+            app.world.resource<StaticGameplayPluginProbeState>();
+        assert(ran_probe.formation_calls == 1 &&
+               ran_probe.local_calls == 1 && ran_probe.global_calls == 1 &&
+               ran_probe.sequence == 3 && ran_probe.last_tick == 1);
+        app_server.shutdown();
+        app.shutdown();
+    }
+
     // Global motion backends are late-bound so headless gameplay does not gain
     // an OpenGL dependency. The production default requests GPU, while the
     // fixed pipeline owns the cpu_unit_flow fallback.
     assert(AoeNavigationSettings{}.global_motion_planner_id == "gpu_image");
+    {
+        App app;
+        AoeDefaultGlobalMotionPlugin::install(app);
+        // Reinstalling a statically composed plugin must not replace or
+        // reject its built-in headless fallback.
+        AoeDefaultGlobalMotionPlugin::install(app);
+        const auto& installed_registry =
+            app.world.resource<AoeGlobalMotionPlannerRegistry>();
+        assert(installed_registry.contains("cpu_unit_flow"));
+        assert(app.world.try_resource<AoeGlobalMotionPlannerDiagnostics>());
+        assert(app.world.try_resource<AoeUnitFlowIndex>());
+        app.shutdown();
+    }
     AoeGlobalMotionPlannerRegistry motion_registry;
     int planner_calls = 0;
     motion_registry.bind("test", [&](EcsWorld&, std::uint64_t tick,
@@ -496,7 +627,8 @@ int main() {
     history_fixture.world.resource<AoeGameplayClock>().accumulator = 0.0;
     history_fixture.world.resource<Time>().dt = .3f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-        AoeFullLocalAvoidancePlugin>(
+        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeDefaultGlobalMotionPlugin>(
         history_fixture.world);
     assert(glm::length(history_fixture.world.reg()
                .get<AoePositionHistory>(interpolated_mover).previous -
@@ -504,6 +636,33 @@ int main() {
     assert(glm::length(history_fixture.world.reg()
                .get<AoePosition>(interpolated_mover).value -
            glm::vec2(.8f, 0.f)) < 1e-5f);
+
+    // Runtime fixed time follows raw wall time rather than the render delta
+    // clamped by TimeSettings::max_delta.
+    Fixture raw_time_fixture;
+    auto& raw_time = raw_time_fixture.world.resource<Time>();
+    raw_time.dt = .1f;
+    raw_time.raw_dt = .35f;
+    gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
+        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeDefaultGlobalMotionPlugin>(raw_time_fixture.world);
+    const auto& raw_clock =
+        raw_time_fixture.world.resource<AoeGameplayClock>();
+    assert(raw_clock.tick == 3 && raw_clock.ticks_this_frame == 3);
+    assert(std::abs(raw_clock.accumulator - .05) < 1e-5);
+
+    // Headless callers that set only dt retain deterministic fixed stepping.
+    Fixture dt_fallback_fixture;
+    auto& fallback_time = dt_fallback_fixture.world.resource<Time>();
+    fallback_time.dt = .25f;
+    fallback_time.raw_dt = 0.f;
+    gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
+        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeDefaultGlobalMotionPlugin>(dt_fallback_fixture.world);
+    const auto& fallback_clock =
+        dt_fallback_fixture.world.resource<AoeGameplayClock>();
+    assert(fallback_clock.tick == 2 && fallback_clock.ticks_this_frame == 2);
+    assert(std::abs(fallback_clock.accumulator - .05) < 1e-5);
 
     Fixture acceleration_fixture;
     acceleration_fixture.world.resource<AoeNavigationSettings>()
@@ -697,9 +856,73 @@ int main() {
     assert(!local_bypass_fixture.world.try_resource<
         AoeLocalAvoidanceScratch>());
 
+    // Global pass-through is a distinct static performance-floor pipeline. It
+    // builds only the records required by final static safety, applies the
+    // normal acceleration cap, and performs no conflict coordination.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoePassThroughGlobalMotionPlugin> motion_floor_fixture;
+    motion_floor_fixture.world.add_resource<AoeLogicMap>(flat_map());
+    motion_floor_fixture.world.resource<AoeNavigationSettings>()
+        .steering_max_acceleration = 4.f;
+    const auto motion_floor_unit = motion_floor_fixture.unit(
+        {2.f, 2.f}, 50.f, 1);
+    assert(request_aoe_move(motion_floor_fixture.world,
+                            motion_floor_unit, {10.f, 2.f}));
+    motion_floor_fixture.advance_ticks(1);
+    const auto& motion_floor_intent = motion_floor_fixture.world.reg()
+        .get<AoeMovementIntent>(motion_floor_unit);
+    const auto& motion_floor_decision = motion_floor_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(motion_floor_unit);
+    const auto& motion_floor_index =
+        motion_floor_fixture.world.resource<AoeUnitFlowIndex>();
+    assert(std::abs(glm::length(motion_floor_intent.velocity) - 2.f) < 1e-5f);
+    assert(std::abs(glm::length(motion_floor_decision.velocity) - .4f) < 1e-5f);
+    assert(motion_floor_decision.valid &&
+           motion_floor_decision.produced_tick == 1 &&
+           motion_floor_decision.mode == AoeGlobalMotionMode::Clear &&
+           motion_floor_decision.reason == AoeMotionDecisionReason::None);
+    assert(motion_floor_index.records.size() == 1 &&
+           motion_floor_index.candidates.empty() &&
+           motion_floor_index.selected.empty());
+    assert(!motion_floor_fixture.world.reg().all_of<AoeGlobalMotionState>(
+        motion_floor_unit));
+    const auto& motion_floor_planner = motion_floor_fixture.world.resource<
+        AoeGlobalMotionPlannerDiagnostics>();
+    assert(motion_floor_planner.requested_backend == "none" &&
+           motion_floor_planner.active_backend == "pass_through");
+
+    // Stale intents stay invalid, while a current non-finite intent produces a
+    // safe zero decision rather than leaking NaN into movement fallback.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoePassThroughGlobalMotionPlugin> invalid_motion_fixture;
+    const auto invalid_motion_unit = invalid_motion_fixture.unit(
+        {2.f, 2.f}, 50.f, 1);
+    invalid_motion_fixture.world.reg().emplace<AoeMovementIntent>(
+        invalid_motion_unit,
+        AoeMovementIntent{.velocity = {1.f, 0.f},
+            .produced_tick = 6, .valid = true});
+    AoePassThroughGlobalMotionPlugin::fixed_tick(
+        invalid_motion_fixture.world, 7);
+    const auto* stale_decision = invalid_motion_fixture.world.reg()
+        .try_get<AoeGlobalMotionDecision>(invalid_motion_unit);
+    assert(!stale_decision || !stale_decision->valid);
+    auto& invalid_intent = invalid_motion_fixture.world.reg()
+        .get<AoeMovementIntent>(invalid_motion_unit);
+    invalid_intent.velocity = {
+        std::numeric_limits<float>::quiet_NaN(), 1.f};
+    invalid_intent.produced_tick = 7;
+    AoePassThroughGlobalMotionPlugin::fixed_tick(
+        invalid_motion_fixture.world, 7);
+    const auto& invalid_decision = invalid_motion_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(invalid_motion_unit);
+    assert(invalid_decision.valid && invalid_decision.produced_tick == 7 &&
+           glm::length(invalid_decision.velocity) == 0.f &&
+           invalid_decision.stop_reason == AoeMotionStopReason::Unknown);
+
     // The last safety stage may shorten the displacement, but it cannot
     // rotate the direction selected by global planning.
-    Fixture<AoePassThroughLocalAvoidancePlugin> safety_fixture;
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoePassThroughGlobalMotionPlugin> safety_fixture;
     safety_fixture.world.add_resource<AoeLogicMap>(flat_map());
     auto& safety_navigation =
         safety_fixture.world.resource<AoeNavigationSettings>();

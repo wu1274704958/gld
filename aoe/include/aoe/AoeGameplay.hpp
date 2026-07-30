@@ -615,6 +615,9 @@ struct AoeSquadOrder {
     AoeSquadOrderType type = AoeSquadOrderType::Idle;
     glm::vec2 destination{0.f};
     AoeUnitTarget target{};
+    // Incremented for every accepted squad command, including an identical
+    // destination. Formation backends use it to identify movement episodes.
+    std::uint64_t revision = 0;
 };
 struct AoeSquadState {
     AoeSquadPhase phase = AoeSquadPhase::Forming;
@@ -882,6 +885,7 @@ struct AoeGameplayPerformanceDiagnostics {
     double command_ms = 0.0;
     double membership_cleanup_ms = 0.0;
     double squad_control_ms = 0.0;
+    double formation_ms = 0.0;
     double squad_traffic_ms = 0.0;
     double attack_move_acquisition_ms = 0.0;
     double navigation_ms = 0.0;
@@ -1036,13 +1040,19 @@ namespace detail {
 void install_aoe_gameplay_base(
     App&, const std::string& definitions_root,
     const AoeGameplaySettings& settings);
-void aoe_gameplay_fixed_before_local(EcsWorld&, std::uint64_t tick);
-void aoe_gameplay_fixed_after_local(EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_fixed_before_formation(EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_formation_fixed_tick(
+    EcsWorld&, std::uint64_t tick, bool pass_through);
+void aoe_gameplay_fixed_after_formation_before_local(
+    EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_fixed_after_global(EcsWorld&, std::uint64_t tick);
 }
 
 } // namespace gld::ecs::aoe
 
+#include <aoe/AoeFormation.hpp>
 #include <aoe/AoeLocalAvoidance.hpp>
+#include <aoe/AoeGlobalMotion.hpp>
 
 namespace gld::ecs::aoe {
 
@@ -1078,7 +1088,8 @@ template<class Phase, class... Plugins>
 using gameplay_plugin_for_phase_t =
     typename GameplayPluginForPhase<Phase, Plugins...>::type;
 
-template<class LocalAvoidancePlugin>
+template<class FormationPlugin, class LocalAvoidancePlugin,
+         class GlobalMotionPlugin>
 void aoe_gameplay_fixed_system(EcsWorld& world) {
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto started = std::chrono::steady_clock::now();
@@ -1094,15 +1105,25 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
 #endif
         return;
     }
-    clock.accumulator += std::max(0.f, time->dt);
+    // Runtime gameplay follows wall time even when the render delta is
+    // clamped by TimeSettings::max_delta. Tests and headless callers commonly
+    // drive only Time::dt, so retain that deterministic fallback when raw_dt
+    // has not been populated.
+    const float fixed_source_dt =
+        std::isfinite(time->raw_dt) && time->raw_dt > 0.f
+            ? time->raw_dt : time->dt;
+    clock.accumulator += std::max(0.f, fixed_source_dt);
     clock.ticks_this_frame = 0;
     while (clock.accumulator + 1e-12 >= settings.fixed_dt &&
            clock.ticks_this_frame < settings.max_catchup_ticks) {
         clock.accumulator -= settings.fixed_dt;
         ++clock.tick;
-        aoe_gameplay_fixed_before_local(world, clock.tick);
+        aoe_gameplay_fixed_before_formation(world, clock.tick);
+        FormationPlugin::fixed_tick(world, clock.tick);
+        aoe_gameplay_fixed_after_formation_before_local(world, clock.tick);
         LocalAvoidancePlugin::fixed_tick(world, clock.tick);
-        aoe_gameplay_fixed_after_local(world, clock.tick);
+        GlobalMotionPlugin::fixed_tick(world, clock.tick);
+        aoe_gameplay_fixed_after_global(world, clock.tick);
         ++clock.ticks_this_frame;
     }
     if (clock.accumulator >= settings.fixed_dt) {
@@ -1123,11 +1144,21 @@ struct AoeGameplayDef {
     static_assert(sizeof...(Plugins) > 0,
         "AoeGameplayDef requires at least one static gameplay plugin");
     static_assert(detail::gameplay_phase_count_v<
+                      AoeFormationPhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one formation phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
                       AoeLocalAvoidancePhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one local-avoidance phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
+                      AoeGlobalMotionPhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one global-motion phase plugin");
 
+    using FormationPlugin = detail::gameplay_plugin_for_phase_t<
+        AoeFormationPhase, Plugins...>;
     using LocalAvoidancePlugin = detail::gameplay_plugin_for_phase_t<
         AoeLocalAvoidancePhase, Plugins...>;
+    using GlobalMotionPlugin = detail::gameplay_plugin_for_phase_t<
+        AoeGlobalMotionPhase, Plugins...>;
 
     std::string definitions_root = "aoe_units";
     AoeGameplaySettings settings{};
@@ -1136,11 +1167,15 @@ struct AoeGameplayDef {
         detail::install_aoe_gameplay_base(app, definitions_root, settings);
         (Plugins::install(app), ...);
         app.add_system(Stage::PreUpdate, [](EcsWorld& world) {
-            detail::aoe_gameplay_fixed_system<LocalAvoidancePlugin>(world);
+            detail::aoe_gameplay_fixed_system<
+                FormationPlugin, LocalAvoidancePlugin,
+                GlobalMotionPlugin>(world);
         });
     }
 };
 
-using AoeGameplayPlugin = AoeGameplayDef<AoeFullLocalAvoidancePlugin>;
+using AoeGameplayPlugin = AoeGameplayDef<
+    AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+    AoeDefaultGlobalMotionPlugin>;
 
 } // namespace gld::ecs::aoe

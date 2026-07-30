@@ -141,6 +141,10 @@ if(GLM_FOUND AND GLFW3_FOUND)
     add_library(gld_aoe_gameplay STATIC
         aoe/src/AoeMap.cpp
         aoe/src/AoeGameplay.cpp
+        aoe/src/AoeFormation.cpp
+        aoe/src/AoeFormationFallback.cpp
+        aoe/src/AoeGlobalMotion.cpp
+        aoe/src/AoeGlobalMotionFallback.cpp
         aoe/src/AoeLocalAvoidance.cpp
         aoe/src/AoeLocalAvoidanceFallback.cpp)
     target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
