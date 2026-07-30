@@ -141,6 +141,7 @@ if(GLM_FOUND AND GLFW3_FOUND)
     add_library(gld_aoe_gameplay STATIC
         aoe/src/AoeMap.cpp
         aoe/src/AoeGameplay.cpp
+        aoe/src/AoeCombat.cpp
         aoe/src/AoeFormation.cpp
         aoe/src/AoeFormationFallback.cpp
         aoe/src/AoeGlobalMotion.cpp
