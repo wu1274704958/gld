@@ -23,6 +23,7 @@
 #include <ecs/Components.hpp>
 #include <ecs/Events.hpp>
 #include <ecs/assets/AssetServer.hpp>
+#include <aoe/AoeGameplayComponents.hpp>
 #include <aoe/AoeMap.hpp>
 
 namespace gld::ecs::aoe {
@@ -148,8 +149,6 @@ struct AoeGameplaySpawnError { std::string message; };
 struct AoeUnitDefinitionRef { Handle<AoeUnitDefinition> value; };
 struct AoeHealth { float current = 0.f; float maximum = 0.f; };
 struct AoeLevel { std::uint32_t value = 1; };
-struct AoeCollider { float radius_x = 0.f; float radius_y = 0.f; float height = 0.f; };
-struct AoePosition { glm::vec2 value{0.f}; };
 // Tick-start authoritative position used only to interpolate presentation.
 // Gameplay systems always read AoePosition directly.
 struct AoePositionHistory { glm::vec2 previous{0.f}; };

@@ -138,8 +138,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_include_directories(gld_aoe2 PUBLIC ${CMAKE_SOURCE_DIR}/aoe2/include)
     target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
 
+    add_library(gld_aoe_map STATIC aoe/src/AoeMap.cpp)
+    target_include_directories(gld_aoe_map PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
+    target_link_libraries(gld_aoe_map PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+
     add_library(gld_aoe_gameplay STATIC
-        aoe/src/AoeMap.cpp
         aoe/src/AoeGameplay.cpp
         aoe/src/AoeCombat.cpp
         aoe/src/AoeFormation.cpp
@@ -149,10 +152,16 @@ if(GLM_FOUND AND GLFW3_FOUND)
         aoe/src/AoeLocalAvoidance.cpp
         aoe/src/AoeLocalAvoidanceFallback.cpp)
     target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
-    target_link_libraries(gld_aoe_gameplay PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
+    target_link_libraries(gld_aoe_gameplay PUBLIC gld_aoe_map nlohmann_json::nlohmann_json EnTT::EnTT)
     if(MSVC)
         target_compile_options(gld_aoe_gameplay PRIVATE /bigobj)
     endif()
+
+    add_library(gld_aoe2x_pathfinding STATIC
+        aoe2x/src/Aoe2xPathfinding.cpp)
+    target_include_directories(gld_aoe2x_pathfinding PUBLIC
+        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+    target_link_libraries(gld_aoe2x_pathfinding PUBLIC gld_aoe_map EnTT::EnTT)
 
     # OpenGL 4.3 image-based global motion planner. Keeping this target
     # separate preserves renderer-free/headless gld_aoe_gameplay tests.
@@ -191,6 +200,27 @@ if(GLM_FOUND AND GLFW3_FOUND)
         add_executable(aoe_map_tests aoe/tests/AoeMapTests.cpp)
         target_link_libraries(aoe_map_tests PRIVATE gld_aoe_gameplay)
         add_test(NAME aoe_map_tests COMMAND aoe_map_tests)
+        add_executable(aoe2x_gameplay_system_tests
+            aoe2x/tests/Aoe2xGameplaySystemTests.cpp)
+        target_include_directories(aoe2x_gameplay_system_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+        target_link_libraries(aoe2x_gameplay_system_tests PRIVATE EnTT::EnTT)
+        add_test(NAME aoe2x_gameplay_system_tests
+            COMMAND aoe2x_gameplay_system_tests)
+        add_executable(aoe2x_gameplay_system_profile_tests
+            aoe2x/tests/Aoe2xGameplaySystemTests.cpp)
+        target_compile_definitions(aoe2x_gameplay_system_profile_tests PRIVATE
+            GLD_ENABLE_PERFORMANCE_MONITORING=1)
+        target_include_directories(aoe2x_gameplay_system_profile_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+        target_link_libraries(aoe2x_gameplay_system_profile_tests PRIVATE EnTT::EnTT)
+        add_test(NAME aoe2x_gameplay_system_profile_tests
+            COMMAND aoe2x_gameplay_system_profile_tests)
+        add_executable(aoe2x_pathfinding_tests aoe2x/tests/Aoe2xPathfindingTests.cpp)
+        target_include_directories(aoe2x_pathfinding_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+        target_link_libraries(aoe2x_pathfinding_tests PRIVATE gld_aoe2x_pathfinding)
+        add_test(NAME aoe2x_pathfinding_tests COMMAND aoe2x_pathfinding_tests)
         add_executable(aoe_map_benchmark example/aoe_map_benchmark/main.cpp)
         target_link_libraries(aoe_map_benchmark PRIVATE gld_aoe_gameplay)
         add_executable(aoe2_gameplay_bridge_tests
@@ -279,6 +309,13 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR aoe_gameplay_squad_preview FILES main.cpp)
     target_link_libraries(aoe_gameplay_squad_preview
         gld_aoe2_gameplay_bridge gld_aoe_gpu_motion)
+
+    CreateExample(DIR aoe2x_pathfinding_preview FILES main.cpp)
+    target_include_directories(aoe2x_pathfinding_preview PRIVATE
+        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+    target_compile_definitions(aoe2x_pathfinding_preview PRIVATE
+        GLD_ENABLE_PERFORMANCE_MONITORING=1)
+    target_link_libraries(aoe2x_pathfinding_preview gld_aoe2x_pathfinding)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)
