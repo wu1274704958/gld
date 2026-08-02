@@ -245,6 +245,9 @@ struct AoeLocomotionState {
     int pending_facing_direction = -1;
     std::uint8_t pending_facing_ticks = 0;
 };
+// Persistent continuous world-space facing. Unlike velocity, this remains
+// meaningful while the unit is stationary.
+struct AoeDirection { glm::vec2 value{1.f, 0.f}; };
 struct AoeTeam { std::uint32_t id = 0; };
 struct AoeFacing { int direction = 0; int direction_count = 16; };
 struct AoePresentationOptions { int player_color = 1; std::uint32_t layers = 0x1u; };

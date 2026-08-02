@@ -49,7 +49,8 @@ std::uint32_t cluster_id(const Aoe2xHpaCache::Grid& grid, std::uint32_t cell) {
 
 bool local_path(const Aoe2xHpaCache::Grid& grid, std::uint32_t start,
                 std::uint32_t goal, std::uint32_t allowed_cluster,
-                std::vector<std::uint32_t>* output, std::uint64_t& expanded) {
+                std::vector<std::uint32_t>* output, float* output_cost,
+                std::uint64_t& expanded) {
     if (start >= grid.passable.size() || goal >= grid.passable.size() ||
         !grid.passable[start] || !grid.passable[goal]) return false;
     const std::size_t count = grid.passable.size();
@@ -66,6 +67,7 @@ bool local_path(const Aoe2xHpaCache::Grid& grid, std::uint32_t start,
         if (current.cost > costs[current.cell] + Epsilon) continue;
         ++expanded;
         if (current.cell == goal) {
+            if (output_cost) *output_cost = current.cost;
             if (output) {
                 output->clear();
                 for (auto cursor = goal;; cursor = parents[cursor]) {
@@ -110,15 +112,16 @@ Aoe2xHpaCache::Grid& acquire_grid(EcsWorld& world, const aoe::AoeLogicMap& map,
                                    glm::uvec2 clearance,
                                    const Aoe2xPathfindingSettings& settings) {
     auto& cache = world.resource_or_add<Aoe2xHpaCache>();
-    const auto key = grid_key(clearance, std::max(1u, settings.cluster_size));
+    const auto cluster_size = std::max(1u, settings.cluster_size);
+    const auto key = grid_key(clearance, cluster_size);
     auto& grid = cache.grids[key];
     if (grid.map_revision == map.static_revision() && grid.width == map.width() &&
-        grid.height == map.height() && grid.cluster_size == settings.cluster_size)
+        grid.height == map.height() && grid.cluster_size == cluster_size)
         return grid;
     grid = {};
     grid.map_revision = map.static_revision();
     grid.width = map.width(); grid.height = map.height();
-    grid.cluster_size = std::max(1u, settings.cluster_size);
+    grid.cluster_size = cluster_size;
     grid.clearance_cells = clearance;
     const glm::vec2 baked_clearance = glm::vec2(clearance) * map.tile_size() / 8.f;
     grid.passable.resize(static_cast<std::size_t>(grid.width) * grid.height);
@@ -174,11 +177,10 @@ Aoe2xHpaCache::Grid& acquire_grid(EcsWorld& world, const aoe::AoeLogicMap& map,
         const auto& portals = grid.cluster_portals[cluster];
         for (std::size_t a = 0; a < portals.size(); ++a)
             for (std::size_t b = a + 1; b < portals.size(); ++b) {
-                std::vector<std::uint32_t> path;
+                float cost = 0.f;
                 if (!local_path(grid, grid.portals[portals[a]].cell,
                                 grid.portals[portals[b]].cell, cluster,
-                                &path, ignored)) continue;
-                const float cost = path.empty() ? 0.f : static_cast<float>(path.size() - 1u);
+                                nullptr, &cost, ignored)) continue;
                 add_edge(grid, portals[a], portals[b], cost);
                 add_edge(grid, portals[b], portals[a], cost);
             }
@@ -192,6 +194,15 @@ void append_cells(std::vector<std::uint32_t>& result,
     for (const auto cell : cells)
         if (result.empty() || result.back() != cell) result.push_back(cell);
 }
+
+float route_cost(glm::vec2 start, const std::vector<glm::vec2>& waypoints) {
+    float cost = 0.f;
+    for (const auto waypoint : waypoints) {
+        cost += glm::length(waypoint - start);
+        start = waypoint;
+    }
+    return cost;
+}
 } // namespace
 
 void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
@@ -200,11 +211,29 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
     auto& states = world.resource_or_add<Aoe2xPathfindingState>();
     auto& diagnostics = world.resource_or_add<Aoe2xPathfindingDiagnostics>();
     const auto settings = world.resource_or_add<Aoe2xPathfindingSettings>();
+
+    for (auto it = states.records.begin(); it != states.records.end();) {
+        const auto entity = it->first;
+        if (!reg.valid(entity) ||
+            !reg.all_of<aoe::AoePosition, aoe::AoeCollider,
+                        Aoe2xNavigationDestination>(entity))
+            it = states.records.erase(it);
+        else
+            ++it;
+    }
+
     auto view = reg.view<const aoe::AoePosition, const aoe::AoeCollider,
                          const Aoe2xNavigationDestination>();
     for (const auto entity : view) {
+        const bool had_route = reg.all_of<Aoe2xRoutePlan>(entity);
         auto& route = reg.get_or_emplace<Aoe2xRoutePlan>(entity);
-        if (!map || !map->valid()) { route.waypoints.clear(); continue; }
+        if (!map || !map->valid()) {
+            route.waypoints.clear();
+            route.total_cost.reset();
+            route.status = Aoe2xRouteStatus::Invalid;
+            states.records.erase(entity);
+            continue;
+        }
         const auto& position = view.get<const aoe::AoePosition>(entity).value;
         const auto& collider = view.get<const aoe::AoeCollider>(entity);
         const auto& destination = view.get<const Aoe2xNavigationDestination>(entity).value;
@@ -213,12 +242,19 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
         const auto clearance = clearance_key(*map, collider);
         if (!start_cell || !goal_cell || !map->contains(position) || !map->contains(destination) ||
             map->position_blocked(destination, {collider.radius_x, collider.radius_y})) {
-            route.waypoints.clear(); ++diagnostics.no_paths; continue;
+            route.waypoints.clear();
+            route.total_cost.reset();
+            route.status = Aoe2xRouteStatus::Invalid;
+            states.records.erase(entity);
+            ++diagnostics.no_paths;
+            continue;
         }
         const Aoe2xPathfindingState::Record current{
             {start_cell->x, start_cell->y}, {goal_cell->x, goal_cell->y}, position,
             destination, clearance, map->static_revision()};
-        if (const auto it = states.records.find(entity); it != states.records.end() &&
+        if (const auto it = states.records.find(entity); had_route &&
+            route.status != Aoe2xRouteStatus::Pending &&
+            it != states.records.end() &&
             it->second.start_cell == current.start_cell && it->second.goal_cell == current.goal_cell &&
             it->second.start_position == current.start_position &&
             it->second.goal_position == current.goal_position &&
@@ -227,20 +263,35 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
         states.records[entity] = current;
         ++diagnostics.queries;
         route.waypoints.clear();
+        route.total_cost.reset();
+        route.status = Aoe2xRouteStatus::Pending;
         const glm::vec2 radii{collider.radius_x, collider.radius_y};
         if (settings.direct_path_fast_path &&
             map->static_safe_fraction(position, destination, radii) >= 1.f - Epsilon) {
-            route.waypoints.push_back(destination); ++diagnostics.direct_paths; continue;
+            route.waypoints.push_back(destination);
+            route.total_cost = glm::length(destination - position);
+            route.status = Aoe2xRouteStatus::Ready;
+            ++diagnostics.direct_paths;
+            continue;
         }
         auto& grid = acquire_grid(world, *map, clearance, settings);
         const auto start = cell_index(grid.width, start_cell->x, start_cell->y);
         const auto goal = cell_index(grid.width, goal_cell->x, goal_cell->y);
-        if (!grid.passable[start] || !grid.passable[goal]) { ++diagnostics.no_paths; continue; }
+        if (!grid.passable[start] || !grid.passable[goal]) {
+            route.status = Aoe2xRouteStatus::NoPath;
+            ++diagnostics.no_paths;
+            continue;
+        }
         const auto start_cluster = cluster_id(grid, start), goal_cluster = cluster_id(grid, goal);
         std::vector<std::uint32_t> cells;
         if (start_cluster == goal_cluster) {
             if (!local_path(grid, start, goal, start_cluster, &cells,
-                            diagnostics.local_expanded)) { ++diagnostics.no_paths; continue; }
+                            nullptr,
+                            diagnostics.local_expanded)) {
+                route.status = Aoe2xRouteStatus::NoPath;
+                ++diagnostics.no_paths;
+                continue;
+            }
         } else {
             const auto& starts = grid.cluster_portals[start_cluster];
             const auto& ends = grid.cluster_portals[goal_cluster];
@@ -250,15 +301,20 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
             std::vector<std::vector<std::uint32_t>> start_paths(grid.portals.size()), end_paths(grid.portals.size());
             std::priority_queue<OpenNode, std::vector<OpenNode>, OpenCompare> open;
             for (const auto portal : starts) {
+                float cost = 0.f;
                 if (!local_path(grid, start, grid.portals[portal].cell, start_cluster,
-                                &start_paths[portal], diagnostics.local_expanded)) continue;
-                distances[portal] = static_cast<float>(start_paths[portal].size() - 1u);
+                                &start_paths[portal], &cost,
+                                diagnostics.local_expanded)) continue;
+                distances[portal] = cost;
                 open.push({portal, distances[portal], distances[portal]});
             }
-            for (const auto portal : ends)
+            for (const auto portal : ends) {
+                float cost = 0.f;
                 if (local_path(grid, grid.portals[portal].cell, goal, goal_cluster,
-                               &end_paths[portal], diagnostics.local_expanded))
-                    end_cost[portal] = static_cast<float>(end_paths[portal].size() - 1u);
+                               &end_paths[portal], &cost,
+                               diagnostics.local_expanded))
+                    end_cost[portal] = cost;
+            }
             float best = infinite; std::uint32_t last = std::numeric_limits<std::uint32_t>::max();
             while (!open.empty()) {
                 const auto current_node = open.top(); open.pop();
@@ -276,7 +332,11 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
                     open.push({edge.to, cost, cost});
                 }
             }
-            if (last == std::numeric_limits<std::uint32_t>::max()) { ++diagnostics.no_paths; continue; }
+            if (last == std::numeric_limits<std::uint32_t>::max()) {
+                route.status = Aoe2xRouteStatus::NoPath;
+                ++diagnostics.no_paths;
+                continue;
+            }
             std::vector<std::uint32_t> portals;
             for (auto cursor = last; cursor != std::numeric_limits<std::uint32_t>::max(); cursor = parents[cursor])
                 portals.push_back(cursor);
@@ -287,19 +347,26 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
                 if (grid.portals[a].cluster == grid.portals[b].cluster) {
                     std::vector<std::uint32_t> part;
                     if (!local_path(grid, grid.portals[a].cell, grid.portals[b].cell,
-                                    grid.portals[a].cluster, &part, diagnostics.local_expanded))
+                                    grid.portals[a].cluster, &part, nullptr,
+                                    diagnostics.local_expanded))
                         { cells.clear(); break; }
                     append_cells(cells, part);
                 } else if (cells.empty() || cells.back() != grid.portals[b].cell)
                     cells.push_back(grid.portals[b].cell);
             }
-            if (cells.empty()) { ++diagnostics.no_paths; continue; }
+            if (cells.empty()) {
+                route.status = Aoe2xRouteStatus::NoPath;
+                ++diagnostics.no_paths;
+                continue;
+            }
             append_cells(cells, end_paths[last]);
         }
         for (std::size_t i = 1; i + 1 < cells.size(); ++i)
             route.waypoints.push_back(map->cell_center(cell_coord(grid.width, cells[i]).x,
                                                         cell_coord(grid.width, cells[i]).y));
         route.waypoints.push_back(destination);
+        route.total_cost = route_cost(position, route.waypoints);
+        route.status = Aoe2xRouteStatus::Ready;
     }
 }
 

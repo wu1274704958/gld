@@ -158,7 +158,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     endif()
 
     add_library(gld_aoe2x_pathfinding STATIC
-        aoe2x/src/Aoe2xPathfinding.cpp)
+        aoe2x/src/Aoe2xPathfinding.cpp
+        aoe2x/src/Aoe2xFormation.cpp)
     target_include_directories(gld_aoe2x_pathfinding PUBLIC
         ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
     target_link_libraries(gld_aoe2x_pathfinding PUBLIC gld_aoe_map EnTT::EnTT)
@@ -221,6 +222,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
             ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
         target_link_libraries(aoe2x_pathfinding_tests PRIVATE gld_aoe2x_pathfinding)
         add_test(NAME aoe2x_pathfinding_tests COMMAND aoe2x_pathfinding_tests)
+        add_executable(aoe2x_formation_tests aoe2x/tests/Aoe2xFormationTests.cpp)
+        target_include_directories(aoe2x_formation_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+        target_link_libraries(aoe2x_formation_tests PRIVATE gld_aoe2x_pathfinding)
+        add_test(NAME aoe2x_formation_tests COMMAND aoe2x_formation_tests)
         add_executable(aoe_map_benchmark example/aoe_map_benchmark/main.cpp)
         target_link_libraries(aoe_map_benchmark PRIVATE gld_aoe_gameplay)
         add_executable(aoe2_gameplay_bridge_tests
@@ -316,6 +322,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_compile_definitions(aoe2x_pathfinding_preview PRIVATE
         GLD_ENABLE_PERFORMANCE_MONITORING=1)
     target_link_libraries(aoe2x_pathfinding_preview gld_aoe2x_pathfinding)
+
+    CreateExample(DIR aoe2x_formation_preview FILES main.cpp)
+    target_include_directories(aoe2x_formation_preview PRIVATE
+        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+    target_link_libraries(aoe2x_formation_preview gld_aoe2x_pathfinding)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

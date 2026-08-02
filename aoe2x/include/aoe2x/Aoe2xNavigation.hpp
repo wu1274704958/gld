@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -13,7 +14,14 @@
 namespace gld::ecs::aoe2x {
 
 struct Aoe2xNavigationDestination { glm::vec2 value{0.f}; };
-struct Aoe2xRoutePlan { std::vector<glm::vec2> waypoints; };
+enum class Aoe2xRouteStatus : std::uint8_t {
+    Pending, Ready, NoPath, Invalid
+};
+struct Aoe2xRoutePlan {
+    std::vector<glm::vec2> waypoints;
+    std::optional<float> total_cost;
+    Aoe2xRouteStatus status = Aoe2xRouteStatus::Pending;
+};
 
 struct Aoe2xPathfindingSettings {
     std::uint32_t cluster_size = 16;

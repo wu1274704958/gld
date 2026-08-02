@@ -16,6 +16,7 @@
 #include <ecs/assets/AssetServer.hpp>
 #include <ecs/assets/FileSystem.hpp>
 #include <ecs/render/Gizmo.hpp>
+#include <ecs/render/BatchSystem.hpp>
 #include <ecs/render/RenderComponents.hpp>
 #include <ecs/render/RenderSystem.hpp>
 #include <ecs/systems/TransformSystem.hpp>
@@ -29,7 +30,7 @@ using namespace gld::ecs::aoe2x;
 namespace {
 constexpr std::uint32_t PreviewLayer = 0x1u;
 constexpr std::uint32_t HudLayer = 0x2u;
-constexpr float Scale = 18.f;
+constexpr float Scale = 9.f;
 
 struct PreviewState {
     entt::entity squad{entt::null};
@@ -44,17 +45,39 @@ std::u32string ascii_to_u32(const std::string& value) {
 AoeMapDefinition make_map() {
     AoeMapDefinition map;
     map.id = "aoe2x_hpa_preview";
-    map.origin = glm::vec2(0.f); map.tile_size = 1.f; map.width = 56; map.height = 36;
-    map.heights.resize(57u * 37u, 0.f);
+    map.origin = glm::vec2(0.f); map.tile_size = 1.f; map.width = 112; map.height = 72;
+    map.heights.resize(113u * 73u, 0.f);
     AoeStaticObstacleDesc wall;
     wall.shape = AoeStaticObstacleShape::Aabb;
-    wall.center = {28.f, 18.f}; wall.half_extents = {1.f, 12.f};
+    wall.center = {24.f, 22.f}; wall.half_extents = {.75f, 18.f};
     map.static_obstacles.push_back(wall);
-    wall.center = {13.f, 10.f}; wall.half_extents = {5.f, 1.f};
+    wall.center = {48.f, 50.f};
     map.static_obstacles.push_back(wall);
+    wall.center = {72.f, 22.f};
+    map.static_obstacles.push_back(wall);
+    wall.center = {96.f, 50.f};
+    map.static_obstacles.push_back(wall);
+
+    wall.half_extents = {7.f, .75f};
+    wall.center = {36.f, 52.f};
+    map.static_obstacles.push_back(wall);
+    wall.center = {60.f, 18.f};
+    map.static_obstacles.push_back(wall);
+    wall.center = {84.f, 54.f};
+    map.static_obstacles.push_back(wall);
+
     AoeStaticObstacleDesc circle;
     circle.shape = AoeStaticObstacleShape::Circle;
-    circle.center = {42.f, 10.f}; circle.radius = 3.f;
+    circle.radius = 4.f;
+    circle.center = {14.f, 55.f};
+    map.static_obstacles.push_back(circle);
+    circle.center = {36.f, 18.f};
+    map.static_obstacles.push_back(circle);
+    circle.center = {60.f, 54.f};
+    map.static_obstacles.push_back(circle);
+    circle.center = {84.f, 18.f};
+    map.static_obstacles.push_back(circle);
+    circle.center = {104.f, 12.f};
     map.static_obstacles.push_back(circle);
     return map;
 }
@@ -121,15 +144,34 @@ void draw_gizmos(EcsWorld& world) {
 }
 
 void update_hud(EcsWorld& world) {
-    const auto hud = world.resource<PreviewState>().hud;
+    const auto& state = world.resource<PreviewState>();
+    const auto hud = state.hud;
     if (!world.reg().valid(hud)) return;
     auto* descriptor = world.resource<Aoe2xGameplaySystemRegistry>()
         .find(Aoe2xPathfindingSystem::name);
-    if (!descriptor || !descriptor->timing.average_ms) return;
-    char value[128];
-    std::snprintf(value, sizeof(value), "Pathfinding avg: %.3f ms (%llu samples)",
-                  *descriptor->timing.average_ms,
-                  static_cast<unsigned long long>(descriptor->timing.samples));
+    const auto* route = world.reg().valid(state.squad)
+        ? world.reg().try_get<Aoe2xRoutePlan>(state.squad) : nullptr;
+    const auto waypoint_count = route ? route->waypoints.size() : 0u;
+    char value[192];
+    if (descriptor && descriptor->timing.average_ms) {
+        if (route && route->total_cost)
+            std::snprintf(value, sizeof(value),
+                "Pathfinding avg: %.3f ms (%llu samples) | waypoints: %zu | cost: %.3f",
+                *descriptor->timing.average_ms,
+                static_cast<unsigned long long>(descriptor->timing.samples),
+                waypoint_count, *route->total_cost);
+        else
+            std::snprintf(value, sizeof(value),
+                "Pathfinding avg: %.3f ms (%llu samples) | no path",
+                *descriptor->timing.average_ms,
+                static_cast<unsigned long long>(descriptor->timing.samples));
+    } else if (route && route->total_cost) {
+        std::snprintf(value, sizeof(value),
+            "Pathfinding avg: collecting... | waypoints: %zu | cost: %.3f",
+            waypoint_count, *route->total_cost);
+    } else {
+        std::snprintf(value, sizeof(value), "Pathfinding avg: collecting... | no path");
+    }
     auto& text = world.reg().get<Text>(hud);
     const auto converted = ascii_to_u32(value);
     if (text.text == converted) return;
@@ -148,15 +190,16 @@ int main() {
     app.add_plugin(AssetPlugin); app.add_plugin(CorePlugin); app.add_plugin(InputPlugin);
     app.add_plugin(TransformPlugin); app.add_plugin(GizmoPlugin); app.add_plugin(RenderPlugin);
     app.add_plugin(TextPlugin);
+    TextBatchPlugin(app);
     app.world.add_resource<PreviewState>();
     app.add_system(Stage::Startup, [](EcsWorld& world) {
         world.add_resource<AoeLogicMap>(make_map());
         world.add_resource<Aoe2xPathfindingSettings>(Aoe2xPathfindingSettings{8, true});
         const auto squad = world.spawn();
-        world.reg().emplace<AoePosition>(squad, AoePosition{{5.f, 18.f}});
+        world.reg().emplace<AoePosition>(squad, AoePosition{{5.f, 36.f}});
         world.reg().emplace<AoeCollider>(squad, AoeCollider{.3f, .3f, 1.f});
         world.reg().emplace<Aoe2xNavigationDestination>(squad,
-            Aoe2xNavigationDestination{{50.f, 18.f}});
+            Aoe2xNavigationDestination{{107.f, 36.f}});
         world.resource<PreviewState>().squad = squad;
         register_aoe2x_gameplay_system<Aoe2xPathfindingSystem>(world);
         const auto camera = world.spawn();
