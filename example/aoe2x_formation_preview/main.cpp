@@ -107,7 +107,7 @@ void input_system(EcsWorld& world) {
         keyboard && keyboard->just_now_pressed(GLFW_KEY_ESCAPE))
         world.resource<Window>().should_close = true;
     auto* mouse = world.try_resource<MouseButtons>();
-    if (!mouse || !mouse->just_now_pressed(GLFW_MOUSE_BUTTON_LEFT)) return;
+    if (!mouse || !mouse->just_now_pressed(GLFW_MOUSE_BUTTON_RIGHT)) return;
     if (CaptainRotationTest) return;
     const auto squad = world.resource<PreviewState>().squad;
     if (!world.reg().valid(squad) || !world.reg().all_of<SquadInfo>(squad)) return;
@@ -335,7 +335,7 @@ int main() {
             std::puts("TEMP rotation test: captain rotates slowly; cyan=actual, "
                       "purple=target link. Escape: exit.");
         else
-            std::puts("Left click: replace AttackMove destination. Escape: exit.");
+            std::puts("Right click: replace AttackMove destination. Escape: exit.");
     });
     app.add_system(Stage::PreUpdate, input_system);
     app.add_system(Stage::PreUpdate, simulation_system);

@@ -81,6 +81,9 @@ struct UnitSquadInfo {
     entt::entity followed{entt::null};
     // World-space vector from this unit to the entity it follows.
     glm::vec2 followed_relative_to_self{0.f};
+    // Per-unit maximum-speed ratio used while its facing and desired travel
+    // direction are close. 1.1 permits up to 110% of AoeMovement::speed.
+    float aligned_speed_multiplier = 1.1f;
 };
 
 struct UnitFormationDirection {
@@ -90,12 +93,12 @@ struct UnitFormationDirection {
 enum class UnitFormationMotionPhase : std::uint8_t {
     TurningToSlot,
     MovingToSlot,
-    AligningWithCaptain
+    HoldingSlot
 };
 
 struct UnitFormationMotionState {
     UnitFormationMotionPhase phase =
-        UnitFormationMotionPhase::AligningWithCaptain;
+        UnitFormationMotionPhase::HoldingSlot;
     glm::vec2 locked_move_direction{1.f, 0.f};
 };
 
@@ -117,13 +120,14 @@ struct FormationMotionState {
 struct FormationSettings {
     float waypoint_radius = .08f;
     float arrival_radius = .05f;
-    float slot_exit_radius = .12f;
+    // Slot errors within this distance may be corrected by strafing or
+    // backstepping while the unit keeps its current facing.
+    float slot_free_translation_radius = .08f;
+    // A moving follower may immediately adopt its desired travel direction
+    // when the facing error is no greater than this angle.
     float movement_reorient_radians = .12f;
     float path_lookahead = .75f;
     float follower_response_seconds = .22f;
-    // Followers need some speed reserve to close slot errors while the
-    // captain is already moving at its own maximum speed.
-    float follower_catchup_speed_multiplier = 1.35f;
 };
 
 struct FormationAttackMoveCommand {

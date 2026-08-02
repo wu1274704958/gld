@@ -166,40 +166,36 @@ int main() {
         third_follower).value - third_target) < 1e-5f);
     assert(directed_world.reg().get<UnitFormationMotionState>(
         first_follower).phase ==
-        UnitFormationMotionPhase::AligningWithCaptain);
+        UnitFormationMotionPhase::HoldingSlot);
     assert(directed_world.reg().get<UnitFormationMotionState>(
         second_follower).phase ==
         UnitFormationMotionPhase::TurningToSlot);
 
-    // Both members turn at the configured angular speed. The displaced member
-    // remains stationary until it faces its travel direction.
+    // A captain turn changes slot targets but does not immediately rotate a
+    // follower that is already in its slot. A displaced follower with a large
+    // travel-angle error still uses the explicit turn-in-place phase.
     const float turn_step = .6f / 30.f;
-    const glm::vec2 expected_first_direction{
+    const glm::vec2 expected_second_direction{
         -std::sin(turn_step), std::cos(turn_step)};
     assert(glm::length(directed_world.reg().get<AoeDirection>(
-        first_follower).value - expected_first_direction) < 1e-5f);
+        first_follower).value - glm::vec2(0.f, 1.f)) < 1e-5f);
+    assert(glm::length(directed_world.reg().get<AoeLocomotionState>(
+        first_follower).velocity) < 1e-5f);
     const auto second_velocity = directed_world.reg().get<AoeLocomotionState>(
         second_follower).velocity;
     const auto second_direction =
         directed_world.reg().get<AoeDirection>(second_follower).value;
     assert(glm::length(second_velocity) < 1e-5f);
-    assert(glm::length(second_direction - expected_first_direction) < 1e-5f);
+    assert(glm::length(second_direction - expected_second_direction) < 1e-5f);
     assert(glm::length(directed_world.reg().get<AoePosition>(
         second_follower).value - displaced_second_position) < 1e-5f);
-    float previous_alignment_error = std::acos(std::clamp(
-        glm::dot(directed_world.reg().get<AoeDirection>(
-            first_follower).value, directed_captain_direction), -1.f, 1.f));
     for (std::uint64_t tick = 2; tick <= 85; ++tick) {
         FormationSystem::run(directed_world, tick);
-        const float alignment_error = std::acos(std::clamp(
-            glm::dot(directed_world.reg().get<AoeDirection>(
-                first_follower).value, directed_captain_direction),
-            -1.f, 1.f));
-        assert(alignment_error <= previous_alignment_error + 1e-5f);
+        assert(glm::length(directed_world.reg().get<AoeDirection>(
+            first_follower).value - glm::vec2(0.f, 1.f)) < 1e-5f);
         assert(directed_world.reg().get<UnitFormationMotionState>(
             first_follower).phase ==
-            UnitFormationMotionPhase::AligningWithCaptain);
-        previous_alignment_error = alignment_error;
+            UnitFormationMotionPhase::HoldingSlot);
     }
     const auto moving_direction =
         directed_world.reg().get<AoeDirection>(second_follower).value;
@@ -210,22 +206,116 @@ int main() {
     assert(glm::length(moving_velocity / glm::length(moving_velocity) -
         moving_direction) < 1e-5f);
 
-    // Slot alignment uses hysteresis: crossing the arrival radius alone does
-    // not restart chasing, but crossing the wider exit radius does.
+    // Small slot errors may translate freely without changing a substantially
+    // different facing. Outside the configured radius turn-first resumes.
     auto& third_motion_state =
         directed_world.reg().get<UnitFormationMotionState>(third_follower);
-    third_motion_state.phase =
-        UnitFormationMotionPhase::AligningWithCaptain;
+    third_motion_state.phase = UnitFormationMotionPhase::TurningToSlot;
     directed_world.reg().get<AoePosition>(third_follower).value =
         third_target + glm::vec2(.08f, 0.f);
+    directed_world.reg().get<AoeDirection>(third_follower).value = {0.f, 1.f};
+    directed_world.reg().get<AoeLocomotionState>(third_follower).velocity =
+        {0.f, 0.f};
     FormationSystem::run(directed_world, 86);
     assert(third_motion_state.phase ==
-        UnitFormationMotionPhase::AligningWithCaptain);
+        UnitFormationMotionPhase::HoldingSlot);
+    assert(glm::length(directed_world.reg().get<AoeDirection>(
+        third_follower).value - glm::vec2(0.f, 1.f)) < 1e-5f);
+    assert(directed_world.reg().get<AoeLocomotionState>(
+        third_follower).velocity.x < 0.f);
     directed_world.reg().get<AoePosition>(third_follower).value =
         third_target + glm::vec2(.13f, 0.f);
     FormationSystem::run(directed_world, 87);
     assert(third_motion_state.phase ==
         UnitFormationMotionPhase::TurningToSlot);
+
+    // A small travel-angle correction redirects immediately and may use this
+    // unit's own aligned speed multiplier (1.1 means 110% maximum speed).
+    auto& first_motion_state =
+        directed_world.reg().get<UnitFormationMotionState>(first_follower);
+    first_motion_state.phase = UnitFormationMotionPhase::TurningToSlot;
+    const glm::vec2 small_turn_direction{
+        -std::cos(.05f), -std::sin(.05f)};
+    directed_world.reg().get<AoePosition>(first_follower).value =
+        first_target - small_turn_direction * 2.f;
+    directed_world.reg().get<AoeLocomotionState>(first_follower).velocity =
+        {0.f, 0.f};
+    directed_world.reg().get<AoeDirection>(first_follower).value =
+        directed_captain_direction;
+    FormationSystem::run(directed_world, 88);
+    const auto redirected_direction =
+        directed_world.reg().get<AoeDirection>(first_follower).value;
+    const auto boosted_velocity =
+        directed_world.reg().get<AoeLocomotionState>(first_follower).velocity;
+    const float first_base_speed =
+        directed_world.reg().get<AoeMovement>(first_follower).speed;
+    assert(std::abs(first_member.aligned_speed_multiplier - 1.1f) < 1e-6f);
+    assert(first_motion_state.phase ==
+        UnitFormationMotionPhase::MovingToSlot);
+    assert(glm::length(redirected_direction - small_turn_direction) < 1e-5f);
+    assert(std::abs(glm::length(boosted_velocity) -
+        first_base_speed * first_member.aligned_speed_multiplier) < 1e-5f);
+    assert(std::abs(directed_world.reg().get<AoeLocomotionState>(
+        first_follower).effective_max_speed -
+        first_base_speed * first_member.aligned_speed_multiplier) < 1e-5f);
+
+    // A larger travel-angle error still consumes the normal turn budget and
+    // does not receive the aligned speed reserve.
+    const glm::vec2 large_turn_direction{
+        -std::cos(.13f), -std::sin(.13f)};
+    first_motion_state.phase = UnitFormationMotionPhase::MovingToSlot;
+    directed_world.reg().get<AoePosition>(first_follower).value =
+        first_target - large_turn_direction * 2.f;
+    directed_world.reg().get<AoeLocomotionState>(first_follower).velocity =
+        {0.f, 0.f};
+    directed_world.reg().get<AoeDirection>(first_follower).value =
+        directed_captain_direction;
+    FormationSystem::run(directed_world, 89);
+    assert(first_motion_state.phase ==
+        UnitFormationMotionPhase::TurningToSlot);
+    assert(glm::length(directed_world.reg().get<AoeLocomotionState>(
+        first_follower).velocity) < 1e-6f);
+    assert(std::abs(directed_world.reg().get<AoeLocomotionState>(
+        first_follower).effective_max_speed - first_base_speed) < 1e-5f);
+
+    // Inside the configurable free-translation radius, a correction behind
+    // the unit may move backward without first making an unnecessary U-turn.
+    auto& directed_formation_settings =
+        directed_world.resource_or_add<FormationSettings>();
+    directed_formation_settings.slot_free_translation_radius = .08f;
+    first_motion_state.phase = UnitFormationMotionPhase::TurningToSlot;
+    first_motion_state.locked_move_direction = {1.f, 0.f};
+    directed_world.reg().get<AoePosition>(first_follower).value =
+        first_target - glm::vec2(.06f, 0.f);
+    directed_world.reg().get<AoeLocomotionState>(first_follower).velocity =
+        {0.f, 0.f};
+    directed_world.reg().get<AoeDirection>(first_follower).value =
+        directed_captain_direction;
+    FormationSystem::run(directed_world, 90);
+    const auto backward_velocity =
+        directed_world.reg().get<AoeLocomotionState>(first_follower).velocity;
+    assert(first_motion_state.phase ==
+        UnitFormationMotionPhase::HoldingSlot);
+    assert(glm::length(directed_world.reg().get<AoeDirection>(
+        first_follower).value - directed_captain_direction) < 1e-6f);
+    assert(glm::dot(backward_velocity, directed_captain_direction) < 0.f);
+
+    // Reducing the radius makes the same-sized correction use normal
+    // turn-first movement again, proving that the exception is configurable.
+    directed_formation_settings.slot_free_translation_radius = .03f;
+    first_motion_state.phase = UnitFormationMotionPhase::TurningToSlot;
+    first_motion_state.locked_move_direction = {1.f, 0.f};
+    directed_world.reg().get<AoePosition>(first_follower).value =
+        first_target - glm::vec2(.04f, 0.f);
+    directed_world.reg().get<AoeLocomotionState>(first_follower).velocity =
+        {0.f, 0.f};
+    directed_world.reg().get<AoeDirection>(first_follower).value =
+        directed_captain_direction;
+    FormationSystem::run(directed_world, 91);
+    assert(first_motion_state.phase ==
+        UnitFormationMotionPhase::TurningToSlot);
+    assert(glm::length(directed_world.reg().get<AoeLocomotionState>(
+        first_follower).velocity) < 1e-6f);
 
     EcsWorld world;
     install(world);
@@ -255,6 +345,7 @@ int main() {
         const auto& member = world.reg().get<UnitSquadInfo>(unit);
         assert(member.squad == squad);
         assert(member.followed == (i ? squad_info.units[i - 1u] : entt::null));
+        assert(std::abs(member.aligned_speed_multiplier - 1.1f) < 1e-6f);
     }
 
     const glm::vec2 first_destination{22.f, 15.f};
@@ -309,8 +400,8 @@ int main() {
         const auto& unit_direction =
             world.reg().get<AoeDirection>(unit).value;
         assert(std::abs(glm::length(unit_direction) - 1.f) < 1e-4f);
-        assert(glm::length(actual - expected) < .08f);
-        assert(glm::dot(unit_direction, captain_direction) > .999f);
+        const float link_error = glm::length(actual - expected);
+        assert(link_error < .08f);
     }
 
     const auto removed = squad_info.units[5];

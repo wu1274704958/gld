@@ -137,14 +137,14 @@ entt::entity spawn_formation_unit(EcsWorld& world,
         unit, UnitFormationDirection{forward});
     reg.emplace<UnitFormationMotionState>(unit,
         UnitFormationMotionState{
-            UnitFormationMotionPhase::AligningWithCaptain, forward});
+            UnitFormationMotionPhase::HoldingSlot, forward});
     return unit;
 }
 
 void connect_follow_chain(
     entt::registry& reg, entt::entity squad, const SquadInfo& info) {
     // The vector is captured once in spawn orientation. Runtime following
-    // rotates this immutable vector by the predecessor's direction change.
+    // rotates this immutable vector by the captain's direction change.
     for (std::size_t i = 0; i < info.units.size(); ++i) {
         const auto unit = info.units[i];
         const auto followed = i ? info.units[i - 1u] : entt::null;
@@ -251,22 +251,24 @@ bool direction_aligned(glm::vec2 current, glm::vec2 target) {
     return glm::dot(current, target) >= 1.f - Epsilon;
 }
 
+bool direction_within(
+    glm::vec2 current, glm::vec2 target, float maximum_angle) {
+    return std::abs(signed_angle(current, target)) <=
+        std::max(0.f, maximum_angle);
+}
+
 TurnFirstMotion turn_in_place(glm::vec2 current_direction,
     glm::vec2 desired_direction, const MotionParameters& parameters) {
     return {{0.f, 0.f}, rotate_towards(current_direction,
         desired_direction, parameters.turn_speed * parameters.dt)};
 }
 
-TurnFirstMotion move_forward(glm::vec2 current_direction,
+TurnFirstMotion move_along_direction(glm::vec2 direction,
     glm::vec2 current_velocity, glm::vec2 desired_velocity,
     const MotionParameters& parameters) {
     const float desired_speed = glm::length(desired_velocity);
     const float movement_speed = desired_speed > parameters.direction_speed
         ? desired_speed : 0.f;
-    const glm::vec2 travel_direction = direction_or(
-        desired_velocity, current_direction, parameters.direction_speed);
-    const glm::vec2 direction = rotate_towards(current_direction,
-        travel_direction, parameters.turn_speed * parameters.dt);
 
     // Acceleration changes only the forward scalar speed. Locomotion can
     // therefore never acquire a sideways or backward component.
@@ -277,6 +279,17 @@ TurnFirstMotion move_forward(glm::vec2 current_direction,
         movement_speed - current_forward_speed, -maximum_delta, maximum_delta);
     return {direction * std::max(0.f, current_forward_speed + speed_delta),
             direction};
+}
+
+TurnFirstMotion move_forward(glm::vec2 current_direction,
+    glm::vec2 current_velocity, glm::vec2 desired_velocity,
+    const MotionParameters& parameters) {
+    const glm::vec2 travel_direction = direction_or(
+        desired_velocity, current_direction, parameters.direction_speed);
+    const glm::vec2 direction = rotate_towards(current_direction,
+        travel_direction, parameters.turn_speed * parameters.dt);
+    return move_along_direction(
+        direction, current_velocity, desired_velocity, parameters);
 }
 
 TurnFirstMotion plan_turn_move_state(UnitFormationMotionState& state,
@@ -447,11 +460,65 @@ PlannedMotion plan_captain_motion(entt::registry& reg, entt::entity captain,
             locomotion.velocity, desired_velocity, parameters);
     } else {
         movement_state.phase =
-            UnitFormationMotionPhase::AligningWithCaptain;
+            UnitFormationMotionPhase::HoldingSlot;
         movement_state.locked_move_direction = stored_direction;
     }
     return {captain, motion.velocity, target, motion.direction,
         reg.get<aoe::AoeMovement>(captain).speed, true};
+}
+
+struct FollowerMotionPlan {
+    TurnFirstMotion motion;
+    float speed_limit = 0.f;
+};
+
+float aligned_speed_multiplier(float value) {
+    return std::isfinite(value) ? std::max(1.f, value) : 1.f;
+}
+
+FollowerMotionPlan plan_follower_motion(UnitFormationMotionState& state,
+    glm::vec2 stored_direction, glm::vec2 current_velocity,
+    glm::vec2 desired_velocity, float slot_distance, float base_speed,
+    float speed_multiplier, const MotionParameters& parameters) {
+    const float desired_speed = glm::length(desired_velocity);
+    const bool has_travel_direction =
+        desired_speed > parameters.direction_speed;
+    const glm::vec2 travel_direction = direction_or(
+        desired_velocity, stored_direction, parameters.direction_speed);
+    const bool can_redirect_while_moving = has_travel_direction &&
+        direction_within(stored_direction, travel_direction,
+            parameters.settings.movement_reorient_radians);
+    const float speed_limit = base_speed * (can_redirect_while_moving
+        ? aligned_speed_multiplier(speed_multiplier) : 1.f);
+    const glm::vec2 velocity = clamp_length(desired_velocity, speed_limit);
+
+    if (slot_distance <= std::max(
+            0.f, parameters.settings.slot_free_translation_radius)) {
+        // A small positional error may be corrected laterally or backward.
+        // Facing changes only when the desired movement is already nearby.
+        state.phase = UnitFormationMotionPhase::HoldingSlot;
+        state.locked_move_direction = stored_direction;
+        return {{velocity, can_redirect_while_moving
+            ? travel_direction : stored_direction}, speed_limit};
+    }
+
+    if (!has_travel_direction) {
+        state.phase = UnitFormationMotionPhase::HoldingSlot;
+        state.locked_move_direction = stored_direction;
+        return {{{0.f, 0.f}, stored_direction}, base_speed};
+    }
+
+    if (can_redirect_while_moving) {
+        // Small corrections do not need a separate turn-in-place phase.
+        state.phase = UnitFormationMotionPhase::MovingToSlot;
+        state.locked_move_direction = travel_direction;
+        return {{velocity, travel_direction}, speed_limit};
+    }
+
+    // Large facing changes retain the explicit turn-first behavior and do
+    // not receive the aligned speed reserve.
+    return {plan_turn_move_state(state, stored_direction, current_velocity,
+        clamp_length(desired_velocity, base_speed), parameters), base_speed};
 }
 
 bool append_follower_motions(entt::registry& reg, const SquadInfo& info,
@@ -490,12 +557,8 @@ bool append_follower_motions(entt::registry& reg, const SquadInfo& info,
         const glm::vec2 captain_relative = target - captain_position;
         const glm::vec2 rotational_velocity = angular_velocity *
             glm::vec2{-captain_relative.y, captain_relative.x};
-        glm::vec2 desired = captain_velocity + rotational_velocity +
+        const glm::vec2 desired = captain_velocity + rotational_velocity +
             (target - position) / parameters.follower_response;
-        const float maximum_speed = reg.get<aoe::AoeMovement>(unit).speed *
-            std::max(1.f,
-                parameters.settings.follower_catchup_speed_multiplier);
-        desired = clamp_length(desired, maximum_speed);
         const glm::vec2 stored_direction =
             reg.get<aoe::AoeDirection>(unit).value;
         const auto& locomotion =
@@ -503,55 +566,13 @@ bool append_follower_motions(entt::registry& reg, const SquadInfo& info,
         auto& movement_state =
             reg.get<UnitFormationMotionState>(unit);
         const float slot_distance = glm::length(target - position);
-        const float slot_exit_radius = std::max(
-            parameters.settings.arrival_radius,
-            parameters.settings.slot_exit_radius);
-        TurnFirstMotion motion{{0.f, 0.f}, stored_direction};
-
-        if (movement_state.phase ==
-            UnitFormationMotionPhase::AligningWithCaptain) {
-            if (slot_distance > slot_exit_radius) {
-                movement_state.phase =
-                    UnitFormationMotionPhase::TurningToSlot;
-                const glm::vec2 slot_direction = direction_or(
-                    target - position, stored_direction, Epsilon);
-                movement_state.locked_move_direction = direction_or(
-                    desired, slot_direction, parameters.direction_speed);
-                motion = turn_in_place(stored_direction,
-                    movement_state.locked_move_direction, parameters);
-            } else {
-                // Slot alignment is latched until the wider exit radius is
-                // crossed. Begin from the unit's current persistent facing.
-                motion = turn_in_place(
-                    stored_direction, expected_direction, parameters);
-                const glm::vec2 travel_direction = direction_or(
-                    desired, motion.direction, parameters.direction_speed);
-                const bool transport_is_forward =
-                    glm::length(desired) <= parameters.direction_speed ||
-                    std::abs(signed_angle(
-                        motion.direction, travel_direction)) <=
-                        std::max(0.f,
-                            parameters.settings.movement_reorient_radians);
-                if (direction_aligned(
-                        motion.direction, expected_direction) &&
-                    transport_is_forward)
-                    motion = move_forward(motion.direction,
-                        locomotion.velocity, desired, parameters);
-            }
-        } else if (slot_distance <=
-            parameters.settings.arrival_radius) {
-            movement_state.phase =
-                UnitFormationMotionPhase::AligningWithCaptain;
-            movement_state.locked_move_direction = expected_direction;
-            motion = turn_in_place(
-                stored_direction, expected_direction, parameters);
-        } else {
-            motion = plan_turn_move_state(movement_state,
-                stored_direction, locomotion.velocity, desired, parameters);
-        }
+        const float base_speed = reg.get<aoe::AoeMovement>(unit).speed;
+        const auto plan = plan_follower_motion(movement_state,
+            stored_direction, locomotion.velocity, desired, slot_distance,
+            base_speed, member.aligned_speed_multiplier, parameters);
         motions.push_back(
-            {unit, motion.velocity, target, motion.direction,
-                maximum_speed, false});
+            {unit, plan.motion.velocity, target, plan.motion.direction,
+                plan.speed_limit, false});
     }
     return true;
 }
