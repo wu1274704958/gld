@@ -26,6 +26,10 @@ struct Aoe2xRoutePlan {
 struct Aoe2xPathfindingSettings {
     std::uint32_t cluster_size = 16;
     bool direct_path_fast_path = true;
+    // Collapse the raw grid cell-center waypoints with a line-of-sight
+    // string-pull so straight stretches become single segments instead of an
+    // 8-connected staircase that makes followers turn at every cell corner.
+    bool smooth_route_line_of_sight = true;
 };
 
 struct Aoe2xPathfindingDiagnostics {
@@ -35,6 +39,8 @@ struct Aoe2xPathfindingDiagnostics {
     std::uint64_t high_level_expanded = 0;
     std::uint64_t local_expanded = 0;
     std::uint64_t no_paths = 0;
+    std::uint64_t waypoints_before_smoothing = 0;
+    std::uint64_t waypoints_after_smoothing = 0;
 };
 
 struct Aoe2xHpaCache {

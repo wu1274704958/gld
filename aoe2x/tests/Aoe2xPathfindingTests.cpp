@@ -102,6 +102,21 @@ int main() {
     const auto& map = world.resource<AoeLogicMap>();
     assert_safe_route(map, {4.f, 16.f}, detour_route, {44.f, 16.f});
     assert(detour_route.total_cost && *detour_route.total_cost > 40.f);
+
+    // Line-of-sight smoothing must collapse the 8-connected staircase into a
+    // handful of straight segments while staying collision-free.
+    {
+        EcsWorld raw_world;
+        raw_world.add_resource<AoeLogicMap>(make_map());
+        raw_world.add_resource<Aoe2xPathfindingSettings>(
+            Aoe2xPathfindingSettings{8, true, false});
+        const auto raw_detour = request(raw_world, {4.f, 16.f}, {44.f, 16.f});
+        Aoe2xPathfindingSystem::run(raw_world, 1);
+        const auto& raw_route =
+            raw_world.reg().get<Aoe2xRoutePlan>(raw_detour);
+        assert(detour_route.waypoints.size() <= 6u);
+        assert(detour_route.waypoints.size() < raw_route.waypoints.size());
+    }
     const auto queries = world.resource<Aoe2xPathfindingDiagnostics>().queries;
     Aoe2xPathfindingSystem::run(world, 2);
     assert(world.resource<Aoe2xPathfindingDiagnostics>().queries == queries);

@@ -361,10 +361,33 @@ void Aoe2xPathfindingSystem::run(EcsWorld& world, std::uint64_t) {
             }
             append_cells(cells, end_paths[last]);
         }
+        std::vector<glm::vec2> raw;
+        raw.reserve(cells.size());
         for (std::size_t i = 1; i + 1 < cells.size(); ++i)
-            route.waypoints.push_back(map->cell_center(cell_coord(grid.width, cells[i]).x,
-                                                        cell_coord(grid.width, cells[i]).y));
-        route.waypoints.push_back(destination);
+            raw.push_back(map->cell_center(cell_coord(grid.width, cells[i]).x,
+                                           cell_coord(grid.width, cells[i]).y));
+        raw.push_back(destination);
+        diagnostics.waypoints_before_smoothing += raw.size();
+        if (settings.smooth_route_line_of_sight) {
+            // Greedy string-pull: from the current anchor keep the farthest
+            // waypoint still reachable by a clear straight line, dropping the
+            // interior staircase points in between.
+            glm::vec2 anchor = position;
+            std::size_t cursor = 0;
+            while (cursor < raw.size()) {
+                std::size_t farthest = cursor;
+                for (std::size_t i = cursor; i < raw.size(); ++i)
+                    if (map->static_safe_fraction(anchor, raw[i], radii) >=
+                        1.f - Epsilon)
+                        farthest = i;
+                route.waypoints.push_back(raw[farthest]);
+                anchor = raw[farthest];
+                cursor = farthest + 1u;
+            }
+        } else {
+            route.waypoints = std::move(raw);
+        }
+        diagnostics.waypoints_after_smoothing += route.waypoints.size();
         route.total_cost = route_cost(position, route.waypoints);
         route.status = Aoe2xRouteStatus::Ready;
     }
