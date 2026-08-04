@@ -326,6 +326,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR aoe2x_formation_preview FILES main.cpp)
     target_include_directories(aoe2x_formation_preview PRIVATE
         ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
+    target_compile_definitions(aoe2x_formation_preview PRIVATE
+        GLD_ENABLE_PERFORMANCE_MONITORING=1)
     target_link_libraries(aoe2x_formation_preview gld_aoe2x_pathfinding)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 

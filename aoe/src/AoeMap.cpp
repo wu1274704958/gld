@@ -104,11 +104,18 @@ float ellipse_segment_enter(glm::vec2 from, glm::vec2 to,
     // A unit resting on an obstacle must still be able to move tangentially
     // or away from it; only motion further into the expanded ellipse blocks.
     if (c <= 0.f) return b >= -Epsilon ? 1.f : 0.f;
-    if (a <= Epsilon) return 1.f;
+    // `a` is the squared step length in ellipse space, so an absolute epsilon
+    // on it silently ignores every step shorter than roughly radius/300 and
+    // lets units walk straight through large obstacles. Both roots share the
+    // sign of -b here (c > 0, a >= 0), so a non-negative b means the segment
+    // never turns inward and only b < 0 can produce an entry.
+    if (b >= 0.f) return 1.f;
     const float discriminant = b * b - 4.f * a * c;
     if (discriminant < 0.f) return 1.f;
     const float root = std::sqrt(std::max(0.f, discriminant));
-    const float enter = (-b - root) / (2.f * a);
+    // Solving the smaller root as (-b - root) / 2a cancels catastrophically
+    // once the step is short relative to the obstacle; this form does not.
+    const float enter = 2.f * c / (root - b);
     return enter >= 0.f && enter <= 1.f ? enter : 1.f;
 }
 

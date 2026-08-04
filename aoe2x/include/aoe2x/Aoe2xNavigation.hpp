@@ -30,6 +30,13 @@ struct Aoe2xPathfindingSettings {
     // string-pull so straight stretches become single segments instead of an
     // 8-connected staircase that makes followers turn at every cell corner.
     bool smooth_route_line_of_sight = true;
+    // Extra clearance added on top of the unit collider while shaping the
+    // route, so waypoints keep their distance from obstacles instead of
+    // hugging them and leaving the mover grazing a wall for the whole leg.
+    // Only affects route shaping: goal validity and collision still use the
+    // bare collider, and a route that needs the tight clearance to exist
+    // falls back to it automatically.
+    float obstacle_gap = .25f;
 };
 
 struct Aoe2xPathfindingDiagnostics {

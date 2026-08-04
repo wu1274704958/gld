@@ -100,6 +100,10 @@ struct UnitFormationMotionState {
     UnitFormationMotionPhase phase =
         UnitFormationMotionPhase::HoldingSlot;
     glm::vec2 locked_move_direction{1.f, 0.f};
+    // Forward speed the motion planner asked for last tick. Static collision
+    // clamps the realised velocity, so the acceleration integrator must not
+    // read it back or a captain touching a wall restarts from zero every tick.
+    float commanded_speed = 0.f;
 };
 
 struct SquadCaptainInfo { entt::entity squad{entt::null}; };

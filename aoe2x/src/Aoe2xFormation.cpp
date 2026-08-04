@@ -8,6 +8,9 @@
 namespace gld::ecs::aoe2x {
 namespace {
 constexpr float Epsilon = 1e-5f;
+// Waypoints scanned ahead of the cursor when string-pulling at runtime. The
+// cost is one map query each per captain per tick, so the window stays small.
+constexpr std::size_t kRouteSkipLookahead = 8;
 
 bool finite(glm::vec2 value) {
     return std::isfinite(value.x) && std::isfinite(value.y);
@@ -264,7 +267,7 @@ TurnFirstMotion turn_in_place(glm::vec2 current_direction,
 }
 
 TurnFirstMotion move_along_direction(glm::vec2 direction,
-    glm::vec2 current_velocity, glm::vec2 desired_velocity,
+    float current_forward_speed, glm::vec2 desired_velocity,
     const MotionParameters& parameters) {
     const float desired_speed = glm::length(desired_velocity);
     const float movement_speed = desired_speed > parameters.direction_speed
@@ -272,8 +275,6 @@ TurnFirstMotion move_along_direction(glm::vec2 direction,
 
     // Acceleration changes only the forward scalar speed. Locomotion can
     // therefore never acquire a sideways or backward component.
-    const float current_forward_speed =
-        std::max(0.f, glm::dot(current_velocity, direction));
     const float maximum_delta = parameters.acceleration * parameters.dt;
     const float speed_delta = std::clamp(
         movement_speed - current_forward_speed, -maximum_delta, maximum_delta);
@@ -282,19 +283,19 @@ TurnFirstMotion move_along_direction(glm::vec2 direction,
 }
 
 TurnFirstMotion move_forward(glm::vec2 current_direction,
-    glm::vec2 current_velocity, glm::vec2 desired_velocity,
+    float current_forward_speed, glm::vec2 desired_velocity,
     const MotionParameters& parameters) {
     const glm::vec2 travel_direction = direction_or(
         desired_velocity, current_direction, parameters.direction_speed);
     const glm::vec2 direction = rotate_towards(current_direction,
         travel_direction, parameters.turn_speed * parameters.dt);
     return move_along_direction(
-        direction, current_velocity, desired_velocity, parameters);
+        direction, current_forward_speed, desired_velocity, parameters);
 }
 
 TurnFirstMotion plan_turn_move_state(UnitFormationMotionState& state,
-    glm::vec2 current_direction, glm::vec2 current_velocity,
-    glm::vec2 desired_velocity, const MotionParameters& parameters) {
+    glm::vec2 current_direction, glm::vec2 desired_velocity,
+    const MotionParameters& parameters) {
     const glm::vec2 travel_direction = direction_or(
         desired_velocity, current_direction, parameters.direction_speed);
 
@@ -310,6 +311,7 @@ TurnFirstMotion plan_turn_move_state(UnitFormationMotionState& state,
         if (direction_aligned(
                 motion.direction, state.locked_move_direction))
             state.phase = UnitFormationMotionPhase::MovingToSlot;
+        state.commanded_speed = 0.f;
         return motion;
     }
 
@@ -319,11 +321,18 @@ TurnFirstMotion plan_turn_move_state(UnitFormationMotionState& state,
         reorient_angle) {
         state.phase = UnitFormationMotionPhase::TurningToSlot;
         state.locked_move_direction = travel_direction;
+        state.commanded_speed = 0.f;
         return turn_in_place(
             current_direction, state.locked_move_direction, parameters);
     }
-    return move_forward(current_direction, current_velocity,
+    // The acceleration base is the previously commanded speed rather than the
+    // measured one. Static collision clamps the realised velocity, and reading
+    // that back would restart acceleration from zero on every tick a captain
+    // grazes a wall, leaving it crawling along the obstacle.
+    const auto motion = move_forward(current_direction, state.commanded_speed,
         desired_velocity, parameters);
+    state.commanded_speed = glm::length(motion.velocity);
+    return motion;
 }
 
 bool formation_members_valid(
@@ -348,7 +357,8 @@ void finish_attack_move(entt::registry& reg, entt::entity captain,
 
 void advance_route_cursor(FormationMotionState& motion,
     const Aoe2xRoutePlan& route, glm::vec2 position,
-    const FormationSettings& settings) {
+    const FormationSettings& settings, const aoe::AoeLogicMap* map,
+    glm::vec2 radii) {
     // A waypoint is consumed either when reached or when movement has already
     // crossed its segment plane. This avoids steering back to stale points.
     while (motion.waypoint_index < route.waypoints.size()) {
@@ -363,6 +373,20 @@ void advance_route_cursor(FormationMotionState& motion,
         if (!reached && !passed) break;
         ++motion.waypoint_index;
     }
+
+    // Drifting sideways off a segment keeps `passed` false even once the unit
+    // is level with the waypoint, so it circles a point it can never consume.
+    // Skipping to the farthest waypoint still in clear line of sight breaks
+    // that cycle and string-pulls the remaining route at the same time.
+    if (!map || !map->valid()) return;
+    const std::size_t limit = std::min(route.waypoints.size(),
+        motion.waypoint_index + kRouteSkipLookahead);
+    std::size_t farthest = motion.waypoint_index;
+    for (std::size_t i = motion.waypoint_index; i < limit; ++i)
+        if (map->static_safe_fraction(position, route.waypoints[i], radii) >=
+            1.f - Epsilon)
+            farthest = i;
+    motion.waypoint_index = farthest;
 }
 
 glm::vec2 path_lookahead_target(const FormationMotionState& motion,
@@ -407,7 +431,9 @@ glm::vec2 captain_route_desired_velocity(entt::registry& reg,
     auto& motion = reg.get_or_emplace<FormationMotionState>(captain);
     if (motion.command_revision != order.revision)
         motion = {0, position, order.revision};
-    advance_route_cursor(motion, route, position, parameters.settings);
+    const auto& collider = reg.get<aoe::AoeCollider>(captain);
+    advance_route_cursor(motion, route, position, parameters.settings,
+        parameters.map, {collider.radius_x, collider.radius_y});
     target = path_lookahead_target(motion, route, position,
         order.destination, parameters.settings.path_lookahead);
 
@@ -457,11 +483,12 @@ PlannedMotion plan_captain_motion(entt::registry& reg, entt::entity captain,
     if (order.status == FormationAttackMoveStatus::Running &&
         glm::length(desired_velocity) > parameters.direction_speed) {
         motion = plan_turn_move_state(movement_state, stored_direction,
-            locomotion.velocity, desired_velocity, parameters);
+            desired_velocity, parameters);
     } else {
         movement_state.phase =
             UnitFormationMotionPhase::HoldingSlot;
         movement_state.locked_move_direction = stored_direction;
+        movement_state.commanded_speed = 0.f;
     }
     return {captain, motion.velocity, target, motion.direction,
         reg.get<aoe::AoeMovement>(captain).speed, true};
@@ -477,7 +504,7 @@ float aligned_speed_multiplier(float value) {
 }
 
 FollowerMotionPlan plan_follower_motion(UnitFormationMotionState& state,
-    glm::vec2 stored_direction, glm::vec2 current_velocity,
+    glm::vec2 stored_direction,
     glm::vec2 desired_velocity, float slot_distance, float base_speed,
     float speed_multiplier, const MotionParameters& parameters) {
     const float desired_speed = glm::length(desired_velocity);
@@ -498,6 +525,7 @@ FollowerMotionPlan plan_follower_motion(UnitFormationMotionState& state,
         // Facing changes only when the desired movement is already nearby.
         state.phase = UnitFormationMotionPhase::HoldingSlot;
         state.locked_move_direction = stored_direction;
+        state.commanded_speed = glm::length(velocity);
         return {{velocity, can_redirect_while_moving
             ? travel_direction : stored_direction}, speed_limit};
     }
@@ -505,6 +533,7 @@ FollowerMotionPlan plan_follower_motion(UnitFormationMotionState& state,
     if (!has_travel_direction) {
         state.phase = UnitFormationMotionPhase::HoldingSlot;
         state.locked_move_direction = stored_direction;
+        state.commanded_speed = 0.f;
         return {{{0.f, 0.f}, stored_direction}, base_speed};
     }
 
@@ -512,12 +541,13 @@ FollowerMotionPlan plan_follower_motion(UnitFormationMotionState& state,
         // Small corrections do not need a separate turn-in-place phase.
         state.phase = UnitFormationMotionPhase::MovingToSlot;
         state.locked_move_direction = travel_direction;
+        state.commanded_speed = glm::length(velocity);
         return {{velocity, travel_direction}, speed_limit};
     }
 
     // Large facing changes retain the explicit turn-first behavior and do
     // not receive the aligned speed reserve.
-    return {plan_turn_move_state(state, stored_direction, current_velocity,
+    return {plan_turn_move_state(state, stored_direction,
         clamp_length(desired_velocity, base_speed), parameters), base_speed};
 }
 
@@ -561,20 +591,59 @@ bool append_follower_motions(entt::registry& reg, const SquadInfo& info,
             (target - position) / parameters.follower_response;
         const glm::vec2 stored_direction =
             reg.get<aoe::AoeDirection>(unit).value;
-        const auto& locomotion =
-            reg.get<aoe::AoeLocomotionState>(unit);
         auto& movement_state =
             reg.get<UnitFormationMotionState>(unit);
         const float slot_distance = glm::length(target - position);
         const float base_speed = reg.get<aoe::AoeMovement>(unit).speed;
         const auto plan = plan_follower_motion(movement_state,
-            stored_direction, locomotion.velocity, desired, slot_distance,
+            stored_direction, desired, slot_distance,
             base_speed, member.aligned_speed_multiplier, parameters);
         motions.push_back(
             {unit, plan.motion.velocity, target, plan.motion.direction,
                 plan.speed_limit, false});
     }
     return true;
+}
+
+// Scaling the whole step by the safe fraction makes any grazing wall contact
+// stop the captain completely, and nothing recovers from that: the route is
+// deterministic, so re-planning returns the same polyline from the same
+// blocked position. Consume the free part of the step and slide the remainder
+// along the obstacle so contact costs speed, not motion. Candidates are the
+// two axes (exact for axis-aligned walls) plus progressively larger rotations
+// scaled by their cosine, which approximates the tangent of a curved obstacle
+// where an axis split always points back into the surface.
+// Scaling the whole step by the safe fraction makes any grazing wall contact
+// stop the captain completely, and nothing recovers from that: the route is
+// deterministic, so re-planning returns the same polyline from the same
+// blocked position. Consume the free part of the step and slide the remainder
+// along whichever axis is still clear so contact costs speed, not motion.
+glm::vec2 static_constrained_displacement(const aoe::AoeLogicMap& map,
+    glm::vec2 position, glm::vec2 displacement, glm::vec2 radii) {
+    const float fraction = map.static_safe_fraction(
+        position, position + displacement, radii);
+    if (fraction >= 1.f - Epsilon) return displacement;
+    const glm::vec2 advanced = displacement * fraction;
+    const glm::vec2 contact = position + advanced;
+    const glm::vec2 remaining = displacement - advanced;
+    const glm::vec2 candidates[]{{remaining.x, 0.f}, {0.f, remaining.y}};
+    glm::vec2 slide{0.f};
+    float slide_length = 0.f;
+    for (const auto axis : candidates) {
+        const float length = glm::length(axis);
+        if (!(length > Epsilon) || length <= slide_length) continue;
+        if (map.static_safe_fraction(contact, contact + axis, radii) >=
+            1.f - Epsilon) {
+            slide = axis;
+            slide_length = length;
+        }
+    }
+    if (!(slide_length > Epsilon)) return advanced;
+    // The combined step is a chord across the contact point, so it may clip a
+    // corner even though both parts are clear on their own.
+    const glm::vec2 result = advanced + slide;
+    return map.static_safe_fraction(position, position + result, radii) >=
+        1.f - Epsilon ? result : advanced;
 }
 
 void integrate_motion(entt::registry& reg, const PlannedMotion& motion,
@@ -588,8 +657,8 @@ void integrate_motion(entt::registry& reg, const PlannedMotion& motion,
     glm::vec2 displacement = motion.velocity * parameters.dt;
     if (motion.captain && parameters.map && parameters.map->valid()) {
         const auto& collider = reg.get<aoe::AoeCollider>(motion.entity);
-        displacement *= parameters.map->static_safe_fraction(
-            position.value, position.value + displacement,
+        displacement = static_constrained_displacement(*parameters.map,
+            position.value, displacement,
             {collider.radius_x, collider.radius_y});
     }
     position.value += displacement;
