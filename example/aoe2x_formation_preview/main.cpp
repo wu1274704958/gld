@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -36,7 +37,7 @@ constexpr std::uint32_t PreviewLayer = 0x1u;
 constexpr std::uint32_t HudLayer = 0x2u;
 // Squad footprints are laid out from these, so they also decide how much of
 // the map a stress preset occupies.
-constexpr float UnitRadius = .35f;
+constexpr float UnitRadius = .95f;
 constexpr float UnitSpacing = .1f;
 // CompactSquareFormation refuses counts above this, so a stress run is split
 // into several squads instead of one huge formation.
@@ -65,6 +66,9 @@ struct StressConfig {
     // Non-zero closes the window after this many seconds and echoes every
     // profile window to stdout, which is how presets get captured in batch.
     double profile_seconds = 0.0;
+    // Units killed per simulation tick, for observing death handling without
+    // holding a key down. 0 disables attrition.
+    std::uint32_t attrition_per_tick = 0;
 };
 
 struct SystemTiming {
@@ -108,6 +112,9 @@ struct PreviewState {
     std::uint32_t march_legs = 0;
     std::uint32_t running_squads = 0;
     std::uint64_t last_leg_tick = 0;
+    // Kill counters for the [K] / [C] casualty keys.
+    std::uint32_t killed_units = 0;
+    std::uint32_t killed_captains = 0;
     float scale = 9.f;
     double run_seconds = 0.0;
     double sim_ms = 0.0;
@@ -173,6 +180,7 @@ StressConfig read_config() {
     }
     config.profile_seconds =
         static_cast<double>(env_uint("GLD_AOE2X_PROFILE_SECONDS", 0u));
+    config.attrition_per_tick = env_uint("GLD_AOE2X_ATTRITION", 0u);
     return config;
 }
 
@@ -316,18 +324,55 @@ std::uint32_t count_running(const EcsWorld& world, const PreviewState& state) {
     return running;
 }
 
+std::uint32_t count_alive(const EcsWorld& world, const PreviewState& state) {
+    std::uint32_t alive = 0;
+    for (const auto squad : state.squads)
+        if (const auto* info = world.reg().try_get<SquadInfo>(squad))
+            alive += static_cast<std::uint32_t>(info->units.size());
+    return alive;
+}
+
 void issue_march_leg(EcsWorld& world) {
     auto& state = world.resource<PreviewState>();
     const auto centers = squad_centers(state.config);
+    bool accepted = false;
     for (std::size_t i = 0; i < state.squads.size(); ++i)
-        request_aoe2x_formation_attack_move(world, state.squads[i],
+        accepted |= request_aoe2x_formation_attack_move(world, state.squads[i],
             state.marching_forward
                 ? mirror_destination(centers[i], state.config) : centers[i]);
+    // A wiped-out army accepts nothing, and counting those as march legs would
+    // spin the HUD counter for the rest of the run.
+    if (!accepted) return;
     ++state.march_legs;
     state.last_leg_tick = state.tick;
 }
 
-void input_system(EcsWorld& world) {    auto& state = world.resource<PreviewState>();
+// Picks a live victim at random. Squads are walked from a random offset so no
+// single squad is ground down first, and so [C] finds a squad that still has a
+// captain to lose.
+void inflict_casualty(EcsWorld& world, bool captain_only) {
+    auto& state = world.resource<PreviewState>();
+    if (state.squads.empty()) return;
+    static std::mt19937 rng{20260806u};
+    const std::size_t start = rng() % state.squads.size();
+    for (std::size_t i = 0; i < state.squads.size(); ++i) {
+        const auto squad = state.squads[(start + i) % state.squads.size()];
+        const auto* info = world.reg().try_get<SquadInfo>(squad);
+        if (!info || info->units.empty()) continue;
+        const auto victim = captain_only
+            ? info->captain
+            : info->units[rng() % info->units.size()];
+        if (!aoe2x_unit_alive(world.reg(), victim)) continue;
+        const bool was_captain = victim == info->captain;
+        kill_aoe2x_formation_unit(world, victim);
+        ++state.killed_units;
+        if (was_captain) ++state.killed_captains;
+        return;
+    }
+}
+
+void input_system(EcsWorld& world) {
+    auto& state = world.resource<PreviewState>();
     if (auto* keyboard = world.try_resource<Keyboard>()) {
         if (keyboard->just_now_pressed(GLFW_KEY_ESCAPE))
             world.resource<Window>().should_close = true;
@@ -337,6 +382,12 @@ void input_system(EcsWorld& world) {    auto& state = world.resource<PreviewStat
             std::printf("[aoe2x] render detail: %s\n",
                         detail_name(state.config.detail));
         }
+        // Casualties on demand: [K] takes a random member so the follow chain
+        // has to splice around it, [C] takes a captain so the successor has to
+        // inherit the route. Hold either key down for sustained attrition.
+        const bool kill_any = keyboard->is_pressed(GLFW_KEY_K);
+        const bool kill_captain = keyboard->is_pressed(GLFW_KEY_C);
+        if (kill_any || kill_captain) inflict_casualty(world, kill_captain);
     }
     auto* mouse = world.try_resource<MouseButtons>();
     if (!mouse || !mouse->just_now_pressed(GLFW_MOUSE_BUTTON_RIGHT)) return;
@@ -356,8 +407,12 @@ void simulation_system(EcsWorld& world) {
         issue_march_leg(world);
     }
     run_aoe2x_gameplay_system<FormationCommandSystem>(world, state.tick);
+    if (state.initial_command_sent)
+        for (std::uint32_t i = 0; i < state.config.attrition_per_tick; ++i)
+            inflict_casualty(world, false);
     run_aoe2x_gameplay_system<Aoe2xPathfindingSystem>(world, state.tick);
-    run_aoe2x_gameplay_system<FormationSystem>(world, state.tick++);
+    run_aoe2x_gameplay_system<FormationSystem>(world, state.tick);
+    run_aoe2x_gameplay_system<Aoe2xUnitLifecycleSystem>(world, state.tick++);
     state.running_squads = count_running(world, state);
     // Re-issuing once every squad has settled keeps both the movement and the
     // pathfinding systems under continuous load for the whole capture. The
@@ -593,8 +648,9 @@ void write_hud_text(EcsWorld& world) {    auto& state = world.resource<PreviewSt
         "path total: queries %llu, direct %llu, no-path %llu, rebuilds %llu\n"
         "path window: queries %llu, hi-expand %llu, local-expand %llu, "
         "waypoints %llu -> %llu\n"
-        "follow error (sampled) %.3f | [G] cycle detail  [right click] move  "
-        "[Esc] exit",
+        "follow error (sampled) %.3f | alive %u | killed %u (captains %u)\n"
+        "[G] cycle detail  [K] kill a unit  [C] kill a captain  "
+        "[right click] move  [Esc] exit",
         config.preset, config.total_units, config.squad_count, config.squad_size,
         config.map_width, config.map_height, detail_name(config.detail),
         state.running_squads, config.squad_count, state.march_legs,
@@ -613,7 +669,8 @@ void write_hud_text(EcsWorld& world) {    auto& state = world.resource<PreviewSt
         static_cast<unsigned long long>(window.local_expanded),
         static_cast<unsigned long long>(window.waypoints_before_smoothing),
         static_cast<unsigned long long>(window.waypoints_after_smoothing),
-        snapshot.follow_error);
+        snapshot.follow_error, count_alive(world, state),
+        state.killed_units, state.killed_captains);
     auto& text = world.reg().get<Text>(state.hud);
     text.text = ascii_to_u32(value);
     ++text.rev;
@@ -671,6 +728,7 @@ int main() {
         register_aoe2x_gameplay_system<FormationCommandSystem>(world);
         register_aoe2x_gameplay_system<Aoe2xPathfindingSystem>(world);
         register_aoe2x_gameplay_system<FormationSystem>(world);
+        register_aoe2x_gameplay_system<Aoe2xUnitLifecycleSystem>(world);
         auto& navigation = world.resource_or_add<AoeNavigationSettings>();
         navigation.steering_max_acceleration = 7.f;
         const auto& window = world.resource<Window>();
@@ -683,7 +741,7 @@ int main() {
             FormationSpawnOptions options;
             options.count = config.squad_size; options.center = center;
             options.spacing = UnitSpacing; options.unit_radius = UnitRadius;
-            options.movement_speed = 1.f;
+            options.movement_speed = 0.5f;
             state.squads.push_back(spawn_aoe2x_formation(world, options));
         }
         const auto camera = world.spawn();
@@ -718,7 +776,7 @@ int main() {
                     detail_name(config.detail));
         std::puts("[aoe2x] env: GLD_AOE2X_STRESS_PRESET(1..5), "
                   "GLD_AOE2X_SQUAD_SIZE, GLD_AOE2X_RENDER_DETAIL(full|lite|off), "
-                  "GLD_AOE2X_PROFILE_SECONDS");
+                  "GLD_AOE2X_PROFILE_SECONDS, GLD_AOE2X_ATTRITION");
     });
     app.add_system(Stage::PreUpdate, input_system);
     app.add_system(Stage::PreUpdate, simulation_system);

@@ -47,6 +47,7 @@ void run_tick(EcsWorld& world, std::uint64_t tick) {
     FormationCommandSystem::run(world, tick);
     Aoe2xPathfindingSystem::run(world, tick);
     FormationSystem::run(world, tick);
+    Aoe2xUnitLifecycleSystem::run(world, tick);
 }
 
 glm::vec2 rotate_between(
@@ -404,11 +405,32 @@ int main() {
         assert(link_error < .08f);
     }
 
+    // A mid-chain loss used to fail the whole order outright. The chain now
+    // absorbs it: the successor re-hooks onto the nearest living unit ahead
+    // and keeps its own link offset, so the tail closes up into the gap.
     const auto removed = squad_info.units[5];
-    world.reg().destroy(removed);
+    const auto predecessor = squad_info.units[4];
+    const auto successor = squad_info.units[6];
+    const glm::vec2 kept =
+        world.reg().get<UnitSquadInfo>(successor).followed_relative_to_self;
+    const std::size_t before_loss = squad_info.units.size();
+    kill_aoe2x_formation_unit(world, removed);
     FormationSystem::run(world, 1021);
     assert(world.reg().get<FormationAttackMove>(squad).status ==
-           FormationAttackMoveStatus::Failed);
+           FormationAttackMoveStatus::Completed);
+    assert(squad_info.units.size() == before_loss - 1u);
+    assert(std::find(squad_info.units.begin(), squad_info.units.end(),
+                     removed) == squad_info.units.end());
+    const auto& relinked = world.reg().get<UnitSquadInfo>(successor);
+    assert(relinked.followed == predecessor);
+    assert(glm::length(relinked.followed_relative_to_self - kept) < 1e-5f);
+    // The corpse is handed over to the lifecycle system and reclaimed on a
+    // fixed timer once the formation is done reading it.
+    assert(world.reg().get<Aoe2xUnitState>(removed).lifecycle ==
+           Aoe2xUnitLifecycle::Released);
+    for (std::uint64_t tick = 1022; tick <= 1022 + kAoe2xReleaseTicks; ++tick)
+        run_tick(world, tick);
+    assert(!world.reg().valid(removed));
 
     EcsWorld detour_world;
     install(detour_world);
@@ -468,5 +490,110 @@ int main() {
     run_tick(blocked_world, 1);
     assert(blocked_world.reg().get<FormationAttackMove>(blocked_squad).status ==
            FormationAttackMoveStatus::Failed);
+
+    // Losses mid-march: the surviving slots must not move, and a fallen
+    // captain must hand its route over rather than trigger a fresh search.
+    EcsWorld loss_world;
+    install(loss_world);
+    AoeMapDefinition loss_map = open_map();
+    AoeStaticObstacleDesc loss_wall;
+    loss_wall.shape = AoeStaticObstacleShape::Aabb;
+    loss_wall.center = {20.f, 12.f};
+    loss_wall.half_extents = {.75f, 8.f};
+    loss_map.static_obstacles.push_back(loss_wall);
+    loss_world.add_resource<AoeLogicMap>(std::move(loss_map));
+    FormationSpawnOptions loss_options;
+    loss_options.count = 9;
+    loss_options.center = {5.f, 15.f};
+    loss_options.movement_speed = 4.f;
+    const auto loss_squad = spawn_aoe2x_formation(loss_world, loss_options);
+    SpawnFormationSystem::run(loss_world, 0);
+    const auto& loss_info = loss_world.reg().get<SquadInfo>(loss_squad);
+    assert(request_aoe2x_formation_attack_move(
+        loss_world, loss_squad, glm::vec2{34.f, 15.f}));
+    for (std::uint64_t tick = 1; tick <= 60; ++tick)
+        run_tick(loss_world, tick);
+    assert(loss_world.reg().get<FormationAttackMove>(loss_squad).status ==
+           FormationAttackMoveStatus::Running);
+
+    // Splicing must leave the survivors' own link offsets untouched: each one
+    // simply re-hooks onto the nearest living unit ahead, and that is what
+    // closes the gap.
+    const auto lost_middle = loss_info.units[3];
+    const auto lost_predecessor = loss_info.units[2];
+    const auto lost_successor = loss_info.units[4];
+    std::vector<std::pair<entt::entity, glm::vec2>> tail_offsets;
+    for (std::size_t i = 4; i < loss_info.units.size(); ++i)
+        tail_offsets.emplace_back(loss_info.units[i],
+            loss_world.reg().get<UnitSquadInfo>(
+                loss_info.units[i]).followed_relative_to_self);
+    const glm::vec2 vacated =
+        loss_world.reg().get<UnitTargetPosition>(lost_middle).value;
+    const glm::vec2 successor_before =
+        loss_world.reg().get<UnitTargetPosition>(lost_successor).value;
+    kill_aoe2x_formation_unit(loss_world, lost_middle);
+    FormationSystem::run(loss_world, 61);
+    for (const auto& [unit, offset] : tail_offsets)
+        assert(glm::length(offset - loss_world.reg().get<UnitSquadInfo>(unit)
+            .followed_relative_to_self) < 1e-5f);
+    assert(loss_world.reg().get<UnitSquadInfo>(lost_successor).followed ==
+           lost_predecessor);
+    // The successor takes over the slot the casualty left instead of holding
+    // station, so the formation closes ranks rather than keeping a hole.
+    const glm::vec2 successor_after =
+        loss_world.reg().get<UnitTargetPosition>(lost_successor).value;
+    assert(glm::length(successor_after - vacated) <
+           glm::length(successor_before - vacated) * .25f);
+
+    const auto& diagnostics =
+        loss_world.resource_or_add<Aoe2xPathfindingDiagnostics>();
+    const auto fallen_captain = loss_info.captain;
+    const auto heir = loss_info.units[1];
+    const auto& fallen_motion =
+        loss_world.reg().get<FormationMotionState>(fallen_captain);
+    const std::size_t inherited_index = fallen_motion.waypoint_index;
+    const std::size_t inherited_waypoints =
+        loss_world.reg().get<Aoe2xRoutePlan>(fallen_captain).waypoints.size();
+    const glm::vec2 fallen_position =
+        loss_world.reg().get<AoePosition>(fallen_captain).value;
+    const std::uint64_t queries_before = diagnostics.queries;
+    kill_aoe2x_formation_unit(loss_world, fallen_captain);
+    FormationSystem::run(loss_world, 62);
+    assert(loss_info.captain == heir);
+    assert(loss_world.reg().all_of<SquadCaptainInfo>(heir));
+    assert(!loss_world.reg().all_of<SquadCaptainInfo>(fallen_captain));
+    assert(loss_world.reg().get<UnitSquadInfo>(heir).followed == entt::null);
+    const auto& heir_route = loss_world.reg().get<Aoe2xRoutePlan>(heir);
+    const auto& heir_motion =
+        loss_world.reg().get<FormationMotionState>(heir);
+    assert(heir_route.waypoints.size() ==
+           inherited_waypoints - inherited_index + 1u);
+    // The route is rebuilt from the cursor so the consumed prefix cannot be
+    // mistaken for the segment the successor is currently on.
+    assert(heir_motion.waypoint_index == 0);
+    // The rejoin point is the exact spot the captain fell on, put ahead of the
+    // remaining route so the successor retraces a stretch already proven clear.
+    assert(glm::length(heir_route.waypoints[0] - fallen_position) < 1e-4f);
+    assert(!loss_world.reg().all_of<Aoe2xRoutePlan>(fallen_captain));
+    assert(diagnostics.queries == queries_before);
+    for (std::uint64_t tick = 63; tick <= 400; ++tick) {
+        run_tick(loss_world, tick);
+        if (loss_world.reg().get<FormationAttackMove>(loss_squad).status !=
+            FormationAttackMoveStatus::Running)
+            break;
+    }
+    // Never re-issued a destination, so the march finished on the inherited
+    // polyline alone.
+    assert(loss_world.reg().get<FormationAttackMove>(loss_squad).status ==
+           FormationAttackMoveStatus::Completed);
+    assert(diagnostics.queries == queries_before);
+
+    // Losing everyone is the only remaining way to fail an order.
+    while (!loss_info.units.empty()) {
+        kill_aoe2x_formation_unit(loss_world, loss_info.units.front());
+        FormationSystem::run(loss_world, 401);
+    }
+    assert(request_aoe2x_formation_attack_move(
+               loss_world, loss_squad, glm::vec2{10.f, 15.f}) == false);
     return 0;
 }

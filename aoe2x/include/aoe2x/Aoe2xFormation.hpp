@@ -109,6 +109,34 @@ struct UnitFormationMotionState {
 struct SquadCaptainInfo { entt::entity squad{entt::null}; };
 struct UnitTargetPosition { glm::vec2 value{0.f}; };
 
+enum class Aoe2xUnitLifecycle : std::uint8_t {
+    // Combat life is over but the formation still needs the corpse: splicing
+    // the follow chain reads the fallen unit's link offset, and promoting a
+    // captain reads its position and route. Not drawn, not a squad member.
+    Dead,
+    // The formation is done with the corpse and it may be reclaimed.
+    Released
+};
+
+// Attached only once a unit falls. Living units carry no lifecycle component
+// at all, which keeps the common case free: the per-unit probe is skipped
+// entirely while the storage is empty, and the reclamation sweep visits
+// corpses rather than the whole army.
+struct Aoe2xUnitState {
+    Aoe2xUnitLifecycle lifecycle = Aoe2xUnitLifecycle::Dead;
+    // Ticks left before a released corpse is reclaimed. The budget is fixed
+    // and there is no way to refresh it, so no consumer can pin a corpse.
+    std::uint8_t release_ticks = 0;
+};
+
+inline constexpr std::uint8_t kAoe2xReleaseTicks = 10;
+
+// True while the unit still participates in formations, movement and drawing.
+bool aoe2x_unit_alive(const entt::registry&, entt::entity);
+// Marks a unit as fallen. Its components stay intact until the formation
+// system has spliced it out of the follow chain.
+void kill_aoe2x_formation_unit(EcsWorld&, entt::entity);
+
 struct FormationAttackMove {
     glm::vec2 destination{0.f};
     FormationAttackMoveStatus status = FormationAttackMoveStatus::Idle;
@@ -175,22 +203,39 @@ struct FormationCommandSystem {
 
 struct FormationSystem {
     using ReadOnlyComponents = Aoe2xComponentList<
-        SquadInfo, FormationSpawnState, UnitSquadInfo, SquadCaptainInfo,
-        UnitFormationDirection, aoe::AoeMovement, aoe::AoeCollider>;
+        FormationSpawnState, UnitFormationDirection,
+        aoe::AoeMovement, aoe::AoeCollider>;
     using WriteOnlyComponents = Aoe2xComponentList<aoe::AoePositionHistory>;
     using ReadWriteComponents = Aoe2xComponentList<
         aoe::AoePosition, aoe::AoeLocomotionState, UnitTargetPosition,
         aoe::AoeDirection, UnitFormationMotionState,
         FormationAttackMove, FormationMotionState, Aoe2xRoutePlan,
-        Aoe2xNavigationDestination>;
+        Aoe2xNavigationDestination,
+        // Losing members rewrites the chain, so membership is no longer
+        // read-only for this system.
+        SquadInfo, UnitSquadInfo, SquadCaptainInfo, Aoe2xUnitState>;
     static constexpr std::string_view name = "aoe2x_formation";
     static constexpr Stage app_stage = Stage::PreUpdate;
     static constexpr Aoe2xGameplayPhase phase = Aoe2xGameplayPhase::Movement;
     static void run(EcsWorld&, std::uint64_t);
 };
 
+// Reclaims released corpses once their fixed grace period expires, and sweeps
+// fallen units whose squad no longer exists so nothing can leak by never
+// being spliced out.
+struct Aoe2xUnitLifecycleSystem {
+    using ReadOnlyComponents = Aoe2xComponentList<UnitSquadInfo, SquadInfo>;
+    using WriteOnlyComponents = Aoe2xComponentList<>;
+    using ReadWriteComponents = Aoe2xComponentList<Aoe2xUnitState>;
+    static constexpr std::string_view name = "aoe2x_unit_lifecycle";
+    static constexpr Stage app_stage = Stage::PreUpdate;
+    static constexpr Aoe2xGameplayPhase phase = Aoe2xGameplayPhase::Lifecycle;
+    static void run(EcsWorld&, std::uint64_t);
+};
+
 static_assert(Aoe2xGameplaySystem<SpawnFormationSystem>);
 static_assert(Aoe2xGameplaySystem<FormationCommandSystem>);
 static_assert(Aoe2xGameplaySystem<FormationSystem>);
+static_assert(Aoe2xGameplaySystem<Aoe2xUnitLifecycleSystem>);
 
 } // namespace gld::ecs::aoe2x

@@ -335,16 +335,128 @@ TurnFirstMotion plan_turn_move_state(UnitFormationMotionState& state,
     return motion;
 }
 
-bool formation_members_valid(
-    const entt::registry& reg, const SquadInfo& info) {
+bool formation_unit_valid(const entt::registry& reg, entt::entity unit) {
+    return reg.valid(unit) &&
+        reg.all_of<aoe::AoePosition, aoe::AoeMovement,
+                   aoe::AoeLocomotionState, UnitSquadInfo,
+                   UnitTargetPosition, UnitFormationDirection,
+                   UnitFormationMotionState, aoe::AoeDirection>(unit);
+}
+
+// A fallen unit keeps every component so the formation can still read its link
+// offset and, when it led, its position and route. It stops being a member the
+// moment it dies, so membership and component validity are separate tests.
+bool formation_member_active(const entt::registry& reg, entt::entity unit) {
+    return formation_unit_valid(reg, unit) &&
+        !reg.all_of<Aoe2xUnitState>(unit);
+}
+
+bool squad_intact(const entt::registry& reg, const SquadInfo& info) {
     if (info.units.empty() || !reg.valid(info.captain)) return false;
-    for (const auto unit : info.units)
-        if (!reg.valid(unit) ||
-            !reg.all_of<aoe::AoePosition, aoe::AoeMovement,
-                        aoe::AoeLocomotionState, UnitSquadInfo,
-                        UnitTargetPosition, UnitFormationDirection,
-                        UnitFormationMotionState, aoe::AoeDirection>(unit))
-            return false;
+    // Deaths are rare relative to the per-tick scan, and a living unit carries
+    // no lifecycle component, so an army with no casualties skips the per-unit
+    // probe entirely rather than paying a pool lookup per unit per tick.
+    const auto* corpses = reg.storage<Aoe2xUnitState>();
+    const bool any_fallen = corpses && !corpses->empty();
+    for (const auto unit : info.units) {
+        if (!formation_unit_valid(reg, unit)) return false;
+        if (any_fallen && corpses->contains(unit)) return false;
+    }
+    return true;
+}
+
+// Hands the corpse over to the lifecycle system now that the chain no longer
+// refers to it.
+void release_corpse(entt::registry& reg, entt::entity unit) {
+    if (!reg.valid(unit)) return;
+    if (auto* state = reg.try_get<Aoe2xUnitState>(unit);
+        state && state->lifecycle == Aoe2xUnitLifecycle::Dead) {
+        state->lifecycle = Aoe2xUnitLifecycle::Released;
+        state->release_ticks = kAoe2xReleaseTicks;
+    }
+}
+
+// Moves the order state onto the promoted unit. Pathfinding runs exactly once
+// per command, so a captain lost mid-march must inherit the polyline it was
+// already following; re-issuing a destination would send the squad back
+// through a full HPA* query on every leadership change.
+void inherit_captain_route(entt::registry& reg, entt::entity fallen,
+                           entt::entity promoted) {
+    if (!reg.valid(fallen)) return;
+    auto* route = reg.try_get<Aoe2xRoutePlan>(fallen);
+    auto* motion = reg.try_get<FormationMotionState>(fallen);
+    const auto* promoted_position = reg.try_get<aoe::AoePosition>(promoted);
+    if (!route || !motion || !promoted_position) return;
+    const std::size_t cursor =
+        std::min(motion->waypoint_index, route->waypoints.size());
+
+    Aoe2xRoutePlan inherited;
+    inherited.status = route->status;
+    inherited.total_cost = route->total_cost;
+    // The consumed prefix has to go. Left in place it would supply the
+    // "previous" point of the segment test, and since those points lie ahead
+    // of the successor the test reads as already-passed and swallows the rest
+    // of the route in one tick.
+    inherited.waypoints.reserve(route->waypoints.size() - cursor + 1u);
+    if (const auto* fallen_position = reg.try_get<aoe::AoePosition>(fallen)) {
+        // The captain fell on a point the route had already proven clear,
+        // while its successor sits a slot back and off to one side, so a
+        // beeline to the current waypoint could cut exactly the corner the
+        // route went out of its way to avoid. Rejoin through the fallen
+        // position instead. It costs nothing in the open: the line-of-sight
+        // skip in advance_route_cursor drops the point again as soon as a
+        // direct approach is provably clear.
+        inherited.waypoints.push_back(fallen_position->value);
+        if (inherited.total_cost)
+            *inherited.total_cost += glm::length(
+                fallen_position->value - promoted_position->value);
+    }
+    inherited.waypoints.insert(inherited.waypoints.end(),
+        route->waypoints.begin() + static_cast<std::ptrdiff_t>(cursor),
+        route->waypoints.end());
+
+    const FormationMotionState inherited_motion{
+        0, promoted_position->value, motion->command_revision};
+    reg.remove<Aoe2xRoutePlan, FormationMotionState,
+               Aoe2xNavigationDestination>(fallen);
+    reg.emplace_or_replace<Aoe2xRoutePlan>(promoted, std::move(inherited));
+    reg.emplace_or_replace<FormationMotionState>(promoted, inherited_motion);
+}
+
+// Splices every fallen member out of the follow chain in a single pass, no
+// matter how many were lost or whether they were adjacent. Each survivor keeps
+// its own link offset and simply re-hooks onto the nearest living unit ahead,
+// so the tail closes up into the gap instead of leaving a hole. Returns false
+// only when the squad has no survivor left.
+bool compact_squad_chain(entt::registry& reg, entt::entity squad,
+                         SquadInfo& info) {
+    const auto fallen_captain = info.captain;
+    std::size_t write = 0;
+    for (const auto unit : info.units) {
+        if (!formation_member_active(reg, unit)) {
+            release_corpse(reg, unit);
+            continue;
+        }
+        auto& member = reg.get<UnitSquadInfo>(unit);
+        if (write) {
+            member.followed = info.units[write - 1u];
+        } else {
+            member.followed = entt::null;
+            member.followed_relative_to_self = glm::vec2{0.f};
+        }
+        info.units[write++] = unit;
+    }
+    info.units.resize(write);
+    if (info.units.empty()) {
+        info.captain = entt::null;
+        return false;
+    }
+    info.captain = info.units.front();
+    if (info.captain == fallen_captain) return true;
+    if (reg.valid(fallen_captain)) reg.remove<SquadCaptainInfo>(fallen_captain);
+    reg.emplace_or_replace<SquadCaptainInfo>(
+        info.captain, SquadCaptainInfo{squad});
+    inherit_captain_route(reg, fallen_captain, info.captain);
     return true;
 }
 
@@ -802,6 +914,22 @@ void FormationSystem::run(EcsWorld& world, std::uint64_t) {
         settings,
         world.try_resource<aoe::AoeLogicMap>()};
 
+    for (const auto squad : reg.view<SquadInfo, FormationSpawnState>()) {
+        if (reg.get<FormationSpawnState>(squad).status !=
+            FormationSpawnStatus::Ready)
+            continue;
+        auto& info = reg.get<SquadInfo>(squad);
+        // Losses are absorbed by the chain itself, so idle squads have to
+        // compact too: waiting for an order would leave dangling followed
+        // links and strand corpses that nobody advances for reclamation.
+        if (squad_intact(reg, info)) continue;
+        const bool survives = compact_squad_chain(reg, squad, info);
+        if (!survives)
+            if (auto* order = reg.try_get<FormationAttackMove>(squad);
+                order && order->status == FormationAttackMoveStatus::Running)
+                fail_command(reg, entt::null, *order);
+    }
+
     for (const auto squad : reg.view<const SquadInfo, FormationSpawnState,
                                       FormationAttackMove>()) {
         if (reg.get<FormationSpawnState>(squad).status !=
@@ -809,10 +937,7 @@ void FormationSystem::run(EcsWorld& world, std::uint64_t) {
             continue;
         const auto& info = reg.get<const SquadInfo>(squad);
         auto& order = reg.get<FormationAttackMove>(squad);
-        if (!formation_members_valid(reg, info)) {
-            fail_command(reg, info.captain, order);
-            continue;
-        }
+        if (info.units.empty() || !reg.valid(info.captain)) continue;
 
         std::vector<PlannedMotion> motions;
         motions.reserve(info.units.size());
@@ -828,6 +953,46 @@ void FormationSystem::run(EcsWorld& world, std::uint64_t) {
             integrate_motion(reg, motion, parameters);
         finish_after_integration(reg, captain, order, settings);
     }
+}
+
+bool aoe2x_unit_alive(const entt::registry& reg, entt::entity unit) {
+    return formation_member_active(reg, unit);
+}
+
+void kill_aoe2x_formation_unit(EcsWorld& world, entt::entity unit) {
+    auto& reg = world.reg();
+    if (!reg.valid(unit) || reg.all_of<Aoe2xUnitState>(unit)) return;
+    reg.emplace<Aoe2xUnitState>(unit);
+    stop_unit(reg, unit);
+}
+
+void Aoe2xUnitLifecycleSystem::run(EcsWorld& world, std::uint64_t) {
+    auto& reg = world.reg();
+    // Only corpses carry the component, so an army with no casualties costs an
+    // empty view walk here rather than a sweep over every unit.
+    std::vector<entt::entity> reclaimed;
+    for (const auto unit : reg.view<Aoe2xUnitState>()) {
+        auto& state = reg.get<Aoe2xUnitState>(unit);
+        if (state.lifecycle == Aoe2xUnitLifecycle::Dead) {
+            // Nobody will ever splice a corpse whose squad is gone, so it
+            // would otherwise sit in the registry forever. Skip straight to
+            // the countdown; there is no chain left to preserve.
+            const auto* member = reg.try_get<UnitSquadInfo>(unit);
+            if (member && reg.valid(member->squad) &&
+                reg.all_of<SquadInfo>(member->squad))
+                continue;
+            state.lifecycle = Aoe2xUnitLifecycle::Released;
+            state.release_ticks = kAoe2xReleaseTicks;
+        }
+        if (state.release_ticks) {
+            --state.release_ticks;
+            continue;
+        }
+        reclaimed.push_back(unit);
+    }
+    // The release window exists so anything still holding the entity this tick
+    // reads consistent data. Recycling into a pool would replace the destroy.
+    for (const auto unit : reclaimed) reg.destroy(unit);
 }
 
 } // namespace gld::ecs::aoe2x
