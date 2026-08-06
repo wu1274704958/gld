@@ -124,30 +124,46 @@ entt::entity spawn_formation_unit(EcsWorld& world,
     const FormationSpawnOptions& options, glm::vec2 position,
     glm::vec2 forward) {
     auto& reg = world.reg();
-    const auto unit = world.spawn();
-    reg.emplace<aoe::AoePosition>(unit, aoe::AoePosition{position});
-    reg.emplace<aoe::AoePositionHistory>(
+    auto& pool = world.resource_or_add<Aoe2xUnitPool>();
+    entt::entity unit{entt::null};
+    while (!pool.available.empty()) {
+        const auto candidate = pool.available.back();
+        pool.available.pop_back();
+        if (reg.valid(candidate) && reg.all_of<Aoe2xPooledUnit>(candidate)) {
+            unit = candidate;
+            ++pool.reused;
+            break;
+        }
+    }
+    if (unit == entt::null) unit = world.spawn();
+    else reg.remove<Aoe2xPooledUnit>(unit);
+    reg.emplace_or_replace<aoe::AoePosition>(unit, aoe::AoePosition{position});
+    reg.emplace_or_replace<aoe::AoePositionHistory>(
         unit, aoe::AoePositionHistory{position});
-    reg.emplace<aoe::AoeCollider>(unit, aoe::AoeCollider{
+    reg.emplace_or_replace<aoe::AoeCollider>(unit, aoe::AoeCollider{
         options.unit_radius, options.unit_radius,
         options.unit_radius * 2.f});
-    reg.emplace<aoe::AoeMovement>(
+    reg.emplace_or_replace<aoe::AoeMovement>(
         unit, aoe::AoeMovement{options.movement_speed});
-    reg.emplace<aoe::AoeLocomotionState>(unit);
-    reg.emplace<aoe::AoeDirection>(unit, aoe::AoeDirection{forward});
-    reg.emplace<UnitTargetPosition>(unit, UnitTargetPosition{position});
-    reg.emplace<UnitFormationDirection>(
+    reg.emplace_or_replace<aoe::AoeLocomotionState>(unit);
+    reg.emplace_or_replace<aoe::AoeDirection>(
+        unit, aoe::AoeDirection{forward});
+    reg.emplace_or_replace<UnitTargetPosition>(
+        unit, UnitTargetPosition{position});
+    reg.emplace_or_replace<UnitFormationDirection>(
         unit, UnitFormationDirection{forward});
-    reg.emplace<UnitFormationMotionState>(unit,
+    reg.emplace_or_replace<UnitFormationMotionState>(unit,
         UnitFormationMotionState{
             UnitFormationMotionPhase::HoldingSlot, forward});
     return unit;
 }
 
 void connect_follow_chain(
-    entt::registry& reg, entt::entity squad, const SquadInfo& info) {
+    entt::registry& reg, entt::entity squad, SquadInfo& info) {
     // The vector is captured once in spawn orientation. Runtime following
     // rotates this immutable vector by the captain's direction change.
+    info.slot_edges.clear();
+    if (info.units.size() > 1u) info.slot_edges.reserve(info.units.size() - 1u);
     for (std::size_t i = 0; i < info.units.size(); ++i) {
         const auto unit = info.units[i];
         const auto followed = i ? info.units[i - 1u] : entt::null;
@@ -155,6 +171,7 @@ void connect_follow_chain(
         if (followed != entt::null)
             relative = reg.get<aoe::AoePosition>(followed).value -
                        reg.get<aoe::AoePosition>(unit).value;
+        if (i) info.slot_edges.push_back(relative);
         reg.emplace<UnitSquadInfo>(
             unit, UnitSquadInfo{squad, followed, relative});
     }
@@ -365,17 +382,6 @@ bool squad_intact(const entt::registry& reg, const SquadInfo& info) {
     return true;
 }
 
-// Hands the corpse over to the lifecycle system now that the chain no longer
-// refers to it.
-void release_corpse(entt::registry& reg, entt::entity unit) {
-    if (!reg.valid(unit)) return;
-    if (auto* state = reg.try_get<Aoe2xUnitState>(unit);
-        state && state->lifecycle == Aoe2xUnitLifecycle::Dead) {
-        state->lifecycle = Aoe2xUnitLifecycle::Released;
-        state->release_ticks = kAoe2xReleaseTicks;
-    }
-}
-
 // Moves the order state onto the promoted unit. Pathfinding runs exactly once
 // per command, so a captain lost mid-march must inherit the polyline it was
 // already following; re-issuing a destination would send the squad back
@@ -424,22 +430,30 @@ void inherit_captain_route(entt::registry& reg, entt::entity fallen,
 }
 
 // Splices every fallen member out of the follow chain in a single pass, no
-// matter how many were lost or whether they were adjacent. Each survivor keeps
-// its own link offset and simply re-hooks onto the nearest living unit ahead,
-// so the tail closes up into the gap instead of leaving a hole. Returns false
-// only when the squad has no survivor left.
+// matter how many were lost or whether they were adjacent. Link vectors belong
+// to slots rather than units: survivors move forward through the existing slot
+// edge sequence, closing holes without corrupting row-turn geometry. Returns
+// false only when the squad has no survivor left.
 bool compact_squad_chain(entt::registry& reg, entt::entity squad,
                          SquadInfo& info) {
     const auto fallen_captain = info.captain;
+    std::vector<glm::vec2> slot_edges = info.slot_edges;
+    if (slot_edges.size() + 1u != info.units.size()) {
+        slot_edges.clear();
+        if (info.units.size() > 1u) slot_edges.reserve(info.units.size() - 1u);
+        for (std::size_t i = 1; i < info.units.size(); ++i) {
+            const auto* member = reg.try_get<UnitSquadInfo>(info.units[i]);
+            slot_edges.push_back(member
+                ? member->followed_relative_to_self : glm::vec2{0.f});
+        }
+    }
     std::size_t write = 0;
     for (const auto unit : info.units) {
-        if (!formation_member_active(reg, unit)) {
-            release_corpse(reg, unit);
-            continue;
-        }
+        if (!formation_member_active(reg, unit)) continue;
         auto& member = reg.get<UnitSquadInfo>(unit);
         if (write) {
             member.followed = info.units[write - 1u];
+            member.followed_relative_to_self = slot_edges[write - 1u];
         } else {
             member.followed = entt::null;
             member.followed_relative_to_self = glm::vec2{0.f};
@@ -447,6 +461,10 @@ bool compact_squad_chain(entt::registry& reg, entt::entity squad,
         info.units[write++] = unit;
     }
     info.units.resize(write);
+    info.slot_edges.resize(write ? write - 1u : 0u);
+    if (!info.slot_edges.empty())
+        std::copy_n(slot_edges.begin(), info.slot_edges.size(),
+                    info.slot_edges.begin());
     if (info.units.empty()) {
         info.captain = entt::null;
         return false;
@@ -962,37 +980,42 @@ bool aoe2x_unit_alive(const entt::registry& reg, entt::entity unit) {
 void kill_aoe2x_formation_unit(EcsWorld& world, entt::entity unit) {
     auto& reg = world.reg();
     if (!reg.valid(unit) || reg.all_of<Aoe2xUnitState>(unit)) return;
-    reg.emplace<Aoe2xUnitState>(unit);
+    reg.emplace<Aoe2xUnitState>(unit, Aoe2xUnitState{
+        Aoe2xUnitLifecycle::Dead, kAoe2xDeadTicks});
     stop_unit(reg, unit);
 }
 
 void Aoe2xUnitLifecycleSystem::run(EcsWorld& world, std::uint64_t) {
     auto& reg = world.reg();
-    // Only corpses carry the component, so an army with no casualties costs an
-    // empty view walk here rather than a sweep over every unit.
-    std::vector<entt::entity> reclaimed;
+    std::vector<entt::entity> released;
     for (const auto unit : reg.view<Aoe2xUnitState>()) {
         auto& state = reg.get<Aoe2xUnitState>(unit);
         if (state.lifecycle == Aoe2xUnitLifecycle::Dead) {
-            // Nobody will ever splice a corpse whose squad is gone, so it
-            // would otherwise sit in the registry forever. Skip straight to
-            // the countdown; there is no chain left to preserve.
-            const auto* member = reg.try_get<UnitSquadInfo>(unit);
-            if (member && reg.valid(member->squad) &&
-                reg.all_of<SquadInfo>(member->squad))
+            if (state.dead_ticks) {
+                --state.dead_ticks;
                 continue;
+            }
             state.lifecycle = Aoe2xUnitLifecycle::Released;
-            state.release_ticks = kAoe2xReleaseTicks;
         }
-        if (state.release_ticks) {
-            --state.release_ticks;
-            continue;
-        }
-        reclaimed.push_back(unit);
+        released.push_back(unit);
     }
-    // The release window exists so anything still holding the entity this tick
-    // reads consistent data. Recycling into a pool would replace the destroy.
-    for (const auto unit : reclaimed) reg.destroy(unit);
+    auto& pool = world.resource_or_add<Aoe2xUnitPool>();
+    for (const auto unit : released) {
+        if (!reg.valid(unit)) continue;
+        if (auto* states = world.try_resource<Aoe2xPathfindingState>())
+            states->records.erase(unit);
+        reg.remove<UnitSquadInfo, SquadCaptainInfo,
+                   UnitTargetPosition, UnitFormationDirection,
+                   UnitFormationMotionState,
+                   aoe::AoePosition, aoe::AoePositionHistory,
+                   aoe::AoeCollider, aoe::AoeMovement,
+                   aoe::AoeLocomotionState, aoe::AoeDirection,
+                   Aoe2xNavigationDestination, Aoe2xRoutePlan,
+                   FormationMotionState, Aoe2xUnitState>(unit);
+        reg.emplace_or_replace<Aoe2xPooledUnit>(unit);
+        pool.available.push_back(unit);
+        ++pool.recycled;
+    }
 }
 
 } // namespace gld::ecs::aoe2x

@@ -133,16 +133,15 @@ LOS string-pull 平滑（提交 `869b646`）在该场景收益为 **14,650 → 1
 | 状态 | 绘制 | 编队成员 | 组件 | 由谁推进 |
 |------|------|----------|------|----------|
 | `Alive` | ✔ | ✔ | 完整 | — |
-| `Dead` | ✘ | ✘ | **完整**（编队仍要读取） | 编队系统，拼接完成后 → `Released` |
-| `Released` | ✘ | ✘ | 完整 | `Aoe2xUnitLifecycleSystem`，10 帧后回收 |
+| `Dead` | 死亡表现 | ✘ | **完整** | `Aoe2xUnitLifecycleSystem`，倒计时 10 帧 |
+| `Released` | ✘ | ✘ | 仅 `Aoe2xPooledUnit` | 生命周期系统当帧移入 `Aoe2xUnitPool` |
 
-`Dead` 阶段的存在是必需的：跟随链把 `r_i = pos(followed) - pos(self)` 存在**单位自己**身上，
-拼接时必须能读到阵亡者的 `r_i`，所以不能在死亡瞬间销毁实体。`Released` 的 10 帧倒计时同时兜住了
-「squad 已消失、没人来推进」的孤儿尸体。
+`Dead` 的 10 帧窗口供死亡表现和仍需读取尸体数据的逻辑使用。倒计时结束即进入 `Released`：实体保留在
+独立池中复用，但位置、碰撞、移动、编队、路线等 active 组件全部移除，因此普通 EnTT view 不会遍历到它。
 
-**链压缩**：一次 O(n) 扫描即可吸收任意数量、任意分布的损失——幸存者保留自己的链节偏移，
-只把 `followed` 重新挂到前方最近的活人身上，于是**后继顶上阵亡者的槽位，队形收拢而不是留洞**。
-无损失时只走一次只读检测扫描，与旧的 `formation_members_valid` 同开销。
+**链压缩**：`r_i = pos(followed) - pos(self)` 描述的是相邻槽位之间的边，而不是 unit 的固有属性。
+`SquadInfo::slot_edges` 保存独立的槽位边序列；压缩时幸存者按新序号继承前方槽位边并重接 `followed`，
+于是后继顶上阵亡者的槽位，蛇形方阵的水平、垂直和换行几何也不会被错误混用。
 
 **队长继承**：新队长接管 `SquadCaptainInfo` / `Aoe2xRoutePlan` / `FormationMotionState`，
 **绝不重新 emplace `Aoe2xNavigationDestination`**——每条指令只寻路一次是 aoe2x 的核心性能前提，

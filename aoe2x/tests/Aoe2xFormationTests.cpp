@@ -405,14 +405,12 @@ int main() {
         assert(link_error < .08f);
     }
 
-    // A mid-chain loss used to fail the whole order outright. The chain now
-    // absorbs it: the successor re-hooks onto the nearest living unit ahead
-    // and keeps its own link offset, so the tail closes up into the gap.
+    // A link vector belongs to a formation slot, not to the unit occupying it.
+    // The successor must inherit the fallen unit's slot edge when it moves up.
     const auto removed = squad_info.units[5];
     const auto predecessor = squad_info.units[4];
     const auto successor = squad_info.units[6];
-    const glm::vec2 kept =
-        world.reg().get<UnitSquadInfo>(successor).followed_relative_to_self;
+    const glm::vec2 inherited_edge = squad_info.slot_edges[4];
     const std::size_t before_loss = squad_info.units.size();
     kill_aoe2x_formation_unit(world, removed);
     FormationSystem::run(world, 1021);
@@ -423,14 +421,33 @@ int main() {
                      removed) == squad_info.units.end());
     const auto& relinked = world.reg().get<UnitSquadInfo>(successor);
     assert(relinked.followed == predecessor);
-    assert(glm::length(relinked.followed_relative_to_self - kept) < 1e-5f);
-    // The corpse is handed over to the lifecycle system and reclaimed on a
-    // fixed timer once the formation is done reading it.
+    assert(glm::length(
+        relinked.followed_relative_to_self - inherited_edge) < 1e-5f);
+    // Dead owns the ten-tick presentation window. Released is an immediate
+    // transfer into the isolated pool, with every active component stripped.
     assert(world.reg().get<Aoe2xUnitState>(removed).lifecycle ==
-           Aoe2xUnitLifecycle::Released);
-    for (std::uint64_t tick = 1022; tick <= 1022 + kAoe2xReleaseTicks; ++tick)
-        run_tick(world, tick);
-    assert(!world.reg().valid(removed));
+           Aoe2xUnitLifecycle::Dead);
+    assert(world.reg().get<Aoe2xUnitState>(removed).dead_ticks ==
+           kAoe2xDeadTicks);
+    for (std::uint64_t tick = 0; tick < kAoe2xDeadTicks; ++tick)
+        Aoe2xUnitLifecycleSystem::run(world, 1022 + tick);
+    assert(world.reg().valid(removed));
+    assert(world.reg().get<Aoe2xUnitState>(removed).dead_ticks == 0);
+    Aoe2xUnitLifecycleSystem::run(world, 1022 + kAoe2xDeadTicks);
+    assert(world.reg().valid(removed));
+    assert(world.reg().all_of<Aoe2xPooledUnit>(removed));
+    assert(!world.reg().any_of<AoePosition, AoeCollider, UnitSquadInfo,
+                              Aoe2xUnitState>(removed));
+    assert(world.resource<Aoe2xUnitPool>().available.back() == removed);
+
+    FormationSpawnOptions reuse_options;
+    reuse_options.count = 1; reuse_options.center = {3.f, 3.f};
+    const auto reuse_squad = spawn_aoe2x_formation(world, reuse_options);
+    SpawnFormationSystem::run(world, 2000);
+    const auto reused = world.reg().get<SquadInfo>(reuse_squad).captain;
+    assert(reused == removed);
+    assert(!world.reg().all_of<Aoe2xPooledUnit>(reused));
+    assert(world.resource<Aoe2xUnitPool>().reused == 1);
 
     EcsWorld detour_world;
     install(detour_world);
@@ -516,26 +533,26 @@ int main() {
     assert(loss_world.reg().get<FormationAttackMove>(loss_squad).status ==
            FormationAttackMoveStatus::Running);
 
-    // Splicing must leave the survivors' own link offsets untouched: each one
-    // simply re-hooks onto the nearest living unit ahead, and that is what
-    // closes the gap.
+    // This casualty is at a snake-row turn, where retaining the successor's
+    // old vertical edge would corrupt the square. Slot edges shift forward.
     const auto lost_middle = loss_info.units[3];
     const auto lost_predecessor = loss_info.units[2];
     const auto lost_successor = loss_info.units[4];
-    std::vector<std::pair<entt::entity, glm::vec2>> tail_offsets;
-    for (std::size_t i = 4; i < loss_info.units.size(); ++i)
-        tail_offsets.emplace_back(loss_info.units[i],
-            loss_world.reg().get<UnitSquadInfo>(
-                loss_info.units[i]).followed_relative_to_self);
+    const auto slot_edges_before_loss = loss_info.slot_edges;
     const glm::vec2 vacated =
         loss_world.reg().get<UnitTargetPosition>(lost_middle).value;
     const glm::vec2 successor_before =
         loss_world.reg().get<UnitTargetPosition>(lost_successor).value;
     kill_aoe2x_formation_unit(loss_world, lost_middle);
     FormationSystem::run(loss_world, 61);
-    for (const auto& [unit, offset] : tail_offsets)
-        assert(glm::length(offset - loss_world.reg().get<UnitSquadInfo>(unit)
-            .followed_relative_to_self) < 1e-5f);
+    assert(loss_info.slot_edges.size() + 1u == loss_info.units.size());
+    for (std::size_t i = 0; i < loss_info.slot_edges.size(); ++i) {
+        assert(glm::length(loss_info.slot_edges[i] -
+                           slot_edges_before_loss[i]) < 1e-5f);
+        assert(glm::length(loss_world.reg().get<UnitSquadInfo>(
+                               loss_info.units[i + 1u]).followed_relative_to_self -
+                           slot_edges_before_loss[i]) < 1e-5f);
+    }
     assert(loss_world.reg().get<UnitSquadInfo>(lost_successor).followed ==
            lost_predecessor);
     // The successor takes over the slot the casualty left instead of holding
@@ -557,12 +574,15 @@ int main() {
     const glm::vec2 fallen_position =
         loss_world.reg().get<AoePosition>(fallen_captain).value;
     const std::uint64_t queries_before = diagnostics.queries;
+    const auto slot_edges_before_captain_loss = loss_info.slot_edges;
     kill_aoe2x_formation_unit(loss_world, fallen_captain);
     FormationSystem::run(loss_world, 62);
     assert(loss_info.captain == heir);
     assert(loss_world.reg().all_of<SquadCaptainInfo>(heir));
     assert(!loss_world.reg().all_of<SquadCaptainInfo>(fallen_captain));
     assert(loss_world.reg().get<UnitSquadInfo>(heir).followed == entt::null);
+    assert(loss_world.reg().get<UnitSquadInfo>(loss_info.units[1])
+               .followed_relative_to_self == slot_edges_before_captain_loss[0]);
     const auto& heir_route = loss_world.reg().get<Aoe2xRoutePlan>(heir);
     const auto& heir_motion =
         loss_world.reg().get<FormationMotionState>(heir);

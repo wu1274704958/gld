@@ -73,6 +73,9 @@ struct FormationSpawnState {
 struct SquadInfo {
     FormationType formation = FormationType::CompactSquare;
     std::vector<entt::entity> units;
+    // Edges between formation slots, independent of the units currently
+    // occupying them. slot_edges[i] connects units[i] to units[i + 1].
+    std::vector<glm::vec2> slot_edges;
     entt::entity captain{entt::null};
 };
 
@@ -110,13 +113,15 @@ struct SquadCaptainInfo { entt::entity squad{entt::null}; };
 struct UnitTargetPosition { glm::vec2 value{0.f}; };
 
 enum class Aoe2xUnitLifecycle : std::uint8_t {
-    // Combat life is over but the formation still needs the corpse: splicing
-    // the follow chain reads the fallen unit's link offset, and promoting a
-    // captain reads its position and route. Not drawn, not a squad member.
+    // Combat life is over. The entity remains active for a fixed grace period
+    // so death presentation and formation hand-off can still read its data.
     Dead,
-    // The formation is done with the corpse and it may be reclaimed.
+    // Terminal hand-off state: the same lifecycle tick strips active
+    // components and moves the entity into Aoe2xUnitPool.
     Released
 };
+
+inline constexpr std::uint8_t kAoe2xDeadTicks = 10;
 
 // Attached only once a unit falls. Living units carry no lifecycle component
 // at all, which keeps the common case free: the per-unit probe is skipped
@@ -124,12 +129,15 @@ enum class Aoe2xUnitLifecycle : std::uint8_t {
 // corpses rather than the whole army.
 struct Aoe2xUnitState {
     Aoe2xUnitLifecycle lifecycle = Aoe2xUnitLifecycle::Dead;
-    // Ticks left before a released corpse is reclaimed. The budget is fixed
-    // and there is no way to refresh it, so no consumer can pin a corpse.
-    std::uint8_t release_ticks = 0;
+    std::uint8_t dead_ticks = kAoe2xDeadTicks;
 };
 
-inline constexpr std::uint8_t kAoe2xReleaseTicks = 10;
+struct Aoe2xPooledUnit {};
+struct Aoe2xUnitPool {
+    std::vector<entt::entity> available;
+    std::uint64_t recycled = 0;
+    std::uint64_t reused = 0;
+};
 
 // True while the unit still participates in formations, movement and drawing.
 bool aoe2x_unit_alive(const entt::registry&, entt::entity);
@@ -181,7 +189,8 @@ struct SpawnFormationSystem {
         aoe::AoePositionHistory, aoe::AoeCollider, aoe::AoeMovement,
         aoe::AoeLocomotionState, aoe::AoeDirection, FormationAttackMove>;
     using ReadWriteComponents = Aoe2xComponentList<
-        FormationSpawnRequest, FormationSpawnState, aoe::AoePosition>;
+        FormationSpawnRequest, FormationSpawnState, aoe::AoePosition,
+        Aoe2xPooledUnit>;
     static constexpr std::string_view name = "aoe2x_spawn_formation";
     static constexpr Stage app_stage = Stage::PreUpdate;
     static constexpr Aoe2xGameplayPhase phase = Aoe2xGameplayPhase::Prepare;
@@ -220,13 +229,17 @@ struct FormationSystem {
     static void run(EcsWorld&, std::uint64_t);
 };
 
-// Reclaims released corpses once their fixed grace period expires, and sweeps
-// fallen units whose squad no longer exists so nothing can leak by never
-// being spliced out.
+// Counts down Dead entities, then strips every active component and moves the
+// empty entity into the isolated unit pool as Released.
 struct Aoe2xUnitLifecycleSystem {
-    using ReadOnlyComponents = Aoe2xComponentList<UnitSquadInfo, SquadInfo>;
-    using WriteOnlyComponents = Aoe2xComponentList<>;
-    using ReadWriteComponents = Aoe2xComponentList<Aoe2xUnitState>;
+    using ReadOnlyComponents = Aoe2xComponentList<>;
+    using WriteOnlyComponents = Aoe2xComponentList<Aoe2xPooledUnit>;
+    using ReadWriteComponents = Aoe2xComponentList<
+        Aoe2xUnitState, UnitSquadInfo, SquadCaptainInfo,
+        UnitTargetPosition, UnitFormationDirection, UnitFormationMotionState,
+        aoe::AoePosition, aoe::AoePositionHistory, aoe::AoeCollider,
+        aoe::AoeMovement, aoe::AoeLocomotionState, aoe::AoeDirection,
+        Aoe2xNavigationDestination, Aoe2xRoutePlan, FormationMotionState>;
     static constexpr std::string_view name = "aoe2x_unit_lifecycle";
     static constexpr Stage app_stage = Stage::PreUpdate;
     static constexpr Aoe2xGameplayPhase phase = Aoe2xGameplayPhase::Lifecycle;

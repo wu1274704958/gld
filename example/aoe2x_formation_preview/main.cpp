@@ -37,7 +37,7 @@ constexpr std::uint32_t PreviewLayer = 0x1u;
 constexpr std::uint32_t HudLayer = 0x2u;
 // Squad footprints are laid out from these, so they also decide how much of
 // the map a stress preset occupies.
-constexpr float UnitRadius = .95f;
+constexpr float UnitRadius = .35f;
 constexpr float UnitSpacing = .1f;
 // CompactSquareFormation refuses counts above this, so a stress run is split
 // into several squads instead of one huge formation.
@@ -150,7 +150,7 @@ std::uint32_t env_uint(const char* name, std::uint32_t fallback) {
 
 StressConfig read_config() {
     StressConfig config;
-    config.preset = std::clamp(env_uint("GLD_AOE2X_STRESS_PRESET", 1u), 1u, 5u);
+    config.preset = std::clamp(env_uint("GLD_AOE2X_STRESS_PRESET", 3u), 1u, 5u);
     struct Preset {
         std::uint32_t units, width, height;
     };
@@ -385,8 +385,8 @@ void input_system(EcsWorld& world) {
         // Casualties on demand: [K] takes a random member so the follow chain
         // has to splice around it, [C] takes a captain so the successor has to
         // inherit the route. Hold either key down for sustained attrition.
-        const bool kill_any = keyboard->is_pressed(GLFW_KEY_K);
-        const bool kill_captain = keyboard->is_pressed(GLFW_KEY_C);
+        const bool kill_any = keyboard->just_now_pressed(GLFW_KEY_K);
+        const bool kill_captain = keyboard->just_now_pressed(GLFW_KEY_C);
         if (kill_any || kill_captain) inflict_casualty(world, kill_captain);
     }
     auto* mouse = world.try_resource<MouseButtons>();
