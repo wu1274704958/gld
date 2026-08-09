@@ -938,11 +938,31 @@ glm::vec2 resolve_elastic_slot_destination(
     return original;
 }
 
+void assign_direct_waypoint(entt::registry& reg, entt::entity entity,
+                            glm::vec2 destination,
+                            std::uint64_t map_revision,
+                            std::uint64_t tick) {
+    auto& path = reg.emplace_or_replace<AoeNavigationPath>(entity);
+    path.waypoints.assign(1, destination);
+    path.current = 0;
+    path.requested_goal = destination;
+    path.map_revision = map_revision;
+    path.request_sequence = 0;
+    path.last_repath_tick = tick;
+    path.blocked_ticks = 0;
+    path.no_path = false;
+    path.include_dynamic_obstacles = false;
+    path.dynamic_repath_requested = false;
+    path.dynamic_repath_failed = false;
+}
+
 void drive_squad_slots_full(EcsWorld& world, entt::entity squad,
                             float speed_limit, std::uint64_t tick) {
     auto& reg = world.reg();
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const std::uint64_t map_revision = map ? map->static_revision() : 0;
     const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad);
     const float traffic_speed = traffic
         ? std::clamp(traffic->speed_scale, 0.f, 1.f) : 1.f;
@@ -961,12 +981,11 @@ void drive_squad_slots_full(EcsWorld& world, entt::entity squad,
         auto& goal = reg.emplace_or_replace<AoeMoveGoal>(entity,
             AoeMoveGoal{destination, 0.f, {}});
         (void)goal;
-        auto* path = reg.try_get<AoeNavigationPath>(entity);
-        if (!path || path->waypoints.empty())
-            reg.emplace_or_replace<AoeNavigationPath>(entity,
-                AoeNavigationPath{{destination}, 0});
-        else
-            path->current = std::min(path->current, path->waypoints.size() - 1);
+        // Member-route splitting is a later formation stage. Until then, a
+        // member follows its current slot through one direct waypoint. This is
+        // deliberately not a pathfinding request: only the squad guide may
+        // query the pathfinder for a formation movement episode.
+        assign_direct_waypoint(reg, entity, destination, map_revision, tick);
         auto& state = reg.get<AoeActionState>(entity);
         if (state.state == UnitState::Attacking) reset_member_action(reg, entity, tick);
     }
@@ -1750,7 +1769,11 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             center.value = squad_centroid(reg, members, center.value);
             formation.dirty = true;
             formation.arrival_reflow_done = false;
-            reg.remove<AoeNavigationPath>(squad);
+            // Attack Move keeps its center guide while combat temporarily
+            // pauses formation travel. Resuming the same order must continue
+            // the existing route rather than issue another path query.
+            if (order.type != AoeSquadOrderType::AttackMove)
+                reg.remove<AoeNavigationPath>(squad);
             if (order.type == AoeSquadOrderType::AttackTarget) {
                 order.type = AoeSquadOrderType::Idle;
                 state.phase = AoeSquadPhase::Regrouping;
@@ -1809,11 +1832,12 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             auto* guide = reg.try_get<AoeNavigationPath>(squad);
             const auto* map = world.try_resource<AoeLogicMap>();
             const std::uint64_t revision = map ? map->static_revision() : 0;
-            const bool needs_guide = !guide ||
-                (!guide->no_path && (guide->waypoints.empty() ||
-                                     guide->current >= guide->waypoints.size())) ||
-                glm::length(guide->requested_goal - order.destination) > Epsilon ||
-                guide->map_revision != revision;
+            // apply_squad_command removes the old guide for every accepted
+            // movement command. Consequently a missing guide means this order
+            // has not been planned yet. An exhausted or failed guide is still
+            // the result for this order and must not be queried again. Static
+            // map revision changes are the sole in-order replan trigger.
+            const bool needs_guide = !guide || guide->map_revision != revision;
             if (needs_guide) {
                 const std::uint64_t next_sequence = guide
                     ? guide->request_sequence + 1 : 1;
@@ -1971,6 +1995,9 @@ bool plan_navigation_path(EcsWorld& world, entt::entity entity,
     path.blocked_ticks = 0;
     const bool failed = result.status != AoePathStatus::Ready ||
                         result.waypoints.empty();
+// Dynamic-obstacle replanning is temporarily disabled. Keep this fallback in
+// place so it can be restored together with the blocked-unit trigger below.
+#if 0
     if (failed && include_dynamic && had_usable_path) {
         path.no_path = false;
         path.dynamic_repath_failed = true;
@@ -1981,6 +2008,9 @@ bool plan_navigation_path(EcsWorld& world, entt::entity entity,
             tick);
         return true;
     }
+#else
+    (void)had_usable_path;
+#endif
     path.current = 0;
     path.waypoints = result.waypoints;
     path.no_path = failed;
@@ -2056,17 +2086,36 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
                 ? attack_approach_destination(world, entity, goal.target)
                 : reg.get<AoePosition>(goal.target.entity).value;
         }
+        if (reg.all_of<AoeSquadMember>(entity)) {
+            // Formation members consume direct provisional waypoints until
+            // the squad-center route splitter supplies full member routes.
+            // They never enter the unit Pathfinder while still attached to a
+            // squad, including when directly approaching a combat target.
+            assign_direct_waypoint(
+                reg, entity, goal.destination, map_revision, tick);
+            if (state.state == UnitState::Idle) {
+                state.state = UnitState::Moving;
+                state.state_started_tick = tick;
+            }
+            continue;
+        }
         auto* path = reg.try_get<AoeNavigationPath>(entity);
-        const float threshold = reg.all_of<AoeSquadMember>(entity) ||
-                                goal.target.entity != entt::null
+        const float threshold = goal.target.entity != entt::null
             ? nav_settings.slot_repath_distance : Epsilon;
         bool needs_path = !path ||
             (!path->no_path &&
              (path->waypoints.empty() || path->current >= path->waypoints.size())) ||
             (path && glm::length(path->requested_goal - goal.destination) > threshold) ||
-            (path && path->map_revision != map_revision) ||
-            (path && path->dynamic_repath_requested);
-        bool include_dynamic = path && path->include_dynamic_obstacles;
+            (path && path->map_revision != map_revision)
+#if 0
+            // Dynamic-obstacle replanning is temporarily disabled.
+            || (path && path->dynamic_repath_requested)
+#endif
+            ;
+        // Global pathfinding currently plans against static map geometry only.
+        // Other units remain active in local/global motion and safety systems.
+        constexpr bool include_dynamic = false;
+#if 0
         const auto repath_cooldown = [&] {
             const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
             return nav_settings.repath_cooldown_ticks +
@@ -2076,16 +2125,14 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
         if (path && path->dynamic_repath_failed &&
             tick - path->last_repath_tick >= repath_cooldown())
             needs_path = true;
+#endif
         if (path && path->no_path) {
             if (path->map_revision != map_revision) needs_path = true;
-            else if (reg.all_of<AoeSquadMember>(entity) &&
-                     glm::length(path->requested_goal - goal.destination) >
-                         Epsilon &&
-                     tick - path->last_repath_tick >= repath_cooldown())
-                needs_path = true;
+#if 0
             else if (path->include_dynamic_obstacles &&
                      tick - path->last_repath_tick >= repath_cooldown())
                 needs_path = true;
+#endif
         }
         if (path && !path->no_path && !needs_path &&
             glm::length(path->requested_goal - goal.destination) > Epsilon &&
@@ -2387,6 +2434,9 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             const bool traffic_grace = intentional_motion &&
                 decision->wait_ticks < traffic_limit;
             if (!traffic_grace) {
+#if 0
+                // Dynamic-obstacle replanning is temporarily disabled. Local
+                // and global motion continue resolving persistent congestion.
                 ++path.blocked_ticks;
                 const auto trigger = std::max(1u,
                     navigation.blocked_repath_ticks);
@@ -2398,6 +2448,9 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                         decision->stop_reason =
                             AoeMotionStopReason::RepathPending;
                 }
+#else
+                path.blocked_ticks = 0;
+#endif
             } else {
                 path.blocked_ticks = 0;
             }
@@ -2869,8 +2922,14 @@ AoePathResult GridAStarPathfinderLogic::find(
     const std::size_t start = index_of(start_cell->x, start_cell->y);
     const std::size_t goal = index_of(goal_cell->x, goal_cell->y);
 
+#if 0
+    // Dynamic units are intentionally excluded from global path planning.
+    // Preserve the lookup for a future opt-in restoration.
     const auto* dynamic = request.include_dynamic_obstacles
         ? world.try_resource<AoeDynamicObstacleIndex>() : nullptr;
+#else
+    const AoeDynamicObstacleIndex* dynamic = nullptr;
+#endif
     const auto clear_segment = [&](glm::vec2 from, glm::vec2 to) {
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
         ++profiled_segments;

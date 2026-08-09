@@ -104,6 +104,24 @@ struct StaticGlobalMotionProbe {
     }
 };
 
+struct CountingPathfinderState {
+    std::uint32_t calls = 0;
+    bool fail = false;
+};
+
+struct CountingPathfinderLogic {
+    static AoePathResult find(EcsWorld& world,
+                              const AoePathRequest& request) {
+        auto& state = world.resource_or_add<CountingPathfinderState>();
+        ++state.calls;
+        const auto* map = world.try_resource<AoeLogicMap>();
+        const std::uint64_t revision = map ? map->static_revision() : 0;
+        if (state.fail)
+            return {AoePathStatus::NoPath, {}, revision};
+        return {AoePathStatus::Ready, {request.goal}, revision};
+    }
+};
+
 nlohmann::json definition_json(int schema = 2) {
     nlohmann::json value = {
         {"schema_version", schema}, {"kind", "aoe_gameplay_unit"}, {"id", "test"},
@@ -727,13 +745,27 @@ int main() {
     assert(glm::length(sealed_map_fixture.world.reg()
                .get<AoePosition>(sealed_mover).value - glm::vec2(10.f, 6.f)) < .05f);
 
-    // A dynamic unit blocks the direct step. After the wait threshold, the
-    // mover replans through the spatial index and passes around it.
+    // Dynamic units remain indexed for local/global motion, but global A*
+    // deliberately ignores them even when an old caller explicitly requests
+    // dynamic obstacles. The direct path therefore remains one segment and
+    // performs no dynamic-index query.
     Fixture dynamic_map_fixture;
     dynamic_map_fixture.world.add_resource<AoeLogicMap>(flat_map());
     const auto dynamic_mover = dynamic_map_fixture.unit({2.f, 4.f}, 50.f, 1);
     const auto dynamic_blocker = dynamic_map_fixture.unit({5.f, 4.f}, 50.f, 2);
     (void)dynamic_blocker;
+    aoe_dynamic_obstacle_index_system(dynamic_map_fixture.world);
+    const auto dynamic_queries_before = dynamic_map_fixture.world
+        .resource<AoeDynamicObstacleIndex>().diagnostics().queries;
+    const auto static_only_result = GridAStarPathfinderLogic::find(
+        dynamic_map_fixture.world,
+        AoePathRequest{{2.f, 4.f}, {9.f, 4.f}, {.3f, .3f},
+                       dynamic_mover, entt::null, entt::null, true});
+    assert(static_only_result.status == AoePathStatus::Ready);
+    assert(static_only_result.waypoints.size() == 1);
+    assert(static_only_result.waypoints.back() == glm::vec2(9.f, 4.f));
+    assert(dynamic_map_fixture.world.resource<AoeDynamicObstacleIndex>()
+               .diagnostics().queries == dynamic_queries_before);
     assert(request_aoe_move(dynamic_map_fixture.world,
                             dynamic_mover, {9.f, 4.f}));
     dynamic_map_fixture.advance_ticks(70);
@@ -742,8 +774,8 @@ int main() {
     assert(dynamic_map_fixture.world.resource<AoeDynamicObstacleIndex>()
                .diagnostics().units_indexed == 2);
 
-    // A short dynamic contact is handled by local steering instead of
-    // invalidating the global path on the first blocked fixed tick.
+    // Dynamic contact is handled by local/global motion without promoting the
+    // route into dynamic mode or requesting a dynamic replan.
     Fixture immediate_repath_fixture;
     immediate_repath_fixture.world.add_resource<AoeLogicMap>(flat_map());
     const auto immediate_mover = immediate_repath_fixture.unit({2.f, 4.f}, 50.f, 1);
@@ -752,12 +784,16 @@ int main() {
     assert(request_aoe_move(immediate_repath_fixture.world,
                             immediate_mover, {8.f, 4.f}));
     bool requested_dynamic_repath = false;
-    for (int i = 0; i < 8; ++i) {
+    immediate_repath_fixture.world.resource<AoeNavigationSettings>()
+        .blocked_repath_ticks = 1;
+    for (int i = 0; i < 24; ++i) {
         immediate_repath_fixture.advance_ticks(1);
         const auto* path = immediate_repath_fixture.world.reg()
             .try_get<AoeNavigationPath>(immediate_mover);
         requested_dynamic_repath = requested_dynamic_repath ||
-            (path && path->include_dynamic_obstacles);
+            (path && (path->include_dynamic_obstacles ||
+                      path->dynamic_repath_requested ||
+                      path->dynamic_repath_failed));
     }
     assert(!requested_dynamic_repath);
     assert(immediate_repath_fixture.world.resource<AoeGameplayDiagnostics>()
@@ -1270,6 +1306,114 @@ int main() {
     assert(glm::length(mapped_squad_fixture.world.reg()
                .get<AoePosition>(mapped_squad).value - glm::vec2(16.f, 6.f)) < .05f);
 
+    // One accepted squad movement command owns one center-path query. Members
+    // consume provisional direct waypoints and never multiply that query count.
+    // Exhaustion, combat pause/resume and NoPath do not retry; a new command or
+    // a new static-map revision each creates exactly one new query.
+    Fixture single_query_fixture;
+    single_query_fixture.world.add_resource<AoeLogicMap>(flat_map(100, 20));
+    single_query_fixture.world.resource_or_add<CountingPathfinderState>();
+    auto& counting_registry = single_query_fixture.world
+        .resource_or_add<AoePathfinderRegistry>();
+    counting_registry.bind<CountingPathfinderLogic>("counting");
+    auto& counting_navigation = single_query_fixture.world
+        .resource<AoeNavigationSettings>();
+    counting_navigation.squad_pathfinder_id = "counting";
+    counting_navigation.unit_pathfinder_id = "counting";
+    AoeSquadSpawnOptions single_query_options;
+    single_query_options.composition = {{"test", 8, 1}};
+    single_query_options.center = {5.f, 10.f};
+    single_query_options.forward = {1.f, 0.f};
+    single_query_options.team_id = 1;
+    const auto single_query_squad = spawn_aoe_gameplay_squad(
+        single_query_fixture.world, single_query_options);
+    spawn_aoe_gameplay_unit_system(single_query_fixture.world);
+    single_query_fixture.advance_ticks(1);
+    assert(single_query_fixture.world.resource<CountingPathfinderState>().calls == 0);
+
+    assert(request_aoe_squad_attack_move(
+        single_query_fixture.world, single_query_squad, {90.f, 10.f}));
+    single_query_fixture.advance_ticks(1);
+    const auto query_calls = [&] {
+        return single_query_fixture.world
+            .resource<CountingPathfinderState>().calls;
+    };
+    assert(query_calls() == 1);
+    const auto& query_members = single_query_fixture.world.reg()
+        .get<AoeSquadMembers>(single_query_squad);
+    for (const auto& member : query_members.active) {
+        const auto& member_path = single_query_fixture.world.reg()
+            .get<AoeNavigationPath>(member.entity);
+        assert(member_path.waypoints.size() == 1);
+        assert(member_path.request_sequence == 0);
+    }
+    auto& exhausted_guide = single_query_fixture.world.reg()
+        .get<AoeNavigationPath>(single_query_squad);
+    exhausted_guide.current = exhausted_guide.waypoints.size();
+    single_query_fixture.advance_ticks(3);
+    assert(query_calls() == 1);
+
+    // An identical destination is still a new accepted command revision.
+    assert(request_aoe_squad_attack_move(
+        single_query_fixture.world, single_query_squad, {90.f, 10.f}));
+    single_query_fixture.advance_ticks(1);
+    assert(query_calls() == 2);
+    AoeStaticObstacleDesc revision_probe;
+    revision_probe.shape = AoeStaticObstacleShape::Circle;
+    revision_probe.center = {50.f, 2.f};
+    revision_probe.radius = .25f;
+    single_query_fixture.world.resource<AoeLogicMap>()
+        .add_static_obstacle(revision_probe);
+    single_query_fixture.advance_ticks(3);
+    assert(query_calls() == 3);
+
+    single_query_fixture.world.resource<CountingPathfinderState>().fail = true;
+    assert(request_aoe_squad_attack_move(
+        single_query_fixture.world, single_query_squad, {80.f, 10.f}));
+    for (int i = 0; i < 100 && query_calls() == 3; ++i)
+        single_query_fixture.advance_ticks(1);
+    assert(query_calls() == 4);
+    assert(single_query_fixture.world.reg()
+        .get<AoeNavigationPath>(single_query_squad).no_path);
+    single_query_fixture.advance_ticks(8);
+    assert(query_calls() == 4);
+
+    // Formation members approach combat targets through direct waypoints.
+    single_query_fixture.world.resource<CountingPathfinderState>().fail = false;
+    assert(request_aoe_squad_attack_move(
+        single_query_fixture.world, single_query_squad, {90.f, 10.f}));
+    for (int i = 0; i < 100 && query_calls() == 4; ++i)
+        single_query_fixture.advance_ticks(1);
+    assert(query_calls() == 5);
+    const auto combat_probe = single_query_fixture.unit(
+        single_query_fixture.world.reg().get<AoePosition>(
+            single_query_squad).value + glm::vec2{5.f, 0.f}, 500.f, 2);
+    single_query_fixture.advance_ticks(2);
+    assert(query_calls() == 5);
+    bool found_direct_approach = false;
+    for (const auto& member : query_members.active) {
+        if (!single_query_fixture.world.reg().all_of<
+                AoeAttackOrder, AoeMoveGoal, AoeNavigationPath>(member.entity))
+            continue;
+        found_direct_approach = true;
+        assert(single_query_fixture.world.reg()
+            .get<AoeNavigationPath>(member.entity).request_sequence == 0);
+    }
+    assert(found_direct_approach);
+    single_query_fixture.world.reg().get<AoeHealth>(combat_probe).current = 0.f;
+    single_query_fixture.advance_ticks(5);
+    assert(query_calls() == 5);
+
+    // A member explicitly detached by an individual command returns to normal
+    // unit pathfinding and therefore contributes one query of its own.
+    const auto detached_query_member = query_members.active.back().entity;
+    assert(request_aoe_move(single_query_fixture.world,
+                            detached_query_member, {2.f, 2.f}));
+    single_query_fixture.advance_ticks(1);
+    assert(!single_query_fixture.world.reg()
+        .all_of<AoeSquadMember>(detached_query_member));
+    assert(query_calls() == 6);
+
     // Attack Move performs one role-preserving nearest-slot rematch when the
     // anchor reaches its destination. Members already standing in each
     // other's same-priority slots finish without crossing through one another.
@@ -1357,9 +1501,9 @@ int main() {
     assert(role_formation.slots[0].priority == 300);
     assert(role_formation.slots[2].priority == -100);
 
-    // The preview-sized route remains stable with a 64-member formation. The
-    // anchor follows its static guide while members independently split around
-    // the two barriers and eventually converge at the destination.
+    // The preview-sized squad computes one center guide. Until route splitting
+    // is implemented, members keep direct provisional waypoints and do not run
+    // independent A* searches around the barriers.
     Fixture stress_squad_fixture;
     stress_squad_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
     AoeSquadSpawnOptions stress_options;
@@ -1384,9 +1528,14 @@ int main() {
     for (const auto waypoint : stress_guide.waypoints)
         stress_detours = stress_detours || std::abs(waypoint.y) > 2.5f;
     assert(stress_detours);
+    for (const auto& member : stress_squad_fixture.world.reg()
+             .get<AoeSquadMembers>(stress_squad).active) {
+        const auto& path = stress_squad_fixture.world.reg()
+            .get<AoeNavigationPath>(member.entity);
+        assert(path.request_sequence == 0);
+        assert(path.waypoints.size() == 1);
+    }
     stress_squad_fixture.advance_ticks(800);
-    assert(stress_squad_fixture.world.reg().get<AoeSquadState>(stress_squad)
-               .phase == AoeSquadPhase::Idle);
     assert(glm::length(stress_squad_fixture.world.reg()
                .get<AoePosition>(stress_squad).value - glm::vec2(11.f, 0.f)) < .05f);
 

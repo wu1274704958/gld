@@ -31,3 +31,4 @@ __pycache__/
 *.pyc
 /tools/aoe2de_export/sld/Debug/
 /tools/aoe2de_export/sld/*.pyd
+/build-profile/**

@@ -367,6 +367,11 @@ world.resource<AoeNavigationSettings>().unit_pathfinder_id = "my_pathfinder";
 
 `AoePathRequest` 包含起点、终点、椭圆 clearance、subject、Squad、可忽略的动态目标，以及是否纳入动态障碍。返回状态为 `Ready/NoPath/InvalidStart/InvalidGoal`。
 
+> 当前全局寻路暂时只计算静态地图。`include_dynamic_obstacles` 及相关
+> request/path 字段为兼容和后续恢复而保留，但内置 `grid_astar` 不读取动态
+> 障碍索引。其他 Unit 仍参与 Local Steering、Global Motion 和最终 swept
+> collision clamp。
+
 内置策略：
 
 - `direct`：直接返回目标 waypoint；
@@ -381,13 +386,13 @@ world.resource<AoeNavigationSettings>().unit_pathfinder_id = "my_pathfinder";
 - 使用八邻域；
 - 对角移动时防止 corner cutting；
 - 用单位 X/Y clearance 检查 cell；
-- 可按请求检查动态障碍；
+- 当前不检查动态障碍（原实现暂时保留在代码的禁用分支中）；
 - 找到 raw path 后，用无碰撞 line-of-sight 合并多余 waypoint；
 - 返回规划时的 map static revision。
 
 `AoeNavigationPath` 记录 waypoint、当前索引、requested goal、map revision、request sequence、最后重算 tick、blocked ticks、no-path 以及是否包含动态障碍。
 
-持续没有前进会产生 `Blocked` navigation event。达到阈值后清空路径，并要求下一次重算纳入动态障碍。重算具有 cooldown 和按实例错开的确定性节奏，避免整队同一帧集中重算。静态 NoPath 会等待地图 revision 变化后再尝试。
+动态阻塞触发的全局重寻路当前暂时禁用，原 blocked threshold、动态失败保留旧路线以及错峰 cooldown 代码仍保留在禁用分支中。目标变化、静态地图 revision 变化和静态 NoPath 在地图变化后的重算保持有效；近距离单位冲突由 Local Steering、Global Motion 和最终 swept collision 处理。
 
 ### 7.4 局部 Steering 静态接口
 
@@ -659,11 +664,14 @@ slot_world = squad_center
 
 ### 10.4 协同移动
 
-- Squad anchor 使用 `squad_pathfinder_id` 规划静态障碍 guide；
-- 每个成员使用 `unit_pathfinder_id` 向不断移动的 formation slot 规划；
+- 每条已接受的 Squad `MoveTo/AttackMove` 命令使用
+  `squad_pathfinder_id` 为 anchor 规划一次静态障碍 guide；
+- guide 耗尽、NoPath、战斗暂停或恢复不会重复请求；只有新命令或静态地图
+  revision 变化会再次规划；
+- Squad 成员不会进入 `unit_pathfinder_id`。在成员路线拆分完成前，行军和
+  追敌都只刷新一个临时直达 waypoint；
 - Squad 移动速度限制为仍存活成员中的最低速度；
-- slot 移动超过阈值时成员路径重算；
-- 成员可以在障碍两侧分流，之后逐步回到阵型；
+- 中心 guide 到成员偏移路线的拆分、静态障碍验证及窄路阵型调整由后续阶段实现；
 - `squad_leash` 当前主要用于诊断，不会让整队因为一个落后成员而停止；
 - anchor 自己无路可走时 Squad 才进入 `Blocked`。
 

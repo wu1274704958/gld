@@ -36,6 +36,7 @@
 #include <ecs/render/Gizmo.hpp>
 #include <ecs/render/RenderComponents.hpp>
 #include <ecs/render/RenderSystem.hpp>
+#include <ecs/systems/OrthographicCameraControlSystem.hpp>
 #include <ecs/systems/TransformSystem.hpp>
 #include <ecs/text/FontAsset.hpp>
 #include <ecs/text/TextComponents.hpp>
@@ -327,10 +328,9 @@ void fit_preview_camera_system(EcsWorld& world) {
         static_cast<float>(window->width) * ViewportUsage / extent.x,
         static_cast<float>(window->height) * ViewportUsage / extent.y);
     const glm::vec2 center = (projected_min + projected_max) * .5f;
-    glm::mat4 view{1.f};
-    view = glm::scale(view, glm::vec3(scale, scale, 1.f));
-    view = glm::translate(view, glm::vec3(-center, 0.f));
-    camera->view = view;
+    auto* control = world.reg().try_get<OrthographicCameraControl>(
+        preview->world_camera);
+    if (control) set_orthographic_camera_fit(*control, center, scale);
 }
 
 void projection_system(EcsWorld& world) {
@@ -420,6 +420,10 @@ void destroy_projectiles(EcsWorld& world) {
 
 void reset_scene(EcsWorld& world) {
     auto& state = world.resource<PreviewState>();
+    if (world.reg().valid(state.world_camera))
+        if (auto* control = world.reg().try_get<OrthographicCameraControl>(
+                state.world_camera))
+            reset_orthographic_camera_control(*control);
     destroy_squad(world, state.blue);
     destroy_squad(world, state.red);
     destroy_projectiles(world);
@@ -1601,6 +1605,12 @@ int main() {
     app.add_plugin(Aoe2GameplayBridgePlugin{});
     app.add_plugin(GizmoPlugin);
     app.add_plugin(RenderPlugin);
+    auto& camera_control =
+        app.world.resource_or_add<OrthographicCameraControlConfig>();
+    camera_control.pan_speed = 1.f;
+    camera_control.zoom_speed = .15f;
+    camera_control.minimum_zoom = .25f;
+    camera_control.maximum_zoom = 8.f;
     PreviewState initial_preview;
     if (const char* value = std::getenv("GLD_AOE_STRESS_PRESET")) {
         const long preset = std::strtol(value, nullptr, 10);
@@ -1644,6 +1654,7 @@ int main() {
         camera.layers = UnitLayer;
         camera.clear_color = {.12f, .14f, .17f, 1.f};
         world.reg().emplace<Camera>(camera_entity, camera);
+        world.reg().emplace<OrthographicCameraControl>(camera_entity);
         world.resource<PreviewState>().world_camera = camera_entity;
         auto& passes = emplace_registered_render_passes(world, camera_entity);
         auto& pass = passes.add(Aoe2UnitPassId);
@@ -1691,6 +1702,7 @@ int main() {
             "Space mutual AttackMove, S stop, "
             "G map, N navigation, C collision, P feet, "
             "L trace, R reset, F5 rescan, "
+            "Middle-drag pan, Wheel zoom, "
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
             "T motion decision log, "
 #endif
@@ -1704,6 +1716,7 @@ int main() {
     app.add_system(Stage::PreUpdate, motion_decision_trace_system);
 #endif
     app.add_system(Stage::Update, fit_preview_camera_system);
+    app.add_plugin(OrthographicCameraControlPlugin);
     app.add_system(Stage::Update, projection_system);
     app.add_system(Stage::PostUpdate, submit_map_navigation_gizmos);
     app.add_system(Stage::PostUpdate, submit_unit_collider_gizmos);
