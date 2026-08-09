@@ -886,6 +886,7 @@ struct AoeGameplayPerformanceDiagnostics {
     double squad_command_ms = 0.0;
     double command_ms = 0.0;
     double membership_cleanup_ms = 0.0;
+    double squad_engagement_ms = 0.0;
     double squad_control_ms = 0.0;
     double formation_ms = 0.0;
     double squad_traffic_ms = 0.0;
@@ -1048,11 +1049,34 @@ void aoe_gameplay_formation_fixed_tick(
 void aoe_gameplay_fixed_after_formation_before_local(
     EcsWorld&, std::uint64_t tick);
 void aoe_gameplay_fixed_after_global(EcsWorld&, std::uint64_t tick);
+
+// Shared low-level engagement operations. Squad target-selection policy lives
+// in its own plugin, while unit AttackMove continues to use these primitives.
+bool aoe_gameplay_target_valid(
+    const entt::registry&, const AoeUnitTarget&);
+bool aoe_gameplay_squad_member_valid(
+    const entt::registry&, const AoeUnitTarget&);
+void aoe_gameplay_clear_active_engagement(
+    entt::registry&, entt::entity);
+void aoe_gameplay_reset_member_action(
+    entt::registry&, entt::entity, std::uint64_t tick,
+    bool reset_locomotion = true);
+void aoe_gameplay_assign_engagement_approach(
+    entt::registry&, entt::entity, const AoeUnitTarget&,
+    const AttackDefinition&);
+void aoe_gameplay_attack_with_squad_member(
+    entt::registry&, entt::entity, const AoeUnitTarget&,
+    std::uint64_t tick);
+std::optional<AoeUnitTarget>
+aoe_gameplay_select_stalled_in_range_target(
+    EcsWorld&, entt::entity, const AoeUnitTarget& current,
+    AoeTargetAcquisitionType, float attack_range);
 }
 
 } // namespace gld::ecs::aoe
 
 #include <aoe/AoeFormation.hpp>
+#include <aoe/AoeSquadEngagement.hpp>
 #include <aoe/AoeLocalAvoidance.hpp>
 #include <aoe/AoeGlobalMotion.hpp>
 
@@ -1090,7 +1114,8 @@ template<class Phase, class... Plugins>
 using gameplay_plugin_for_phase_t =
     typename GameplayPluginForPhase<Phase, Plugins...>::type;
 
-template<class FormationPlugin, class LocalAvoidancePlugin,
+template<class SquadEngagementPlugin, class FormationPlugin,
+         class LocalAvoidancePlugin,
          class GlobalMotionPlugin>
 void aoe_gameplay_fixed_system(EcsWorld& world) {
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
@@ -1121,6 +1146,7 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
         clock.accumulator -= settings.fixed_dt;
         ++clock.tick;
         aoe_gameplay_fixed_before_formation(world, clock.tick);
+        SquadEngagementPlugin::fixed_tick(world, clock.tick);
         FormationPlugin::fixed_tick(world, clock.tick);
         aoe_gameplay_fixed_after_formation_before_local(world, clock.tick);
         LocalAvoidancePlugin::fixed_tick(world, clock.tick);
@@ -1146,6 +1172,9 @@ struct AoeGameplayDef {
     static_assert(sizeof...(Plugins) > 0,
         "AoeGameplayDef requires at least one static gameplay plugin");
     static_assert(detail::gameplay_phase_count_v<
+                      AoeSquadEngagementPhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one squad-engagement phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
                       AoeFormationPhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one formation phase plugin");
     static_assert(detail::gameplay_phase_count_v<
@@ -1155,6 +1184,8 @@ struct AoeGameplayDef {
                       AoeGlobalMotionPhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one global-motion phase plugin");
 
+    using SquadEngagementPlugin = detail::gameplay_plugin_for_phase_t<
+        AoeSquadEngagementPhase, Plugins...>;
     using FormationPlugin = detail::gameplay_plugin_for_phase_t<
         AoeFormationPhase, Plugins...>;
     using LocalAvoidancePlugin = detail::gameplay_plugin_for_phase_t<
@@ -1170,14 +1201,16 @@ struct AoeGameplayDef {
         (Plugins::install(app), ...);
         app.add_system(Stage::PreUpdate, [](EcsWorld& world) {
             detail::aoe_gameplay_fixed_system<
-                FormationPlugin, LocalAvoidancePlugin,
+                SquadEngagementPlugin, FormationPlugin,
+                LocalAvoidancePlugin,
                 GlobalMotionPlugin>(world);
         });
     }
 };
 
 using AoeGameplayPlugin = AoeGameplayDef<
-    AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+    AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 
 } // namespace gld::ecs::aoe

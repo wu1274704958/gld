@@ -243,28 +243,34 @@ full, cached and imminent solve counts plus side/facing changes and movement
 timing.
 
 Local avoidance is selected statically when the gameplay plugin is composed.
-`AoeGameplayDef<AoePassThroughLocalAvoidancePlugin,
-AoeDefaultGlobalMotionPlugin>` forwards path-following velocity directly to
+`AoePassThroughLocalAvoidancePlugin` forwards path-following velocity directly to
 global motion planning without dynamic-neighbor collection, a local steering
 solve, or full-plugin per-unit state. GPU/CPU global coordination and final
 static/dynamic collision safety remain active, so this combination removes only
 the local layer rather than permitting unit penetration.
 
-Global motion is a second required static phase. The default
+Global motion is another required static phase. The default
 `AoeDefaultGlobalMotionPlugin` retains the late-bound `gpu_image` planner and
 the headless `cpu_unit_flow` fallback. `AoePassThroughGlobalMotionPlugin` is a
 performance-floor backend: it preserves acceleration limiting and final static
 obstacle safety, but deliberately omits dynamic unit coordination and dynamic
-pair safety. Neither static phase can be switched at runtime; select the plugin
+pair safety. Static phases cannot be switched at runtime; select the plugin
 types when composing the application or benchmark.
 
-For a Global Motion A/B, keep local avoidance fixed and change only the second
-template argument before rebuilding the same executable:
+Squad AttackMove engagement is also selected statically. The full plugin owns
+automatic target acquisition and member target maintenance. The pass-through
+plugin is empty, so AttackMove continues as formation travel while explicit
+Squad AttackTarget remains available.
+
+For a Global Motion A/B, keep the other phases fixed and change only the global
+motion plugin before rebuilding the same executable:
 
 ```cpp
 using ProductionGameplay = AoeGameplayDef<
+    AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 using GlobalMotionFloorGameplay = AoeGameplayDef<
+    AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullLocalAvoidancePlugin, AoePassThroughGlobalMotionPlugin>;
 ```
 
@@ -314,6 +320,7 @@ struct MyLocalAvoidancePlugin {
 };
 
 using MyGameplay = AoeGameplayDef<
+    AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     MyLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 app.add_plugin(MyGameplay{"aoe_units"});
 ```

@@ -50,11 +50,28 @@ struct InvalidFormation {
 };
 
 struct StaticGameplayPluginProbeState {
+    std::uint32_t engagement_calls = 0;
     std::uint32_t formation_calls = 0;
     std::uint32_t local_calls = 0;
     std::uint32_t global_calls = 0;
     std::uint32_t sequence = 0;
     std::uint64_t last_tick = 0;
+};
+
+struct StaticSquadEngagementProbe {
+    using phase = AoeSquadEngagementPhase;
+    static constexpr std::string_view name = "test_engagement_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<StaticGameplayPluginProbeState>();
+    }
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.engagement_calls;
+        probe.sequence = probe.sequence == 0 ? 1 : 99;
+        probe.last_tick = tick;
+    }
 };
 
 struct StaticFormationProbe {
@@ -68,7 +85,7 @@ struct StaticFormationProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.formation_calls;
-        probe.sequence = probe.sequence == 0 ? 1 : 99;
+        probe.sequence = probe.sequence == 1 ? 2 : 99;
         probe.last_tick = tick;
     }
 };
@@ -84,7 +101,7 @@ struct StaticLocalAvoidanceProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.local_calls;
-        probe.sequence = probe.sequence == 1 ? 2 : 99;
+        probe.sequence = probe.sequence == 2 ? 3 : 99;
         probe.last_tick = tick;
     }
 };
@@ -99,7 +116,7 @@ struct StaticGlobalMotionProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.global_calls;
-        probe.sequence = probe.sequence == 2 ? 3 : 99;
+        probe.sequence = probe.sequence == 3 ? 4 : 99;
         probe.last_tick = tick;
     }
 };
@@ -202,7 +219,8 @@ AoeMapDefinition squad_stress_map() {
 
 template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
          class GlobalMotionPlugin = AoeDefaultGlobalMotionPlugin,
-         class FormationPlugin = AoeFullFormationPlugin>
+         class FormationPlugin = AoeFullFormationPlugin,
+         class SquadEngagementPlugin = AoeFullSquadEngagementPlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -274,7 +292,8 @@ struct Fixture {
         for (int i = 0; i < count; ++i) {
             world.resource<Time>().dt = 0.1f;
             gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-                FormationPlugin, LocalAvoidancePlugin,
+                SquadEngagementPlugin, FormationPlugin,
+                LocalAvoidancePlugin,
                 GlobalMotionPlugin>(world);
         }
     }
@@ -282,25 +301,34 @@ struct Fixture {
 } // namespace
 
 using FullGameplayDef = AoeGameplayDef<
-    AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+    AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 using PassThroughGameplayDef =
-    AoeGameplayDef<AoeFullFormationPlugin,
+    AoeGameplayDef<AoeFullSquadEngagementPlugin,
+                   AoeFullFormationPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoeDefaultGlobalMotionPlugin>;
 using MotionFloorGameplayDef =
-    AoeGameplayDef<AoePassThroughFormationPlugin,
+    AoeGameplayDef<AoePassThroughSquadEngagementPlugin,
+                   AoePassThroughFormationPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoePassThroughGlobalMotionPlugin>;
 using ProbeGameplayDef =
-    AoeGameplayDef<StaticFormationProbe, StaticLocalAvoidanceProbe,
+    AoeGameplayDef<StaticSquadEngagementProbe, StaticFormationProbe,
+                   StaticLocalAvoidanceProbe,
                    StaticGlobalMotionProbe>;
+static_assert(AoeGameplayStaticPlugin<AoeFullSquadEngagementPlugin>);
+static_assert(AoeGameplayStaticPlugin<AoePassThroughSquadEngagementPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullFormationPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughFormationPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeDefaultGlobalMotionPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughGlobalMotionPlugin>);
+static_assert(std::same_as<
+    AoeGameplayPlugin::SquadEngagementPlugin,
+    AoeFullSquadEngagementPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::FormationPlugin,
     AoeFullFormationPlugin>);
@@ -334,7 +362,8 @@ int main() {
             "units", AoeGameplaySettings{0.1, 4, 1234}});
         const auto& installed_probe =
             app.world.resource<StaticGameplayPluginProbeState>();
-        assert(installed_probe.formation_calls == 0 &&
+        assert(installed_probe.engagement_calls == 0 &&
+               installed_probe.formation_calls == 0 &&
                installed_probe.local_calls == 0 &&
                installed_probe.global_calls == 0 &&
                installed_probe.sequence == 0 &&
@@ -347,9 +376,10 @@ int main() {
         assert(app_clock.tick == 1 && app_clock.ticks_this_frame == 1);
         const auto& ran_probe =
             app.world.resource<StaticGameplayPluginProbeState>();
-        assert(ran_probe.formation_calls == 1 &&
+        assert(ran_probe.engagement_calls == 1 &&
+               ran_probe.formation_calls == 1 &&
                ran_probe.local_calls == 1 && ran_probe.global_calls == 1 &&
-               ran_probe.sequence == 3 && ran_probe.last_tick == 1);
+               ran_probe.sequence == 4 && ran_probe.last_tick == 1);
         app_server.shutdown();
         app.shutdown();
     }
@@ -645,7 +675,8 @@ int main() {
     history_fixture.world.resource<AoeGameplayClock>().accumulator = 0.0;
     history_fixture.world.resource<Time>().dt = .3f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(
         history_fixture.world);
     assert(glm::length(history_fixture.world.reg()
@@ -662,7 +693,8 @@ int main() {
     raw_time.dt = .1f;
     raw_time.raw_dt = .35f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(raw_time_fixture.world);
     const auto& raw_clock =
         raw_time_fixture.world.resource<AoeGameplayClock>();
@@ -675,7 +707,8 @@ int main() {
     fallback_time.dt = .25f;
     fallback_time.raw_dt = 0.f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
-        AoeFullFormationPlugin, AoeFullLocalAvoidancePlugin,
+        AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(dt_fallback_fixture.world);
     const auto& fallback_clock =
         dt_fallback_fixture.world.resource<AoeGameplayClock>();
@@ -1666,6 +1699,49 @@ int main() {
     assert(invalid_formation_spawn.errors ==
            std::vector<std::string>{"formation layout failed"});
 
+    // The pass-through engagement phase is intentionally empty. AttackMove
+    // therefore remains formation travel even with a nearby enemy, while an
+    // explicit Squad AttackTarget still uses the base squad-control path.
+    Fixture<AoeFullLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin,
+            AoeFullFormationPlugin,
+            AoePassThroughSquadEngagementPlugin>
+        pass_through_engagement_fixture;
+    AoeSquadSpawnOptions pass_through_engagement_options;
+    pass_through_engagement_options.composition = {{"test", 2, 1}};
+    pass_through_engagement_options.team_id = 1;
+    const auto pass_through_engagement_squad = spawn_aoe_gameplay_squad(
+        pass_through_engagement_fixture.world,
+        pass_through_engagement_options);
+    spawn_aoe_gameplay_unit_system(pass_through_engagement_fixture.world);
+    pass_through_engagement_fixture.advance_ticks(1);
+    const auto pass_through_enemy = pass_through_engagement_fixture.unit(
+        {2.f, 0.f}, 500.f, 2);
+    const float pass_through_center_before =
+        pass_through_engagement_fixture.world.reg().get<AoePosition>(
+            pass_through_engagement_squad).value.x;
+    assert(request_aoe_squad_attack_move(
+        pass_through_engagement_fixture.world,
+        pass_through_engagement_squad, {8.f, 0.f}));
+    pass_through_engagement_fixture.advance_ticks(2);
+    assert(!pass_through_engagement_fixture.world.reg().all_of<
+        AoeSquadEngagementResult>(pass_through_engagement_squad));
+    for (const auto& member : pass_through_engagement_fixture.world.reg()
+             .get<AoeSquadMembers>(pass_through_engagement_squad).active)
+        assert(!pass_through_engagement_fixture.world.reg().all_of<
+            AoeAttackOrder>(member.entity));
+    assert(pass_through_engagement_fixture.world.reg().get<AoePosition>(
+               pass_through_engagement_squad).value.x >
+           pass_through_center_before);
+    assert(request_aoe_squad_attack(
+        pass_through_engagement_fixture.world,
+        pass_through_engagement_squad, pass_through_enemy));
+    pass_through_engagement_fixture.advance_ticks(1);
+    for (const auto& member : pass_through_engagement_fixture.world.reg()
+             .get<AoeSquadMembers>(pass_through_engagement_squad).active)
+        assert(pass_through_engagement_fixture.world.reg()
+            .get<AoeAttackOrder>(member.entity).target.entity ==
+            pass_through_enemy);
+
     Fixture squad_combat_fixture;
     AoeSquadSpawnOptions attackers_options;
     attackers_options.composition = {{"test", 2, 1}};
@@ -1679,6 +1755,13 @@ int main() {
     assert(request_aoe_squad_attack_move(
         squad_combat_fixture.world, attackers, {8.f, 0.f}));
     squad_combat_fixture.advance_ticks(1);
+    const auto& engagement_result = squad_combat_fixture.world.reg()
+        .get<AoeSquadEngagementResult>(attackers);
+    assert(engagement_result.valid &&
+           engagement_result.produced_tick ==
+               squad_combat_fixture.world.resource<AoeGameplayClock>().tick &&
+           engagement_result.status == AoeSquadEngagementStatus::Active &&
+           engagement_result.active_members == 2);
     assert(squad_combat_fixture.world.reg().get<AoeSquadOrder>(attackers)
                .target.entity == entt::null);
     for (const auto& member : squad_combat_fixture.world.reg()

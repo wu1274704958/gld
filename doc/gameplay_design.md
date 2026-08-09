@@ -518,6 +518,15 @@ struct AoeTargetAcquisitionBinding<
 - 当前目标死亡、失效、离开 `disengage_radius` 或确认不可达后重新选择最近目标；
 - 到达终点且无目标时结束命令。
 
+Squad `AttackMove` 的自动交战由独立的编译期
+`AoeSquadEngagementPhase` 负责，并在 Formation phase 之前运行：
+
+- `AoeFullSquadEngagementPlugin` 每个 tick 对每个 Squad 只更新一次，维护共享候选集合、成员目标和追击状态，并生成当前 tick 的 `AoeSquadEngagementResult`；
+- Formation 只根据该结果暂停或恢复 anchor，自身仍负责 Squad phase、中心路线和 slot 驱动；
+- 没有目标时只清理确实存在的成员交战命令，不删除普通 formation slot 路线；
+- `AoePassThroughSquadEngagementPlugin` 为空实现。结果缺失时 Formation 继续执行原 AttackMove 路线，因此它退化为不自动索敌的编队移动；
+- 显式 Squad `AttackTarget` 保留在基础 Squad control 中，不受 pass-through 插件影响。
+
 `AttackMove` 保留终点并主动追击发现范围内的目标；`AttackTarget` 则只处理明确指定的目标，目标失效后不会自动串联附近敌人。
 
 ### 8.4 朝向

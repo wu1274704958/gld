@@ -49,6 +49,7 @@ using namespace gld::ecs::aoe2_gameplay;
 namespace fs = std::filesystem;
 
 using SquadGameplayDef = AoeGameplayDef<
+    AoeFullSquadEngagementPlugin,
     AoePassThroughFormationPlugin, AoePassThroughLocalAvoidancePlugin,
     AoePassThroughGlobalMotionPlugin>;
 
@@ -1255,6 +1256,8 @@ void diagnostics_system(EcsWorld& world) {
         << "1-6 total units = 128/512/2000/5000/10000/20000"
            " | Space attack-move | S stop | R reset | F5 reload\n"
         << "G map=" << (preview.draw_map ? "ON" : "OFF")
+        << " | squad-engagement="
+        << SquadGameplayDef::SquadEngagementPlugin::name << " (static)"
         << " | formation="
         << SquadGameplayDef::FormationPlugin::name << " (static)"
         << " | local-avoidance="
@@ -1447,11 +1450,11 @@ void system_profile_end(EcsWorld& world) {
         profile->csv
             << "frame,capture_s,frame_ms,preceding_raw_dt_ms,time_fps,hud_fps,hud_avg_ms,"
                "hud_p95_ms,hud_max_ms,fixed_ticks,dropped_s,gameplay_units,"
-               "render_units,formation_backend,local_avoidance_backend,global_motion_backend,"
+               "render_units,squad_engagement_backend,formation_backend,local_avoidance_backend,global_motion_backend,"
                "projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
                "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
-               "g_membership_ms,g_squad_traffic_ms,g_squad_control_ms,g_formation_ms,"
+               "g_membership_ms,g_squad_traffic_ms,g_squad_engagement_ms,g_squad_control_ms,g_formation_ms,"
                "g_acquisition_ms,g_navigation_ms,g_movement_intent_ms,"
                "g_local_avoidance_ms,g_unit_flow_ms,g_motion_safety_ms,"
                "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
@@ -1525,6 +1528,7 @@ void system_profile_end(EcsWorld& world) {
         << preview.displayed_frame_dt_ms << ',' << preview.displayed_frame_p95_ms << ','
         << preview.displayed_frame_max_ms << ',' << clock.ticks_this_frame << ','
         << clock.dropped_seconds << ',' << gameplay_units << ',' << render_units << ','
+        << SquadGameplayDef::SquadEngagementPlugin::name << ','
         << SquadGameplayDef::FormationPlugin::name << ','
         << SquadGameplayDef::LocalAvoidancePlugin::name << ','
         << SquadGameplayDef::GlobalMotionPlugin::name << ','
@@ -1534,7 +1538,8 @@ void system_profile_end(EcsWorld& world) {
         << gameplay.static_obstacle_index_ms << ',' << gameplay.dynamic_obstacle_index_ms << ','
         << gameplay.squad_command_ms << ',' << gameplay.command_ms << ','
         << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
-        << gameplay.squad_control_ms << ',' << gameplay.formation_ms << ','
+        << gameplay.squad_engagement_ms << ',' << gameplay.squad_control_ms << ','
+        << gameplay.formation_ms << ','
         << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
         << gameplay.movement_intent_ms << ',' << gameplay.local_avoidance_ms << ','
         << gameplay.unit_flow_ms << ',' << gameplay.motion_safety_ms << ','
