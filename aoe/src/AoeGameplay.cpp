@@ -1383,6 +1383,48 @@ void engage_squad_target(EcsWorld& world, entt::entity squad,
     reg.get<AoeSquadState>(squad).phase = AoeSquadPhase::Engaging;
 }
 
+// Collect center-route requests before Formation runs. The statically selected
+// squad pathfinder consumes this queue immediately, so Formation sees the
+// completed guide in the same fixed tick.
+void squad_navigation_request_tick(EcsWorld& world, std::uint64_t tick) {
+    auto& reg = world.reg();
+    const auto* map = world.try_resource<AoeLogicMap>();
+    const std::uint64_t revision = map ? map->static_revision() : 0;
+    auto& requests = world.resource_or_add<AoeSquadPathfinderRequests>().values;
+    requests.clear();
+    for (const auto squad : reg.view<AoeSquadMembers, AoeSquadSpawnState,
+                                     AoeSquadOrder, AoePosition>()) {
+        const auto& spawn = reg.get<AoeSquadSpawnState>(squad);
+        if (spawn.status == AoeSquadSpawnStatus::Pending ||
+            spawn.status == AoeSquadSpawnStatus::Failed ||
+            spawn.status == AoeSquadSpawnStatus::Empty)
+            continue;
+        const auto& order = reg.get<AoeSquadOrder>(squad);
+        if (order.type != AoeSquadOrderType::MoveTo &&
+            order.type != AoeSquadOrderType::AttackMove)
+            continue;
+        const auto* guide = reg.try_get<AoeNavigationPath>(squad);
+        if (guide && guide->map_revision == revision) continue;
+
+        glm::vec2 clearance{0.f};
+        bool have_member = false;
+        for (const auto& member : reg.get<AoeSquadMembers>(squad).active) {
+            if (!squad_member_valid(reg, member)) continue;
+            const auto& collider = reg.get<AoeCollider>(member.entity);
+            const glm::vec2 radii{collider.radius_x, collider.radius_y};
+            clearance = have_member ? glm::min(clearance, radii) : radii;
+            have_member = true;
+        }
+        requests.push_back({
+            AoePathfinderRequestKind::Squad,
+            {reg.get<AoePosition>(squad).value, order.destination, clearance,
+             squad, squad, entt::null, false},
+            order.destination,
+            guide ? guide->request_sequence + 1 : 1,
+            tick});
+    }
+}
+
 void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
     for (const auto squad : reg.view<AoeFormationIntent>())
@@ -1510,52 +1552,13 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
         if (order.type == AoeSquadOrderType::MoveTo ||
             order.type == AoeSquadOrderType::AttackMove) {
             auto* guide = reg.try_get<AoeNavigationPath>(squad);
-            const auto* map = world.try_resource<AoeLogicMap>();
-            const std::uint64_t revision = map ? map->static_revision() : 0;
-            // apply_squad_command removes the old guide for every accepted
-            // movement command. Consequently a missing guide means this order
-            // has not been planned yet. An exhausted or failed guide is still
-            // the result for this order and must not be queried again. Static
-            // map revision changes are the sole in-order replan trigger.
-            const bool needs_guide = !guide || guide->map_revision != revision;
-            if (needs_guide) {
-                const std::uint64_t next_sequence = guide
-                    ? guide->request_sequence + 1 : 1;
-                glm::vec2 clearance{0.f};
-                bool have_member = false;
-                for (const auto& member : members.active) {
-                    if (!squad_member_valid(reg, member)) continue;
-                    const auto& collider = reg.get<AoeCollider>(member.entity);
-                    const glm::vec2 radii{collider.radius_x, collider.radius_y};
-                    clearance = have_member ? glm::min(clearance, radii) : radii;
-                    have_member = true;
-                }
-                auto& registry = world.resource_or_add<AoePathfinderRegistry>();
-                if (!registry.contains("direct"))
-                    registry.bind<DirectPathfinderLogic>("direct");
-                if (!registry.contains("grid_astar"))
-                    registry.bind<GridAStarPathfinderLogic>("grid_astar");
-                const auto& navigation =
-                    world.resource_or_add<AoeNavigationSettings>();
-                const auto result = registry.find(
-                    map ? navigation.squad_pathfinder_id : "direct", world,
-                    {center.value, order.destination, clearance,
-                     squad, squad, entt::null, false});
-                auto& value = reg.emplace_or_replace<AoeNavigationPath>(squad);
-                value.requested_goal = order.destination;
-                value.map_revision = result.map_revision;
-                value.request_sequence = next_sequence;
-                value.last_repath_tick = tick;
-                value.waypoints = result.waypoints;
-                value.current = 0;
-                value.no_path = result.status != AoePathStatus::Ready ||
-                                value.waypoints.empty();
-                guide = &value;
-                world.resource_or_add<Events<AoeNavigationEvent>>().emit(
-                    squad, value.request_sequence,
-                    value.no_path ? AoeNavigationEventStatus::NoPath
-                                  : AoeNavigationEventStatus::Ready,
-                    tick);
+            // The request phase and static squad pathfinder run immediately
+            // before Formation. A missing guide can only mean planning was not
+            // possible; keep the squad blocked without dereferencing it.
+            if (!guide) {
+                state.phase = AoeSquadPhase::Blocked;
+                drive_squad_slots(world, squad, state.movement_speed, tick);
+                continue;
             }
             if (guide->no_path) {
                 state.phase = AoeSquadPhase::Blocked;
@@ -1654,68 +1657,26 @@ void command_tick(EcsWorld& world, std::uint64_t tick) {
     }
 }
 
-bool plan_navigation_path(EcsWorld& world, entt::entity entity,
-                          glm::vec2 goal, bool include_dynamic,
-                          entt::entity ignored_dynamic_target,
-                          std::uint64_t tick) {
+void request_navigation_path(EcsWorld& world, entt::entity entity,
+                             glm::vec2 goal, bool include_dynamic,
+                             entt::entity ignored_dynamic_target,
+                             std::uint64_t tick) {
     auto& reg = world.reg();
-    if (!reg.all_of<AoePosition, AoeCollider>(entity)) return false;
+    if (!reg.all_of<AoePosition, AoeCollider>(entity)) return;
     auto& path = reg.get_or_emplace<AoeNavigationPath>(entity);
     const auto& collider = reg.get<AoeCollider>(entity);
     const entt::entity squad = ignored_formation_squad(reg, entity);
-    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
-    auto& registry = world.resource_or_add<AoePathfinderRegistry>();
-    if (!registry.contains("direct"))
-        registry.bind<DirectPathfinderLogic>("direct");
-    if (!registry.contains("grid_astar"))
-        registry.bind<GridAStarPathfinderLogic>("grid_astar");
-    const std::string& id = world.try_resource<AoeLogicMap>()
-        ? settings.unit_pathfinder_id : std::string("direct");
-    const bool had_usable_path = !path.no_path &&
-        path.current < path.waypoints.size();
-    const auto result = registry.find(id, world, {
-        reg.get<AoePosition>(entity).value, goal,
-        {collider.radius_x, collider.radius_y}, entity, squad,
-        ignored_dynamic_target, include_dynamic});
-    ++path.request_sequence;
-    path.requested_goal = goal;
-    path.map_revision = result.map_revision;
-    path.last_repath_tick = tick;
-    path.include_dynamic_obstacles = include_dynamic;
-    path.dynamic_repath_requested = false;
-    path.blocked_ticks = 0;
-    const bool failed = result.status != AoePathStatus::Ready ||
-                        result.waypoints.empty();
-// Dynamic-obstacle replanning is temporarily disabled. Keep this fallback in
-// place so it can be restored together with the blocked-unit trigger below.
-#if 0
-    if (failed && include_dynamic && had_usable_path) {
-        path.no_path = false;
-        path.dynamic_repath_failed = true;
-        ++world.resource_or_add<AoeGameplayDiagnostics>()
-              .dynamic_repath_failures;
-        world.resource_or_add<Events<AoeNavigationEvent>>().emit(
-            entity, path.request_sequence, AoeNavigationEventStatus::Blocked,
-            tick);
-        return true;
-    }
-#else
-    (void)had_usable_path;
-#endif
-    path.current = 0;
-    path.waypoints = result.waypoints;
-    path.no_path = failed;
-    path.dynamic_repath_failed = false;
-    world.resource_or_add<Events<AoeNavigationEvent>>().emit(
-        entity, path.request_sequence,
-        path.no_path ? AoeNavigationEventStatus::NoPath
-                     : AoeNavigationEventStatus::Ready,
-        tick);
-    return !path.no_path;
+    world.resource_or_add<AoeUnitPathfinderRequests>().values.push_back({
+        AoePathfinderRequestKind::Unit,
+        {reg.get<AoePosition>(entity).value, goal,
+         {collider.radius_x, collider.radius_y}, entity, squad,
+         ignored_dynamic_target, include_dynamic},
+        goal, path.request_sequence + 1, tick});
 }
 
 void navigation_tick(EcsWorld& world, std::uint64_t tick) {
     auto& reg = world.reg();
+    world.resource_or_add<AoeUnitPathfinderRequests>().values.clear();
     std::vector<entt::entity> invalid;
     for (auto entity : reg.view<AoeAttackOrder, AoePosition, AoeCollider, AoeActionState,
                                 AoeUnitDefinitionRef>()) {
@@ -1847,17 +1808,8 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
             ++world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
                   .navigation_repath_units;
 #endif
-            if (!plan_navigation_path(world, entity, goal.destination,
-                                      include_dynamic, goal.target.entity,
-                                      tick)) {
-                state.state = include_dynamic ||
-                    reg.all_of<AoeSquadMember>(entity)
-                    ? UnitState::Moving : UnitState::Idle;
-                state.state_started_tick = tick;
-            } else if (state.state == UnitState::Idle) {
-                state.state = UnitState::Moving;
-                state.state_started_tick = tick;
-            }
+            request_navigation_path(world, entity, goal.destination,
+                                    include_dynamic, goal.target.entity, tick);
         }
     }
 }
@@ -2231,7 +2183,7 @@ void capture_position_history_tick(EcsWorld& world) {
     }
 }
 
-void fixed_before_formation(EcsWorld& world, std::uint64_t tick) {
+void fixed_before_squad_pathfinder(EcsWorld& world, std::uint64_t tick) {
     GLD_AOE_GAMEPLAY_PHASE(world, position_history_ms,
         [&] { capture_position_history_tick(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_spawn_resolution_ms,
@@ -2248,14 +2200,19 @@ void fixed_before_formation(EcsWorld& world, std::uint64_t tick) {
         [&] { squad_membership_cleanup_tick(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_traffic_ms,
         [&] { squad_traffic_tick(world, tick); });
+    GLD_AOE_GAMEPLAY_PHASE(world, navigation_ms,
+        [&] { squad_navigation_request_tick(world, tick); });
 }
 
-void fixed_after_formation_before_local(
-    EcsWorld& world, std::uint64_t tick) {
+void fixed_before_unit_pathfinder(EcsWorld& world, std::uint64_t tick) {
     GLD_AOE_GAMEPLAY_PHASE(world, attack_move_acquisition_ms,
         [&] { attack_move_acquisition_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, navigation_ms,
         [&] { navigation_tick(world, tick); });
+}
+
+void fixed_after_unit_pathfinder_before_local(
+    EcsWorld& world, std::uint64_t tick) {
     GLD_AOE_GAMEPLAY_PHASE(world, movement_intent_ms,
         [&] { movement_intent_tick(world, tick); });
 }
@@ -2512,9 +2469,47 @@ aoe_gameplay_select_stalled_in_range_target(
         world, entity, current, acquisition, attack_range);
 }
 
-void aoe_gameplay_fixed_before_formation(
+void aoe_gameplay_fixed_before_squad_pathfinder(
     EcsWorld& world, std::uint64_t tick) {
-    fixed_before_formation(world, tick);
+    fixed_before_squad_pathfinder(world, tick);
+}
+
+void aoe_gameplay_apply_pathfinder_result(
+    EcsWorld& world, const AoePendingPathfinderRequest& pending,
+    AoePathResult result) {
+    auto& reg = world.reg();
+    const auto entity = pending.request.subject;
+    if (!reg.valid(entity)) return;
+    auto& path = reg.emplace_or_replace<AoeNavigationPath>(entity);
+    path.requested_goal = pending.requested_goal;
+    path.map_revision = result.map_revision;
+    path.request_sequence = pending.request_sequence;
+    path.last_repath_tick = pending.tick;
+    path.include_dynamic_obstacles =
+        pending.request.include_dynamic_obstacles;
+    path.dynamic_repath_requested = false;
+    path.dynamic_repath_failed = false;
+    path.blocked_ticks = 0;
+    path.current = 0;
+    path.waypoints = std::move(result.waypoints);
+    path.no_path = result.status != AoePathStatus::Ready ||
+                   path.waypoints.empty();
+    world.resource_or_add<Events<AoeNavigationEvent>>().emit(
+        entity, path.request_sequence,
+        path.no_path ? AoeNavigationEventStatus::NoPath
+                     : AoeNavigationEventStatus::Ready,
+        pending.tick);
+
+    if (pending.kind == AoePathfinderRequestKind::Unit) {
+        if (auto* state = reg.try_get<AoeActionState>(entity)) {
+            const UnitState desired = path.no_path
+                ? UnitState::Idle : UnitState::Moving;
+            if (state->state == UnitState::Idle || path.no_path) {
+                state->state = desired;
+                state->state_started_tick = pending.tick;
+            }
+        }
+    }
 }
 
 void aoe_gameplay_formation_fixed_tick(
@@ -2541,9 +2536,14 @@ void aoe_gameplay_formation_fixed_tick(
         [&] { squad_control_tick(world, tick); });
 }
 
-void aoe_gameplay_fixed_after_formation_before_local(
+void aoe_gameplay_fixed_before_unit_pathfinder(
     EcsWorld& world, std::uint64_t tick) {
-    fixed_after_formation_before_local(world, tick);
+    fixed_before_unit_pathfinder(world, tick);
+}
+
+void aoe_gameplay_fixed_after_unit_pathfinder_before_local(
+    EcsWorld& world, std::uint64_t tick) {
+    fixed_after_unit_pathfinder_before_local(world, tick);
 }
 
 void aoe_gameplay_fixed_after_global(EcsWorld& world, std::uint64_t tick) {
@@ -2586,6 +2586,28 @@ AoePathResult AoePathfinderRegistry::find(
     return it == entries_.end()
         ? AoePathResult{AoePathStatus::NoPath}
         : it->second(world, request);
+}
+
+std::string AoeRegisteredUnitPathfinderPlugin::backend_name(EcsWorld& world) {
+    return world.resource_or_add<AoeNavigationSettings>().unit_pathfinder_id;
+}
+
+AoePathResult AoeRegisteredUnitPathfinderPlugin::find(
+    EcsWorld& world, const AoePathRequest& request) {
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    return world.resource_or_add<AoePathfinderRegistry>().find(
+        settings.unit_pathfinder_id, world, request);
+}
+
+std::string AoeRegisteredSquadPathfinderPlugin::backend_name(EcsWorld& world) {
+    return world.resource_or_add<AoeNavigationSettings>().squad_pathfinder_id;
+}
+
+AoePathResult AoeRegisteredSquadPathfinderPlugin::find(
+    EcsWorld& world, const AoePathRequest& request) {
+    const auto& settings = world.resource_or_add<AoeNavigationSettings>();
+    return world.resource_or_add<AoePathfinderRegistry>().find(
+        settings.squad_pathfinder_id, world, request);
 }
 
 AoePathResult DirectPathfinderLogic::find(
@@ -3371,6 +3393,7 @@ void detail::install_aoe_gameplay_base(
     app.world.resource_or_add<AoeGameplayDiagnostics>();
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     app.world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
+    app.world.resource_or_add<AoePathfinderPerformanceDiagnostics>();
 #endif
     app.world.resource_or_add<AoeSquadTrafficIndex>();
     app.world.resource_or_add<AoeNavigationSettings>();

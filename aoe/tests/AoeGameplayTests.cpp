@@ -144,6 +144,7 @@ struct CountingPathfinderState {
 };
 
 struct CountingPathfinderLogic {
+    static constexpr std::string_view name = "counting";
     static AoePathResult find(EcsWorld& world,
                               const AoePathRequest& request) {
         auto& state = world.resource_or_add<CountingPathfinderState>();
@@ -239,7 +240,9 @@ template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
          class FormationPlugin = AoeFullFormationPlugin,
          class SquadEngagementPlugin = AoeFullSquadEngagementPlugin,
          class SquadArrivalRematchPlugin =
-             AoeFullSquadArrivalRematchPlugin>
+             AoeFullSquadArrivalRematchPlugin,
+         class UnitPathfinderPlugin = AoeGridAStarUnitPathfinderPlugin,
+         class SquadPathfinderPlugin = AoeGridAStarSquadPathfinderPlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -314,7 +317,9 @@ struct Fixture {
                 SquadEngagementPlugin, FormationPlugin,
                 SquadArrivalRematchPlugin,
                 LocalAvoidancePlugin,
-                GlobalMotionPlugin>(world);
+                GlobalMotionPlugin,
+                UnitPathfinderPlugin,
+                SquadPathfinderPlugin>(world);
         }
     }
 };
@@ -353,6 +358,10 @@ static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeDefaultGlobalMotionPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughGlobalMotionPlugin>);
+static_assert(AoeGameplayPathfinderPlugin<
+    AoeGridAStarUnitPathfinderPlugin>);
+static_assert(AoeGameplayPathfinderPlugin<
+    AoeGridAStarSquadPathfinderPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::SquadEngagementPlugin,
     AoeFullSquadEngagementPlugin>);
@@ -376,6 +385,46 @@ static_assert(std::same_as<
     AoePassThroughGlobalMotionPlugin>);
 
 int main() {
+    // Registry-backed adapters preserve runtime selection for callers that
+    // explicitly opt into the compatibility path.
+    {
+        EcsWorld adapter_world;
+        adapter_world.resource_or_add<AoeNavigationSettings>()
+            .unit_pathfinder_id = "counting";
+        adapter_world.resource<AoeNavigationSettings>()
+            .squad_pathfinder_id = "counting";
+        adapter_world.resource_or_add<AoePathfinderRegistry>()
+            .bind<CountingPathfinderLogic>("counting");
+        const AoePathRequest request{{0.f, 0.f}, {1.f, 0.f}};
+        assert(AoeRegisteredUnitPathfinderPlugin::find(
+                   adapter_world, request).status == AoePathStatus::Ready);
+        assert(AoeRegisteredSquadPathfinderPlugin::find(
+                   adapter_world, request).status == AoePathStatus::Ready);
+        assert(adapter_world.resource<CountingPathfinderState>().calls == 2);
+    }
+
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    {
+        EcsWorld metrics_world;
+        const auto subject = metrics_world.spawn();
+        auto& queue = metrics_world.resource_or_add<
+            AoeUnitPathfinderRequests>().values;
+        queue.push_back({AoePathfinderRequestKind::Unit,
+                         {{0.f, 0.f}, {1.f, 0.f}, {}, subject},
+                         {1.f, 0.f}, 1, 1});
+        gld::ecs::aoe::detail::run_aoe_pathfinder_requests<
+            AoeDirectUnitPathfinderPlugin,
+            AoeUnitPathfinderRequests>(metrics_world);
+        const auto calls = metrics_world.resource<
+            AoePathfinderPerformanceDiagnostics>().unit.calls;
+        metrics_world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
+            .begin_frame();
+        assert(calls == 1);
+        assert(metrics_world.resource<
+            AoePathfinderPerformanceDiagnostics>().unit.calls == calls);
+    }
+#endif
+
     // Install and schedule a real statically composed gameplay definition.
     // A phase probe avoids feeding a deliberately partial unit into the
     // production pipeline while proving that App::tick reaches the selected
@@ -1026,7 +1075,11 @@ int main() {
     // The last safety stage may shorten the displacement, but it cannot
     // rotate the direction selected by global planning.
     Fixture<AoePassThroughLocalAvoidancePlugin,
-            AoePassThroughGlobalMotionPlugin> safety_fixture;
+            AoePassThroughGlobalMotionPlugin,
+            AoeFullFormationPlugin,
+            AoeFullSquadEngagementPlugin,
+            AoeFullSquadArrivalRematchPlugin,
+            AoeDirectUnitPathfinderPlugin> safety_fixture;
     safety_fixture.world.add_resource<AoeLogicMap>(flat_map());
     auto& safety_navigation =
         safety_fixture.world.resource<AoeNavigationSettings>();
@@ -1378,16 +1431,19 @@ int main() {
     // consume provisional direct waypoints and never multiply that query count.
     // Exhaustion, combat pause/resume and NoPath do not retry; a new command or
     // a new static-map revision each creates exactly one new query.
-    Fixture single_query_fixture;
+    using CountingUnitPathfinder = AoeStaticPathfinderPlugin<
+        CountingPathfinderLogic, AoeUnitPathfinderPhase>;
+    using CountingSquadPathfinder = AoeStaticPathfinderPlugin<
+        CountingPathfinderLogic, AoeSquadPathfinderPhase>;
+    Fixture<AoeFullLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin,
+            AoeFullFormationPlugin,
+            AoeFullSquadEngagementPlugin,
+            AoeFullSquadArrivalRematchPlugin,
+            CountingUnitPathfinder,
+            CountingSquadPathfinder> single_query_fixture;
     single_query_fixture.world.add_resource<AoeLogicMap>(flat_map(100, 20));
     single_query_fixture.world.resource_or_add<CountingPathfinderState>();
-    auto& counting_registry = single_query_fixture.world
-        .resource_or_add<AoePathfinderRegistry>();
-    counting_registry.bind<CountingPathfinderLogic>("counting");
-    auto& counting_navigation = single_query_fixture.world
-        .resource<AoeNavigationSettings>();
-    counting_navigation.squad_pathfinder_id = "counting";
-    counting_navigation.unit_pathfinder_id = "counting";
     AoeSquadSpawnOptions single_query_options;
     single_query_options.composition = {{"test", 8, 1}};
     single_query_options.center = {5.f, 10.f};

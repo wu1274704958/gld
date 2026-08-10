@@ -52,8 +52,10 @@ using SquadGameplayDef = AoeGameplayDef<
     AoePassThroughSquadEngagementPlugin,
     AoePassThroughFormationPlugin,
     AoePassThroughSquadArrivalRematchPlugin,
-    AoePassThroughLocalAvoidancePlugin,
-    AoePassThroughGlobalMotionPlugin>;
+    AoeFullLocalAvoidancePlugin,
+    AoePassThroughGlobalMotionPlugin,
+    AoeGridAStarUnitPathfinderPlugin,
+    AoeGridAStarSquadPathfinderPlugin>;
 
 namespace {
 constexpr std::uint32_t UnitLayer = 0x1u;
@@ -1230,6 +1232,10 @@ void diagnostics_system(EcsWorld& world) {
     const auto* gpu_motion = world.try_resource<AoeGpuMotionDiagnostics>();
     const auto* logic_map = world.try_resource<AoeLogicMap>();
     const auto* pool = world.try_resource<AoeGameplayPool>();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    const auto* pathfinder_performance =
+        world.try_resource<AoePathfinderPerformanceDiagnostics>();
+#endif
     std::size_t active_units = 0;
     for ([[maybe_unused]] const auto entity :
          world.reg().view<AoeGameplayIdentity>(
@@ -1288,7 +1294,25 @@ void diagnostics_system(EcsWorld& world) {
         out << logic_map->width() << 'x' << logic_map->height();
     else
         out << "unavailable";
-    out << " pathfinder=grid_astar\n\n";
+    out << " unit-pathfinder=" << SquadGameplayDef::UnitPathfinderPlugin::name
+        << " squad-pathfinder=" << SquadGameplayDef::SquadPathfinderPlugin::name
+        << '\n';
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    if (pathfinder_performance) {
+        const auto append_pathfinder = [&](std::string_view role,
+                                           const auto& value) {
+            out << role << " pathfinder cumulative backend=" << value.backend
+                << " calls=" << value.calls
+                << " ready=" << value.ready
+                << " no-path=" << value.no_path
+                << " avg-ms=" << value.average_ms()
+                << " max-ms=" << value.max_ms << '\n';
+        };
+        append_pathfinder("unit", pathfinder_performance->unit);
+        append_pathfinder("squad", pathfinder_performance->squad);
+    }
+#endif
+    out << '\n';
     append_squad(out, world, "BLUE", preview.blue);
     append_squad(out, world, "RED ", preview.red);
     const float displayed_fps = preview.displayed_fps > 0.f
@@ -1474,6 +1498,8 @@ void system_profile_end(EcsWorld& world) {
                "known_cpu_ms,residual_ms,"
                "nav_astar_calls,nav_cells_expanded,nav_clear_segment_calls,"
                "nav_repath_units,nav_find_ms,nav_find_peak_ms,"
+               "unit_path_backend,unit_path_calls,unit_path_ready,unit_path_no_path,unit_path_invalid_start,unit_path_invalid_goal,unit_path_total_ms,unit_path_avg_ms,unit_path_max_ms,"
+               "squad_path_backend,squad_path_calls,squad_path_ready,squad_path_no_path,squad_path_invalid_start,squad_path_invalid_goal,squad_path_total_ms,squad_path_avg_ms,squad_path_max_ms,"
                "gpu_total_ms,gpu_upload_ms,gpu_dispatch_ms,gpu_readback_ms\n";
         profile->csv << std::fixed << std::setprecision(6);
         std::printf("[aoe_squad_profile] stable; capturing %.1f seconds\n",
@@ -1482,6 +1508,8 @@ void system_profile_end(EcsWorld& world) {
     }
 
     const auto& gameplay = world.resource<AoeGameplayPerformanceDiagnostics>();
+    const auto& pathfinders =
+        world.resource_or_add<AoePathfinderPerformanceDiagnostics>();
     const auto& bridge = world.resource<Aoe2GameplayBridgePerformanceDiagnostics>();
     const auto& transform = world.resource<TransformDiagnostics>();
     const auto& render = world.resource<RenderDiagnostics>();
@@ -1576,6 +1604,18 @@ void system_profile_end(EcsWorld& world) {
         << gameplay.navigation_repath_units << ','
         << gameplay.navigation_astar_find_ms << ','
         << gameplay.navigation_astar_find_peak_ms << ','
+        << pathfinders.unit.backend << ',' << pathfinders.unit.calls << ','
+        << pathfinders.unit.ready << ',' << pathfinders.unit.no_path << ','
+        << pathfinders.unit.invalid_start << ','
+        << pathfinders.unit.invalid_goal << ','
+        << pathfinders.unit.total_ms << ','
+        << pathfinders.unit.average_ms() << ',' << pathfinders.unit.max_ms << ','
+        << pathfinders.squad.backend << ',' << pathfinders.squad.calls << ','
+        << pathfinders.squad.ready << ',' << pathfinders.squad.no_path << ','
+        << pathfinders.squad.invalid_start << ','
+        << pathfinders.squad.invalid_goal << ','
+        << pathfinders.squad.total_ms << ','
+        << pathfinders.squad.average_ms() << ',' << pathfinders.squad.max_ms << ','
         << gpu_upload_total << ',' << gpu_upload_ms_v << ','
         << gpu_dispatch_ms_v << ',' << gpu_readback_ms_v << '\n';
     // Closing the window is the marker for an interactive profile: flush in

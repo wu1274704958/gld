@@ -356,11 +356,101 @@ private:
 };
 
 struct DirectPathfinderLogic {
+    static constexpr std::string_view name = "direct";
     static AoePathResult find(EcsWorld&, const AoePathRequest&);
 };
 
 struct GridAStarPathfinderLogic {
+    static constexpr std::string_view name = "grid_astar";
     static AoePathResult find(EcsWorld&, const AoePathRequest&);
+};
+
+// Pathfinder selection is a static service phase rather than a scheduled
+// gameplay phase. Unit and squad routing are intentionally independent so a
+// build can compare algorithms without a runtime string lookup in the hot path.
+struct AoeUnitPathfinderPhase {};
+struct AoeSquadPathfinderPhase {};
+
+template<class T>
+concept AoeNamedPathfinderLogic = AoePathfinderLogic<T> && requires {
+    { T::name } -> std::convertible_to<std::string_view>;
+};
+
+template<class Logic, class Phase>
+    requires AoeNamedPathfinderLogic<Logic>
+struct AoeStaticPathfinderPlugin {
+    using phase = Phase;
+    static constexpr std::string_view name = Logic::name;
+    static void install(App&) {}
+    static AoePathResult find(EcsWorld& world, const AoePathRequest& request) {
+        return Logic::find(world, request);
+    }
+};
+
+using AoeGridAStarUnitPathfinderPlugin =
+    AoeStaticPathfinderPlugin<GridAStarPathfinderLogic,
+                              AoeUnitPathfinderPhase>;
+using AoeGridAStarSquadPathfinderPlugin =
+    AoeStaticPathfinderPlugin<GridAStarPathfinderLogic,
+                              AoeSquadPathfinderPhase>;
+using AoeDirectUnitPathfinderPlugin =
+    AoeStaticPathfinderPlugin<DirectPathfinderLogic,
+                              AoeUnitPathfinderPhase>;
+using AoeDirectSquadPathfinderPlugin =
+    AoeStaticPathfinderPlugin<DirectPathfinderLogic,
+                              AoeSquadPathfinderPhase>;
+
+struct AoeRegisteredUnitPathfinderPlugin {
+    using phase = AoeUnitPathfinderPhase;
+    static constexpr std::string_view name = "registered_unit";
+    static void install(App&) {}
+    static std::string backend_name(EcsWorld&);
+    static AoePathResult find(EcsWorld&, const AoePathRequest&);
+};
+
+struct AoeRegisteredSquadPathfinderPlugin {
+    using phase = AoeSquadPathfinderPhase;
+    static constexpr std::string_view name = "registered_squad";
+    static void install(App&) {}
+    static std::string backend_name(EcsWorld&);
+    static AoePathResult find(EcsWorld&, const AoePathRequest&);
+};
+
+enum class AoePathfinderRequestKind { Unit, Squad };
+struct AoePendingPathfinderRequest {
+    AoePathfinderRequestKind kind = AoePathfinderRequestKind::Unit;
+    AoePathRequest request{};
+    glm::vec2 requested_goal{0.f};
+    std::uint64_t request_sequence = 0;
+    std::uint64_t tick = 0;
+};
+struct AoeUnitPathfinderRequests {
+    std::vector<AoePendingPathfinderRequest> values;
+};
+struct AoeSquadPathfinderRequests {
+    std::vector<AoePendingPathfinderRequest> values;
+};
+
+struct AoePathfinderPerformanceRecord {
+    std::string backend;
+    std::uint64_t calls = 0;
+    std::uint64_t ready = 0;
+    std::uint64_t no_path = 0;
+    std::uint64_t invalid_start = 0;
+    std::uint64_t invalid_goal = 0;
+    double total_ms = 0.0;
+    double max_ms = 0.0;
+    [[nodiscard]] double average_ms() const {
+        return calls ? total_ms / static_cast<double>(calls) : 0.0;
+    }
+};
+
+// Unlike AoeGameplayPerformanceDiagnostics this resource is cumulative for
+// the process lifetime. Call reset() explicitly when starting a new sample.
+struct AoePathfinderPerformanceDiagnostics {
+    AoePathfinderPerformanceRecord unit;
+    AoePathfinderPerformanceRecord squad;
+    void reset() { *this = {}; }
 };
 
 enum class AoeNavigationEventStatus { Ready, Blocked, NoPath };
@@ -1044,10 +1134,15 @@ namespace detail {
 void install_aoe_gameplay_base(
     App&, const std::string& definitions_root,
     const AoeGameplaySettings& settings);
-void aoe_gameplay_fixed_before_formation(EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_fixed_before_squad_pathfinder(
+    EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_apply_pathfinder_result(
+    EcsWorld&, const AoePendingPathfinderRequest&, AoePathResult);
 void aoe_gameplay_formation_fixed_tick(
     EcsWorld&, std::uint64_t tick, bool pass_through);
-void aoe_gameplay_fixed_after_formation_before_local(
+void aoe_gameplay_fixed_before_unit_pathfinder(
+    EcsWorld&, std::uint64_t tick);
+void aoe_gameplay_fixed_after_unit_pathfinder_before_local(
     EcsWorld&, std::uint64_t tick);
 void aoe_gameplay_fixed_after_global(EcsWorld&, std::uint64_t tick);
 
@@ -1093,6 +1188,21 @@ concept AoeGameplayStaticPlugin = requires(
     { T::fixed_tick(world, tick) } -> std::same_as<void>;
 };
 
+template<class T>
+concept AoeGameplayPathfinderPlugin = requires(
+    App& app, EcsWorld& world, const AoePathRequest& request) {
+    typename T::phase;
+    requires std::is_same_v<typename T::phase, AoeUnitPathfinderPhase> ||
+             std::is_same_v<typename T::phase, AoeSquadPathfinderPhase>;
+    { T::name } -> std::convertible_to<std::string_view>;
+    { T::install(app) } -> std::same_as<void>;
+    { T::find(world, request) } -> std::same_as<AoePathResult>;
+};
+
+template<class T>
+concept AoeGameplayComposablePlugin =
+    AoeGameplayStaticPlugin<T> || AoeGameplayPathfinderPlugin<T>;
+
 namespace detail {
 template<class Phase, class... Plugins>
 inline constexpr std::size_t gameplay_phase_count_v =
@@ -1116,10 +1226,57 @@ template<class Phase, class... Plugins>
 using gameplay_plugin_for_phase_t =
     typename GameplayPluginForPhase<Phase, Plugins...>::type;
 
+template<class PathfinderPlugin, class Queue>
+void run_aoe_pathfinder_requests(EcsWorld& world) {
+    auto requests = std::move(world.resource_or_add<Queue>().values);
+    world.resource<Queue>().values.clear();
+    for (const auto& pending : requests) {
+        // Every pathfinder must retain the no-map direct fallback contract.
+        const auto* map = world.try_resource<AoeLogicMap>();
+        const bool direct = !map || !map->valid();
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        const auto started = std::chrono::steady_clock::now();
+#endif
+        AoePathResult result = direct
+            ? DirectPathfinderLogic::find(world, pending.request)
+            : PathfinderPlugin::find(world, pending.request);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        auto& diagnostics = world.resource_or_add<
+            AoePathfinderPerformanceDiagnostics>();
+        auto& record = pending.kind == AoePathfinderRequestKind::Unit
+            ? diagnostics.unit : diagnostics.squad;
+        if (direct) {
+            record.backend = DirectPathfinderLogic::name;
+        } else if constexpr (requires {
+                                 PathfinderPlugin::backend_name(world);
+                             }) {
+            record.backend = PathfinderPlugin::backend_name(world);
+        } else {
+            record.backend = PathfinderPlugin::name;
+        }
+        const double elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        ++record.calls;
+        record.total_ms += elapsed;
+        record.max_ms = std::max(record.max_ms, elapsed);
+        switch (result.status) {
+        case AoePathStatus::Ready: ++record.ready; break;
+        case AoePathStatus::NoPath: ++record.no_path; break;
+        case AoePathStatus::InvalidStart: ++record.invalid_start; break;
+        case AoePathStatus::InvalidGoal: ++record.invalid_goal; break;
+        }
+#endif
+        aoe_gameplay_apply_pathfinder_result(
+            world, pending, std::move(result));
+    }
+}
+
 template<class SquadEngagementPlugin, class FormationPlugin,
          class SquadArrivalRematchPlugin,
          class LocalAvoidancePlugin,
-         class GlobalMotionPlugin>
+         class GlobalMotionPlugin,
+         class UnitPathfinderPlugin = AoeGridAStarUnitPathfinderPlugin,
+         class SquadPathfinderPlugin = AoeGridAStarSquadPathfinderPlugin>
 void aoe_gameplay_fixed_system(EcsWorld& world) {
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto started = std::chrono::steady_clock::now();
@@ -1148,11 +1305,17 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
            clock.ticks_this_frame < settings.max_catchup_ticks) {
         clock.accumulator -= settings.fixed_dt;
         ++clock.tick;
-        aoe_gameplay_fixed_before_formation(world, clock.tick);
+        aoe_gameplay_fixed_before_squad_pathfinder(world, clock.tick);
+        run_aoe_pathfinder_requests<
+            SquadPathfinderPlugin, AoeSquadPathfinderRequests>(world);
         SquadEngagementPlugin::fixed_tick(world, clock.tick);
         FormationPlugin::fixed_tick(world, clock.tick);
         SquadArrivalRematchPlugin::fixed_tick(world, clock.tick);
-        aoe_gameplay_fixed_after_formation_before_local(world, clock.tick);
+        aoe_gameplay_fixed_before_unit_pathfinder(world, clock.tick);
+        run_aoe_pathfinder_requests<
+            UnitPathfinderPlugin, AoeUnitPathfinderRequests>(world);
+        aoe_gameplay_fixed_after_unit_pathfinder_before_local(
+            world, clock.tick);
         LocalAvoidancePlugin::fixed_tick(world, clock.tick);
         GlobalMotionPlugin::fixed_tick(world, clock.tick);
         aoe_gameplay_fixed_after_global(world, clock.tick);
@@ -1171,7 +1334,7 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
 }
 } // namespace detail
 
-template<AoeGameplayStaticPlugin... Plugins>
+template<AoeGameplayComposablePlugin... Plugins>
 struct AoeGameplayDef {
     static_assert(sizeof...(Plugins) > 0,
         "AoeGameplayDef requires at least one static gameplay plugin");
@@ -1190,6 +1353,12 @@ struct AoeGameplayDef {
     static_assert(detail::gameplay_phase_count_v<
                       AoeGlobalMotionPhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one global-motion phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
+                      AoeUnitPathfinderPhase, Plugins...> <= 1,
+        "AoeGameplayDef accepts at most one unit-pathfinder plugin");
+    static_assert(detail::gameplay_phase_count_v<
+                      AoeSquadPathfinderPhase, Plugins...> <= 1,
+        "AoeGameplayDef accepts at most one squad-pathfinder plugin");
 
     using SquadEngagementPlugin = detail::gameplay_plugin_for_phase_t<
         AoeSquadEngagementPhase, Plugins...>;
@@ -1201,6 +1370,16 @@ struct AoeGameplayDef {
         AoeLocalAvoidancePhase, Plugins...>;
     using GlobalMotionPlugin = detail::gameplay_plugin_for_phase_t<
         AoeGlobalMotionPhase, Plugins...>;
+    using UnitPathfinderPlugin = std::conditional_t<
+        detail::gameplay_phase_count_v<AoeUnitPathfinderPhase, Plugins...> == 0,
+        AoeGridAStarUnitPathfinderPlugin,
+        detail::gameplay_plugin_for_phase_t<
+            AoeUnitPathfinderPhase, Plugins...>>;
+    using SquadPathfinderPlugin = std::conditional_t<
+        detail::gameplay_phase_count_v<AoeSquadPathfinderPhase, Plugins...> == 0,
+        AoeGridAStarSquadPathfinderPlugin,
+        detail::gameplay_plugin_for_phase_t<
+            AoeSquadPathfinderPhase, Plugins...>>;
 
     std::string definitions_root = "aoe_units";
     AoeGameplaySettings settings{};
@@ -1213,7 +1392,9 @@ struct AoeGameplayDef {
                 SquadEngagementPlugin, FormationPlugin,
                 SquadArrivalRematchPlugin,
                 LocalAvoidancePlugin,
-                GlobalMotionPlugin>(world);
+                GlobalMotionPlugin,
+                UnitPathfinderPlugin,
+                SquadPathfinderPlugin>(world);
         });
     }
 };

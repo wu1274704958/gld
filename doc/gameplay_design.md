@@ -352,18 +352,38 @@ Order / Squad slot / Attack approach
 
 ### 7.2 Pathfinder 静态接口
 
-路径策略注册到 `AoePathfinderRegistry`：
+Unit 与 Squad 的主路径策略通过 `AoeGameplayDef` 编译期组合，二者可以独立替换：
 
 ```cpp
 struct MyPathfinder {
+    static constexpr std::string_view name = "my_pathfinder";
     static AoePathResult find(EcsWorld& world,
                               const AoePathRequest& request);
 };
 
-auto& registry = world.resource_or_add<AoePathfinderRegistry>();
-registry.bind<MyPathfinder>("my_pathfinder");
-world.resource<AoeNavigationSettings>().unit_pathfinder_id = "my_pathfinder";
+using MyUnitPathfinder = AoeStaticPathfinderPlugin<
+    MyPathfinder, AoeUnitPathfinderPhase>;
+using MySquadPathfinder = AoeStaticPathfinderPlugin<
+    MyPathfinder, AoeSquadPathfinderPhase>;
+
+using Gameplay = AoeGameplayDef<
+    AoeFullSquadEngagementPlugin,
+    AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
+    AoeFullLocalAvoidancePlugin,
+    AoeDefaultGlobalMotionPlugin,
+    MyUnitPathfinder,
+    MySquadPathfinder>;
 ```
+
+未显式提供 Pathfinder plugin 时，Unit 和 Squad 均默认静态选择
+`GridAStarPathfinderLogic`。请求收集、静态 `find` 调用和结果提交在同一个 fixed
+tick 内完成，不引入一帧延迟。没有有效地图时统一直接退化为 `direct`。
+
+`AoePathfinderRegistry` 继续作为兼容层存在。需要运行期字符串选择时，可在
+`AoeGameplayDef` 中显式使用 `AoeRegisteredUnitPathfinderPlugin` 和/或
+`AoeRegisteredSquadPathfinderPlugin`，此时才读取 `AoeNavigationSettings` 中的
+`unit_pathfinder_id` / `squad_pathfinder_id`。
 
 `AoePathRequest` 包含起点、终点、椭圆 clearance、subject、Squad、可忽略的动态目标，以及是否纳入动态障碍。返回状态为 `Ready/NoPath/InvalidStart/InvalidGoal`。
 
@@ -674,10 +694,10 @@ slot_world = squad_center
 ### 10.4 协同移动
 
 - 每条已接受的 Squad `MoveTo/AttackMove` 命令使用
-  `squad_pathfinder_id` 为 anchor 规划一次静态障碍 guide；
+  静态 `AoeSquadPathfinderPhase` plugin 为 anchor 规划一次静态障碍 guide；
 - guide 耗尽、NoPath、战斗暂停或恢复不会重复请求；只有新命令或静态地图
   revision 变化会再次规划；
-- Squad 成员不会进入 `unit_pathfinder_id`。在成员路线拆分完成前，行军和
+- Squad 成员不会进入 Unit Pathfinder plugin。在成员路线拆分完成前，行军和
   追敌都只刷新一个临时直达 waypoint；
 - Squad 移动速度限制为仍存活成员中的最低速度；
 - 中心 guide 到成员偏移路线的拆分、静态障碍验证及窄路阵型调整由后续阶段实现；
