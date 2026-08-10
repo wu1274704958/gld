@@ -18,7 +18,7 @@ using namespace gld::ecs::aoe;
 #undef assert
 #define assert(...) do { if (!(__VA_ARGS__)) { \
     std::fprintf(stderr, "assertion failed at line %d: %s\n", __LINE__, #__VA_ARGS__); \
-    std::abort(); } } while (false)
+    std::exit(EXIT_FAILURE); } } while (false)
 
 namespace {
 struct MemoryFileSystem final : IFileSystem {
@@ -52,6 +52,7 @@ struct InvalidFormation {
 struct StaticGameplayPluginProbeState {
     std::uint32_t engagement_calls = 0;
     std::uint32_t formation_calls = 0;
+    std::uint32_t arrival_rematch_calls = 0;
     std::uint32_t local_calls = 0;
     std::uint32_t global_calls = 0;
     std::uint32_t sequence = 0;
@@ -101,6 +102,22 @@ struct StaticLocalAvoidanceProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.local_calls;
+        probe.sequence = probe.sequence == 3 ? 4 : 99;
+        probe.last_tick = tick;
+    }
+};
+
+struct StaticSquadArrivalRematchProbe {
+    using phase = AoeSquadArrivalRematchPhase;
+    static constexpr std::string_view name = "test_arrival_rematch_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<StaticGameplayPluginProbeState>();
+    }
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.arrival_rematch_calls;
         probe.sequence = probe.sequence == 2 ? 3 : 99;
         probe.last_tick = tick;
     }
@@ -116,7 +133,7 @@ struct StaticGlobalMotionProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.global_calls;
-        probe.sequence = probe.sequence == 3 ? 4 : 99;
+        probe.sequence = probe.sequence == 4 ? 5 : 99;
         probe.last_tick = tick;
     }
 };
@@ -220,7 +237,9 @@ AoeMapDefinition squad_stress_map() {
 template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
          class GlobalMotionPlugin = AoeDefaultGlobalMotionPlugin,
          class FormationPlugin = AoeFullFormationPlugin,
-         class SquadEngagementPlugin = AoeFullSquadEngagementPlugin>
+         class SquadEngagementPlugin = AoeFullSquadEngagementPlugin,
+         class SquadArrivalRematchPlugin =
+             AoeFullSquadArrivalRematchPlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -293,6 +312,7 @@ struct Fixture {
             world.resource<Time>().dt = 0.1f;
             gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
                 SquadEngagementPlugin, FormationPlugin,
+                SquadArrivalRematchPlugin,
                 LocalAvoidancePlugin,
                 GlobalMotionPlugin>(world);
         }
@@ -302,26 +322,33 @@ struct Fixture {
 
 using FullGameplayDef = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
     AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 using PassThroughGameplayDef =
     AoeGameplayDef<AoeFullSquadEngagementPlugin,
                    AoeFullFormationPlugin,
+                   AoeFullSquadArrivalRematchPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoeDefaultGlobalMotionPlugin>;
 using MotionFloorGameplayDef =
     AoeGameplayDef<AoePassThroughSquadEngagementPlugin,
                    AoePassThroughFormationPlugin,
+                   AoePassThroughSquadArrivalRematchPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoePassThroughGlobalMotionPlugin>;
 using ProbeGameplayDef =
     AoeGameplayDef<StaticSquadEngagementProbe, StaticFormationProbe,
+                   StaticSquadArrivalRematchProbe,
                    StaticLocalAvoidanceProbe,
                    StaticGlobalMotionProbe>;
 static_assert(AoeGameplayStaticPlugin<AoeFullSquadEngagementPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughSquadEngagementPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullFormationPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughFormationPlugin>);
+static_assert(AoeGameplayStaticPlugin<AoeFullSquadArrivalRematchPlugin>);
+static_assert(AoeGameplayStaticPlugin<
+    AoePassThroughSquadArrivalRematchPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeDefaultGlobalMotionPlugin>);
@@ -332,6 +359,9 @@ static_assert(std::same_as<
 static_assert(std::same_as<
     AoeGameplayPlugin::FormationPlugin,
     AoeFullFormationPlugin>);
+static_assert(std::same_as<
+    AoeGameplayPlugin::SquadArrivalRematchPlugin,
+    AoeFullSquadArrivalRematchPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::LocalAvoidancePlugin,
     AoeFullLocalAvoidancePlugin>);
@@ -364,6 +394,7 @@ int main() {
             app.world.resource<StaticGameplayPluginProbeState>();
         assert(installed_probe.engagement_calls == 0 &&
                installed_probe.formation_calls == 0 &&
+               installed_probe.arrival_rematch_calls == 0 &&
                installed_probe.local_calls == 0 &&
                installed_probe.global_calls == 0 &&
                installed_probe.sequence == 0 &&
@@ -378,8 +409,9 @@ int main() {
             app.world.resource<StaticGameplayPluginProbeState>();
         assert(ran_probe.engagement_calls == 1 &&
                ran_probe.formation_calls == 1 &&
+               ran_probe.arrival_rematch_calls == 1 &&
                ran_probe.local_calls == 1 && ran_probe.global_calls == 1 &&
-               ran_probe.sequence == 4 && ran_probe.last_tick == 1);
+               ran_probe.sequence == 5 && ran_probe.last_tick == 1);
         app_server.shutdown();
         app.shutdown();
     }
@@ -676,6 +708,7 @@ int main() {
     history_fixture.world.resource<Time>().dt = .3f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullSquadArrivalRematchPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(
         history_fixture.world);
@@ -694,6 +727,7 @@ int main() {
     raw_time.raw_dt = .35f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullSquadArrivalRematchPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(raw_time_fixture.world);
     const auto& raw_clock =
@@ -708,6 +742,7 @@ int main() {
     fallback_time.raw_dt = 0.f;
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+        AoeFullSquadArrivalRematchPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(dt_fallback_fixture.world);
     const auto& fallback_clock =
@@ -1485,10 +1520,13 @@ int main() {
     arrival_reflow_fixture.world.reg().get<AoeSquadState>(
         arrival_reflow_squad).phase = AoeSquadPhase::Moving;
     arrival_formation.arrival_reflow_done = false;
-    arrival_reflow_fixture.advance_ticks(1);
+    // Formation publishes on the first tick, then consumes the full plugin's
+    // result on the next tick before completing the order.
+    arrival_reflow_fixture.advance_ticks(2);
     assert(arrival_formation.arrival_reflow_done);
     assert(arrival_formation.slots[0].unit.entity == second_unit.entity);
     assert(arrival_formation.slots[1].unit.entity == first_unit.entity);
+    arrival_reflow_fixture.advance_ticks(10);
     assert(arrival_reflow_fixture.world.reg().get<AoeSquadState>(
                arrival_reflow_squad).phase == AoeSquadPhase::Idle);
     assert(arrival_reflow_fixture.world.reg().get<AoeSquadOrder>(
@@ -1527,12 +1565,175 @@ int main() {
     role_reflow_fixture.world.reg().get<AoeSquadState>(
         role_reflow_squad).phase = AoeSquadPhase::Moving;
     role_formation.arrival_reflow_done = false;
-    role_reflow_fixture.advance_ticks(1);
+    role_reflow_fixture.advance_ticks(2);
     assert(role_formation.arrival_reflow_done);
     assert(role_formation.slots[0].unit.entity == role_zero.entity);
     assert(role_formation.slots[2].unit.entity == role_two.entity);
     assert(role_formation.slots[0].priority == 300);
     assert(role_formation.slots[2].priority == -100);
+
+    // The pass-through arrival-rematch phase performs no assignment work. Its
+    // persistent request suppresses per-tick retries while members continue to
+    // their original slots and complete through ordinary formation movement.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin, AoeFullFormationPlugin,
+            AoeFullSquadEngagementPlugin,
+            AoePassThroughSquadArrivalRematchPlugin>
+        pass_through_reflow_fixture;
+    const auto pass_through_reflow_squad = spawn_aoe_gameplay_squad(
+        pass_through_reflow_fixture.world, arrival_reflow_options);
+    spawn_aoe_gameplay_unit_system(pass_through_reflow_fixture.world);
+    pass_through_reflow_fixture.advance_ticks(1);
+    auto& pass_through_formation = pass_through_reflow_fixture.world.reg()
+        .get<AoeSquadFormation>(pass_through_reflow_squad);
+    const auto pass_first = pass_through_formation.slots[0].unit;
+    const auto pass_second = pass_through_formation.slots[1].unit;
+    const auto pass_center = pass_through_reflow_fixture.world.reg()
+        .get<AoePosition>(pass_through_reflow_squad).value;
+    const glm::vec2 pass_forward = glm::normalize(
+        pass_through_formation.forward);
+    const glm::vec2 pass_right{pass_forward.y, -pass_forward.x};
+    const auto pass_slot_world = [&](std::size_t index) {
+        const auto& slot = pass_through_formation.slots[index];
+        return pass_center + pass_right * slot.local_offset.x +
+               pass_forward * slot.local_offset.y;
+    };
+    pass_through_reflow_fixture.world.reg().get<AoePosition>(
+        pass_first.entity).value = pass_slot_world(1);
+    pass_through_reflow_fixture.world.reg().get<AoePosition>(
+        pass_second.entity).value = pass_slot_world(0);
+    for (const auto& member : pass_through_reflow_fixture.world.reg()
+             .get<AoeSquadMembers>(pass_through_reflow_squad).active)
+        pass_through_reflow_fixture.world.reg().get<AoeMovement>(
+            member.entity).speed = .05f;
+    pass_through_reflow_fixture.world.reg().get<AoeSquadOrder>(
+        pass_through_reflow_squad) = {
+            AoeSquadOrderType::AttackMove, pass_center, {}, 7};
+    pass_through_reflow_fixture.world.reg().get<AoeSquadState>(
+        pass_through_reflow_squad).phase = AoeSquadPhase::Moving;
+    pass_through_formation.arrival_reflow_done = false;
+    pass_through_reflow_fixture.advance_ticks(1);
+    const auto first_request = pass_through_reflow_fixture.world.reg()
+        .get<AoeSquadArrivalRematchRequest>(pass_through_reflow_squad);
+    assert(first_request.valid && first_request.order_revision == 7);
+    assert(!pass_through_reflow_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchResult>(pass_through_reflow_squad));
+    pass_through_reflow_fixture.advance_ticks(1);
+    const auto& persistent_request = pass_through_reflow_fixture.world.reg()
+        .get<AoeSquadArrivalRematchRequest>(pass_through_reflow_squad);
+    assert(persistent_request.valid &&
+           persistent_request.requested_tick == first_request.requested_tick);
+    assert(pass_through_formation.slots[0].unit.entity == pass_first.entity);
+    assert(pass_through_formation.slots[1].unit.entity == pass_second.entity);
+    assert(!pass_through_formation.arrival_reflow_done);
+    for (const auto& member : pass_through_reflow_fixture.world.reg()
+             .get<AoeSquadMembers>(pass_through_reflow_squad).active)
+        pass_through_reflow_fixture.world.reg().get<AoeMovement>(
+            member.entity).speed = 2.f;
+    pass_through_reflow_fixture.advance_ticks(20);
+    assert(pass_through_reflow_fixture.world.reg().get<AoeSquadOrder>(
+               pass_through_reflow_squad).type == AoeSquadOrderType::Idle);
+    assert(!pass_through_reflow_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchRequest>(pass_through_reflow_squad));
+
+    // A request is exclusive to AttackMove after anchor arrival with members
+    // still outside their slots. MoveTo and an in-flight anchor never publish.
+    Fixture no_reflow_request_fixture;
+    AoeSquadSpawnOptions no_reflow_options;
+    no_reflow_options.composition = {{"test", 1, 1}};
+    no_reflow_options.center = {5.f, 5.f};
+    no_reflow_options.team_id = 1;
+    const auto no_reflow_squad = spawn_aoe_gameplay_squad(
+        no_reflow_request_fixture.world, no_reflow_options);
+    spawn_aoe_gameplay_unit_system(no_reflow_request_fixture.world);
+    no_reflow_request_fixture.advance_ticks(1);
+    assert(request_aoe_squad_attack_move(
+        no_reflow_request_fixture.world, no_reflow_squad, {10.f, 5.f}));
+    no_reflow_request_fixture.advance_ticks(1);
+    assert(!no_reflow_request_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchRequest>(no_reflow_squad));
+    assert(request_aoe_squad_move(
+        no_reflow_request_fixture.world, no_reflow_squad, {9.f, 5.f}));
+    no_reflow_request_fixture.advance_ticks(1);
+    assert(!no_reflow_request_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchRequest>(no_reflow_squad));
+    assert(request_aoe_squad_stop(
+        no_reflow_request_fixture.world, no_reflow_squad));
+    no_reflow_request_fixture.advance_ticks(1);
+    const auto settled_center = no_reflow_request_fixture.world.reg()
+        .get<AoePosition>(no_reflow_squad).value;
+    auto& settled_order = no_reflow_request_fixture.world.reg()
+        .get<AoeSquadOrder>(no_reflow_squad);
+    settled_order = {AoeSquadOrderType::AttackMove, settled_center, {},
+                     settled_order.revision + 1};
+    no_reflow_request_fixture.world.reg().get<AoeSquadState>(
+        no_reflow_squad).phase = AoeSquadPhase::Moving;
+    no_reflow_request_fixture.advance_ticks(1);
+    assert(!no_reflow_request_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchRequest>(no_reflow_squad));
+
+    // A stale request is replaced once with the current order revision.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin, AoeFullFormationPlugin,
+            AoeFullSquadEngagementPlugin,
+            AoePassThroughSquadArrivalRematchPlugin>
+        stale_reflow_fixture;
+    const auto stale_reflow_squad = spawn_aoe_gameplay_squad(
+        stale_reflow_fixture.world, arrival_reflow_options);
+    spawn_aoe_gameplay_unit_system(stale_reflow_fixture.world);
+    stale_reflow_fixture.advance_ticks(1);
+    auto& stale_formation = stale_reflow_fixture.world.reg()
+        .get<AoeSquadFormation>(stale_reflow_squad);
+    const auto stale_center = stale_reflow_fixture.world.reg()
+        .get<AoePosition>(stale_reflow_squad).value;
+    stale_reflow_fixture.world.reg().get<AoePosition>(
+        stale_formation.slots[0].unit.entity).value += glm::vec2{2.f, 0.f};
+    stale_reflow_fixture.world.reg().get<AoeSquadOrder>(stale_reflow_squad) = {
+        AoeSquadOrderType::AttackMove, stale_center, {}, 9};
+    stale_reflow_fixture.world.reg().get<AoeSquadState>(
+        stale_reflow_squad).phase = AoeSquadPhase::Moving;
+    stale_reflow_fixture.world.reg().emplace<
+        AoeSquadArrivalRematchRequest>(stale_reflow_squad,
+            AoeSquadArrivalRematchRequest{8, 1, true});
+    stale_reflow_fixture.advance_ticks(1);
+    const auto& replaced_request = stale_reflow_fixture.world.reg()
+        .get<AoeSquadArrivalRematchRequest>(stale_reflow_squad);
+    assert(replaced_request.valid && replaced_request.order_revision == 9);
+
+    // Invalid assignment input yields one Failed result. Formation consumes
+    // it as a handled episode and does not publish another request.
+    Fixture failed_reflow_fixture;
+    const auto failed_reflow_squad = spawn_aoe_gameplay_squad(
+        failed_reflow_fixture.world, arrival_reflow_options);
+    spawn_aoe_gameplay_unit_system(failed_reflow_fixture.world);
+    failed_reflow_fixture.advance_ticks(1);
+    auto& failed_formation = failed_reflow_fixture.world.reg()
+        .get<AoeSquadFormation>(failed_reflow_squad);
+    failed_formation.slots.pop_back();
+    const auto failed_center = failed_reflow_fixture.world.reg()
+        .get<AoePosition>(failed_reflow_squad).value;
+    failed_reflow_fixture.world.reg().get<AoeSquadOrder>(
+        failed_reflow_squad) = {
+            AoeSquadOrderType::AttackMove, failed_center, {}, 13};
+    failed_reflow_fixture.world.reg().get<AoeSquadState>(
+        failed_reflow_squad).phase = AoeSquadPhase::Moving;
+    failed_reflow_fixture.world.reg().emplace<
+        AoeSquadArrivalRematchRequest>(failed_reflow_squad,
+            AoeSquadArrivalRematchRequest{13, 98, true});
+    AoeFullSquadArrivalRematchPlugin::fixed_tick(
+        failed_reflow_fixture.world, 99);
+    const auto& failed_result = failed_reflow_fixture.world.reg()
+        .get<AoeSquadArrivalRematchResult>(failed_reflow_squad);
+    assert(failed_result.valid &&
+           failed_result.status == AoeSquadArrivalRematchStatus::Failed &&
+           failed_result.order_revision == 13);
+    gld::ecs::aoe::detail::aoe_gameplay_formation_fixed_tick(
+        failed_reflow_fixture.world, 100, false);
+    assert(failed_formation.arrival_reflow_done);
+    assert(!failed_reflow_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchRequest>(failed_reflow_squad));
+    assert(!failed_reflow_fixture.world.reg()
+        .all_of<AoeSquadArrivalRematchResult>(failed_reflow_squad));
 
     // The preview-sized squad computes one center guide. Until route splitting
     // is implemented, members keep direct provisional waypoints and do not run

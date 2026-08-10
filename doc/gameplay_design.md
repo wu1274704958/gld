@@ -684,12 +684,13 @@ slot_world = squad_center
 - `squad_leash` 当前主要用于诊断，不会让整队因为一个落后成员而停止；
 - anchor 自己无路可走时 Squad 才进入 `Blocked`。
 
-Squad AttackMove 的 anchor 到达最终目的地后，如果还有成员尚未到达 slot，会执行一次终点重排。重排只改变 `slot.unit` 绑定，不改变 slot 几何、不瞬移成员，也不改写位置历史：
+Squad AttackMove 的 anchor 到达最终目的地后，如果还有成员尚未到达 slot，Formation 会发布一次 `AoeSquadArrivalRematchRequest`。紧随 Formation 的编译期 `AoeSquadArrivalRematchPhase` 决定是否执行终点重排；重排只改变 `slot.unit` 绑定，不改变 slot 几何、不瞬移成员，也不改写位置历史：
 
 - 按 Formation priority 分组，成员只能在同一优先级组内换位，因此前排/后排角色顺序保持不变；
 - 每组使用确定性的最小总代价匹配，代价是成员当前位置到 slot 世界坐标的平方距离；
 - 相同代价按稳定 member ordinal、instance ID、entity ID 与原 slot 顺序决胜；
-- 成功后同 tick 重新下发 slot goal，避免成员继续走向已被同队成员占据或交叉的旧 slot；
+- `AoeFullSquadArrivalRematchPlugin` 消费请求并生成 `Applied/Failed` 结果；Formation 在下一 fixed tick 消费结果，再按新的 slot 绑定下发 goal；
+- `AoePassThroughSquadArrivalRematchPlugin` 为空实现，请求保持 pending 以阻止每 tick 重发，成员继续走向原 slot；
 - 每个终点只执行一次；新命令、成员变化、Formation 变化或战斗 engagement 会重置该标记；
 - 普通 Squad MoveTo 不执行终点重排。
 

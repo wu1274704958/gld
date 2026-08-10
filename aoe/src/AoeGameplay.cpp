@@ -690,140 +690,6 @@ bool rebuild_squad_layout(EcsWorld& world, entt::entity squad) {
     return true;
 }
 
-bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
-    auto& reg = world.reg();
-    if (!reg.valid(squad) ||
-        !reg.all_of<AoePosition, AoeSquadFormation, AoeSquadMembers>(squad))
-        return false;
-    auto& formation = reg.get<AoeSquadFormation>(squad);
-    if (formation.slots.empty()) return true;
-    const auto& members = reg.get<AoeSquadMembers>(squad);
-    if (formation.slots.size() != members.active.size()) return false;
-
-    std::vector<AoeUnitTarget> rematched;
-    rematched.reserve(formation.slots.size());
-    for (const auto& slot : formation.slots) {
-        if (!squad_member_valid(reg, slot.unit) ||
-            !reg.all_of<AoePosition, AoeSquadMember>(slot.unit.entity))
-            return false;
-        const auto& membership = reg.get<AoeSquadMember>(slot.unit.entity);
-        if (membership.squad != squad ||
-            std::ranges::none_of(members.active,
-                [&](const AoeUnitTarget& active) {
-                    return active.entity == slot.unit.entity &&
-                           active.instance_id == slot.unit.instance_id;
-                }) ||
-            std::ranges::any_of(rematched,
-                [&](const AoeUnitTarget& seen) {
-                    return seen.entity == slot.unit.entity &&
-                           seen.instance_id == slot.unit.instance_id;
-                }))
-            return false;
-        rematched.push_back(slot.unit);
-    }
-
-    std::vector<std::int64_t> priorities;
-    priorities.reserve(formation.slots.size());
-    for (const auto& slot : formation.slots)
-        if (std::find(priorities.begin(), priorities.end(), slot.priority) ==
-            priorities.end())
-            priorities.push_back(slot.priority);
-
-    const auto& center = reg.get<AoePosition>(squad);
-    constexpr double CostEpsilon = 1e-12;
-    for (const auto priority : priorities) {
-        std::vector<std::size_t> slot_indices;
-        std::vector<AoeUnitTarget> units;
-        for (std::size_t i = 0; i < formation.slots.size(); ++i) {
-            if (formation.slots[i].priority != priority) continue;
-            slot_indices.push_back(i);
-            units.push_back(formation.slots[i].unit);
-        }
-        if (units.size() <= 1) continue;
-        std::stable_sort(units.begin(), units.end(),
-            [&](const AoeUnitTarget& a, const AoeUnitTarget& b) {
-                const auto& member_a = reg.get<AoeSquadMember>(a.entity);
-                const auto& member_b = reg.get<AoeSquadMember>(b.entity);
-                if (member_a.ordinal != member_b.ordinal)
-                    return member_a.ordinal < member_b.ordinal;
-                if (a.instance_id != b.instance_id)
-                    return a.instance_id < b.instance_id;
-                return entt::to_integral(a.entity) <
-                       entt::to_integral(b.entity);
-            });
-
-        // Deterministic Hungarian assignment. Rows are stable members and
-        // columns are stable slot indices; equal costs prefer the lower slot.
-        const std::size_t count = units.size();
-        std::vector<double> row_potential(count + 1, 0.0);
-        std::vector<double> column_potential(count + 1, 0.0);
-        std::vector<std::size_t> matched_row(count + 1, 0);
-        std::vector<std::size_t> previous_column(count + 1, 0);
-        for (std::size_t row = 1; row <= count; ++row) {
-            matched_row[0] = row;
-            std::vector<double> minimum(count + 1,
-                                        std::numeric_limits<double>::infinity());
-            std::vector<bool> used(count + 1, false);
-            std::size_t column = 0;
-            do {
-                used[column] = true;
-                const std::size_t current_row = matched_row[column];
-                double delta = std::numeric_limits<double>::infinity();
-                std::size_t next_column = 0;
-                for (std::size_t candidate = 1; candidate <= count;
-                     ++candidate) {
-                    if (used[candidate]) continue;
-                    const glm::vec2 unit_position = reg.get<AoePosition>(
-                        units[current_row - 1].entity).value;
-                    const glm::vec2 slot_position = squad_slot_world(
-                        center, formation,
-                        formation.slots[slot_indices[candidate - 1]]);
-                    const glm::vec2 difference = unit_position - slot_position;
-                    const double cost = static_cast<double>(
-                        glm::dot(difference, difference));
-                    const double reduced = cost - row_potential[current_row] -
-                                           column_potential[candidate];
-                    if (reduced + CostEpsilon < minimum[candidate]) {
-                        minimum[candidate] = reduced;
-                        previous_column[candidate] = column;
-                    }
-                    if (minimum[candidate] + CostEpsilon < delta ||
-                        (std::abs(minimum[candidate] - delta) <= CostEpsilon &&
-                         (next_column == 0 || candidate < next_column))) {
-                        delta = minimum[candidate];
-                        next_column = candidate;
-                    }
-                }
-                if (next_column == 0 || !std::isfinite(delta)) return false;
-                for (std::size_t candidate = 0; candidate <= count;
-                     ++candidate) {
-                    if (used[candidate]) {
-                        row_potential[matched_row[candidate]] += delta;
-                        column_potential[candidate] -= delta;
-                    } else {
-                        minimum[candidate] -= delta;
-                    }
-                }
-                column = next_column;
-            } while (matched_row[column] != 0);
-            do {
-                const std::size_t previous = previous_column[column];
-                matched_row[column] = matched_row[previous];
-                column = previous;
-            } while (column != 0);
-        }
-        for (std::size_t column = 1; column <= count; ++column) {
-            if (matched_row[column] == 0) return false;
-            rematched[slot_indices[column - 1]] =
-                units[matched_row[column] - 1];
-        }
-    }
-
-    for (std::size_t i = 0; i < formation.slots.size(); ++i)
-        formation.slots[i].unit = rematched[i];
-    return true;
-}
-
 void handle_squad_layout_failure(EcsWorld& world, entt::entity squad,
                                  std::uint64_t tick) {
     auto& reg = world.reg();
@@ -1409,8 +1275,11 @@ void squad_membership_cleanup_tick(EcsWorld& world) {
             return remove;
         });
         if (members.active.size() != old_size) formation.dirty = true;
-        if (members.active.size() != old_size)
+        if (members.active.size() != old_size) {
             formation.arrival_reflow_done = false;
+            reg.remove<AoeSquadArrivalRematchRequest>(squad);
+            reg.remove<AoeSquadArrivalRematchResult>(squad);
+        }
         if (members.active.empty() && members.pending.empty() &&
             reg.get<AoeSquadSpawnState>(squad).status != AoeSquadSpawnStatus::Failed) {
             reg.get<AoeSquadSpawnState>(squad).status = AoeSquadSpawnStatus::Empty;
@@ -1447,6 +1316,8 @@ void apply_squad_command(EcsWorld& world, const AoeSquadCommand& command,
         formation.type = command.formation;
         formation.dirty = true;
         formation.arrival_reflow_done = false;
+        reg.remove<AoeSquadArrivalRematchRequest>(command.squad);
+        reg.remove<AoeSquadArrivalRematchResult>(command.squad);
         order.revision = next_revision;
         if (state.phase != AoeSquadPhase::Engaging)
             state.phase = AoeSquadPhase::Regrouping;
@@ -1455,6 +1326,8 @@ void apply_squad_command(EcsWorld& world, const AoeSquadCommand& command,
     clear_squad_member_orders(reg, members, tick);
     reg.remove<AoeNavigationPath>(command.squad);
     formation.arrival_reflow_done = false;
+    reg.remove<AoeSquadArrivalRematchRequest>(command.squad);
+    reg.remove<AoeSquadArrivalRematchResult>(command.squad);
     if (command.type == AoeSquadCommandType::Stop) {
         reg.get<AoePosition>(command.squad).value = squad_centroid(
             reg, members, reg.get<AoePosition>(command.squad).value);
@@ -1530,6 +1403,18 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
         auto& order = reg.get<AoeSquadOrder>(squad);
         auto& state = reg.get<AoeSquadState>(squad);
         auto& center = reg.get<AoePosition>(squad);
+        if (auto* result =
+                reg.try_get<AoeSquadArrivalRematchResult>(squad)) {
+            if (result->valid && result->order_revision == order.revision &&
+                order.type == AoeSquadOrderType::AttackMove &&
+                (result->status == AoeSquadArrivalRematchStatus::Applied ||
+                 result->status == AoeSquadArrivalRematchStatus::Failed))
+                formation.arrival_reflow_done = true;
+            reg.remove<AoeSquadArrivalRematchRequest>(squad);
+            reg.remove<AoeSquadArrivalRematchResult>(squad);
+        } else if (order.type != AoeSquadOrderType::AttackMove) {
+            reg.remove<AoeSquadArrivalRematchRequest>(squad);
+        }
         const auto* engagement =
             reg.try_get<AoeSquadEngagementResult>(squad);
         const bool attack_move_active =
@@ -1706,15 +1591,26 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             if (anchor_arrived &&
                 order.type == AoeSquadOrderType::AttackMove &&
                 !formation.arrival_reflow_done) {
-                if (!squad_slots_arrived(reg, squad) &&
-                    rematch_squad_arrival_slots(world, squad))
-                    drive_squad_slots(
-                        world, squad, state.movement_speed, tick);
-                formation.arrival_reflow_done = true;
+                if (!squad_slots_arrived(reg, squad)) {
+                    auto* request = reg.try_get<
+                        AoeSquadArrivalRematchRequest>(squad);
+                    if (request &&
+                        request->order_revision != order.revision) {
+                        reg.remove<AoeSquadArrivalRematchRequest>(squad);
+                        request = nullptr;
+                    }
+                    if (!request || !request->valid)
+                        reg.emplace_or_replace<
+                            AoeSquadArrivalRematchRequest>(squad,
+                            AoeSquadArrivalRematchRequest{
+                                order.revision, tick, true});
+                }
             }
             if (anchor_arrived && squad_slots_arrived(reg, squad)) {
                 clear_squad_member_orders(reg, members, tick);
                 reg.remove<AoeNavigationPath>(squad);
+                reg.remove<AoeSquadArrivalRematchRequest>(squad);
+                reg.remove<AoeSquadArrivalRematchResult>(squad);
                 order = {};
                 state.phase = AoeSquadPhase::Idle;
             }

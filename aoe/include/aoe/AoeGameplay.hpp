@@ -889,6 +889,7 @@ struct AoeGameplayPerformanceDiagnostics {
     double squad_engagement_ms = 0.0;
     double squad_control_ms = 0.0;
     double formation_ms = 0.0;
+    double squad_arrival_rematch_ms = 0.0;
     double squad_traffic_ms = 0.0;
     double attack_move_acquisition_ms = 0.0;
     double navigation_ms = 0.0;
@@ -1077,6 +1078,7 @@ aoe_gameplay_select_stalled_in_range_target(
 
 #include <aoe/AoeFormation.hpp>
 #include <aoe/AoeSquadEngagement.hpp>
+#include <aoe/AoeSquadArrivalRematch.hpp>
 #include <aoe/AoeLocalAvoidance.hpp>
 #include <aoe/AoeGlobalMotion.hpp>
 
@@ -1115,6 +1117,7 @@ using gameplay_plugin_for_phase_t =
     typename GameplayPluginForPhase<Phase, Plugins...>::type;
 
 template<class SquadEngagementPlugin, class FormationPlugin,
+         class SquadArrivalRematchPlugin,
          class LocalAvoidancePlugin,
          class GlobalMotionPlugin>
 void aoe_gameplay_fixed_system(EcsWorld& world) {
@@ -1148,6 +1151,7 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
         aoe_gameplay_fixed_before_formation(world, clock.tick);
         SquadEngagementPlugin::fixed_tick(world, clock.tick);
         FormationPlugin::fixed_tick(world, clock.tick);
+        SquadArrivalRematchPlugin::fixed_tick(world, clock.tick);
         aoe_gameplay_fixed_after_formation_before_local(world, clock.tick);
         LocalAvoidancePlugin::fixed_tick(world, clock.tick);
         GlobalMotionPlugin::fixed_tick(world, clock.tick);
@@ -1178,6 +1182,9 @@ struct AoeGameplayDef {
                       AoeFormationPhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one formation phase plugin");
     static_assert(detail::gameplay_phase_count_v<
+                      AoeSquadArrivalRematchPhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one squad-arrival-rematch phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
                       AoeLocalAvoidancePhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one local-avoidance phase plugin");
     static_assert(detail::gameplay_phase_count_v<
@@ -1188,6 +1195,8 @@ struct AoeGameplayDef {
         AoeSquadEngagementPhase, Plugins...>;
     using FormationPlugin = detail::gameplay_plugin_for_phase_t<
         AoeFormationPhase, Plugins...>;
+    using SquadArrivalRematchPlugin = detail::gameplay_plugin_for_phase_t<
+        AoeSquadArrivalRematchPhase, Plugins...>;
     using LocalAvoidancePlugin = detail::gameplay_plugin_for_phase_t<
         AoeLocalAvoidancePhase, Plugins...>;
     using GlobalMotionPlugin = detail::gameplay_plugin_for_phase_t<
@@ -1202,6 +1211,7 @@ struct AoeGameplayDef {
         app.add_system(Stage::PreUpdate, [](EcsWorld& world) {
             detail::aoe_gameplay_fixed_system<
                 SquadEngagementPlugin, FormationPlugin,
+                SquadArrivalRematchPlugin,
                 LocalAvoidancePlugin,
                 GlobalMotionPlugin>(world);
         });
@@ -1210,6 +1220,7 @@ struct AoeGameplayDef {
 
 using AoeGameplayPlugin = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
     AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 

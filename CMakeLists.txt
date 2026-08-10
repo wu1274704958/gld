@@ -149,6 +149,8 @@ if(GLM_FOUND AND GLFW3_FOUND)
         aoe/src/AoeSquadEngagementFallback.cpp
         aoe/src/AoeFormation.cpp
         aoe/src/AoeFormationFallback.cpp
+        aoe/src/AoeSquadArrivalRematch.cpp
+        aoe/src/AoeSquadArrivalRematchFallback.cpp
         aoe/src/AoeGlobalMotion.cpp
         aoe/src/AoeGlobalMotionFallback.cpp
         aoe/src/AoeLocalAvoidance.cpp
@@ -199,6 +201,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
         add_test(NAME gizmo_tests COMMAND gizmo_tests)
         add_executable(aoe_gameplay_tests aoe/tests/AoeGameplayTests.cpp)
         target_link_libraries(aoe_gameplay_tests PRIVATE gld_aoe_gameplay)
+        if(MSVC)
+            target_compile_options(aoe_gameplay_tests PRIVATE /bigobj)
+        endif()
         add_test(NAME aoe_gameplay_tests COMMAND aoe_gameplay_tests)
         add_executable(aoe_map_tests aoe/tests/AoeMapTests.cpp)
         target_link_libraries(aoe_map_tests PRIVATE gld_aoe_gameplay)

@@ -262,15 +262,24 @@ automatic target acquisition and member target maintenance. The pass-through
 plugin is empty, so AttackMove continues as formation travel while explicit
 Squad AttackTarget remains available.
 
+AttackMove arrival rematching is a separate required static phase immediately
+after Formation. `AoeFullSquadArrivalRematchPlugin` consumes a one-shot request
+and performs the role-preserving minimum-cost slot assignment. Formation
+consumes its result on the next fixed tick. The empty
+`AoePassThroughSquadArrivalRematchPlugin` leaves the request pending to suppress
+retries while members finish at their original slots.
+
 For a Global Motion A/B, keep the other phases fixed and change only the global
 motion plugin before rebuilding the same executable:
 
 ```cpp
 using ProductionGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
     AoeFullLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 using GlobalMotionFloorGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
     AoeFullLocalAvoidancePlugin, AoePassThroughGlobalMotionPlugin>;
 ```
 
@@ -321,6 +330,7 @@ struct MyLocalAvoidancePlugin {
 
 using MyGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
+    AoeFullSquadArrivalRematchPlugin,
     MyLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 app.add_plugin(MyGameplay{"aoe_units"});
 ```

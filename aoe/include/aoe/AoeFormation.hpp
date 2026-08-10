@@ -42,8 +42,8 @@ struct AoeFormationResult {
     bool valid = false;
 };
 
-// Production implementation: moving/elastic slots, speed limiting and the
-// existing arrival rematch behavior.
+// Production implementation: moving/elastic slots, speed limiting and
+// publication/consumption of the optional arrival-rematch contract.
 struct AoeFullFormationPlugin {
     using phase = AoeFormationPhase;
     static constexpr std::string_view name = "full";
