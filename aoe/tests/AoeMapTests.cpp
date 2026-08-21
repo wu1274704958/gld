@@ -69,15 +69,15 @@ int main() {
     box.center = {4.f, 4.f};
     box.half_extents = {.5f, 1.f};
     const auto before_revision = map.static_revision();
-    const auto box_id = map.add_static_obstacle(box);
+    const auto box_id = map.add_runtime_static_obstacle(box);
     assert(box_id && map.static_revision() > before_revision);
     assert(map.position_blocked({4.f, 4.f}, {.2f, .2f}));
     assert(!map.position_blocked({2.f, 4.f}, {.2f, .2f}));
     assert(map.static_safe_fraction({2.f, 4.f}, {6.f, 4.f}, {.2f, .2f}) < 1.f);
     box.center = {6.f, 6.f};
-    assert(map.update_static_obstacle(box_id, box));
+    assert(map.update_runtime_static_obstacle(box_id, box));
     assert(!map.position_blocked({4.f, 4.f}, {.2f, .2f}));
-    assert(map.remove_static_obstacle(box_id));
+    assert(map.remove_runtime_static_obstacle(box_id));
     assert(!map.static_obstacle(box_id));
 
     AoeStaticObstacleDesc circle;
@@ -85,7 +85,7 @@ int main() {
     circle.shape = AoeStaticObstacleShape::Circle;
     circle.center = {3.f, 3.f};
     circle.radius = .5f;
-    assert(map.add_static_obstacle(circle));
+    assert(map.add_runtime_static_obstacle(circle));
     assert(map.position_blocked({3.6f, 3.f}, {.2f, .2f}));
 
     // Obstacles entirely outside the finite map must not leak into a clamped
@@ -95,21 +95,21 @@ int main() {
     outside.shape = AoeStaticObstacleShape::Aabb;
     outside.center = {-100.f, -100.f};
     outside.half_extents = {1.f, 1.f};
-    assert(map.add_static_obstacle(outside));
+    assert(map.add_runtime_static_obstacle(outside));
     assert(!map.position_blocked({.2f, .2f}, {.1f, .1f}));
     AoeStaticObstacleDesc contact_box;
     contact_box.shape = AoeStaticObstacleShape::Aabb;
     contact_box.center = {4.f, 4.f};
     contact_box.half_extents = {1.f, 1.f};
     AoeLogicMap contact_map(make_map());
-    assert(contact_map.add_static_obstacle(contact_box));
+    assert(contact_map.add_runtime_static_obstacle(contact_box));
     assert(contact_map.static_safe_fraction(
                {2.8f, 4.f}, {2.8f, 5.f}, {.2f, .2f}) == 1.f);
     assert(contact_map.static_safe_fraction(
                {2.8f, 4.f}, {3.2f, 4.f}, {.2f, .2f}) < 1.f);
     EcsWorld contact_world;
     contact_world.add_resource<AoeLogicMap>(make_map());
-    contact_world.resource<AoeLogicMap>().add_static_obstacle(contact_box);
+    contact_world.resource<AoeLogicMap>().add_runtime_static_obstacle(contact_box);
     const auto leave_contact = GridAStarPathfinderLogic::find(contact_world,
         {{2.8f, 4.f}, {1.5f, 4.f}, {.2f, .2f}});
     assert(leave_contact.status == AoePathStatus::Ready &&
@@ -143,7 +143,7 @@ int main() {
     wall.shape = AoeStaticObstacleShape::Aabb;
     wall.center = {4.f, 4.f};
     wall.half_extents = {.45f, 2.f};
-    world_map.add_static_obstacle(wall);
+    world_map.add_runtime_static_obstacle(wall);
     const AoePathRequest request{{1.5f, 4.f}, {6.5f, 4.f}, {.2f, .2f}};
     const auto path = registry.find("grid_astar", world, request);
     assert(path.status == AoePathStatus::Ready && !path.waypoints.empty());
@@ -159,7 +159,7 @@ int main() {
     sealed.shape = AoeStaticObstacleShape::Aabb;
     sealed.center = {4.f, 4.f};
     sealed.half_extents = {.45f, 4.f};
-    world_map.update_static_obstacle(1, sealed);
+    world_map.update_runtime_static_obstacle(1, sealed);
     assert(registry.find("grid_astar", world, request).status ==
            AoePathStatus::NoPath);
 

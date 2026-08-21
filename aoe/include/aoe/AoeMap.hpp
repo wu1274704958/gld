@@ -19,6 +19,7 @@ namespace gld::ecs::aoe {
 using AoeObstacleId = std::uint64_t;
 
 enum class AoeStaticObstacleShape { Aabb, Circle };
+enum class AoeStaticObstacleKind { Base, Runtime };
 
 struct AoeStaticObstacleDesc {
     std::string source_id;
@@ -35,6 +36,8 @@ struct AoeMapDefinition {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::vector<float> heights;
+    // Immutable/base obstacles loaded with the map definition. Runtime-static
+    // obstacles are registered separately on AoeLogicMap.
     std::vector<AoeStaticObstacleDesc> static_obstacles;
 };
 
@@ -73,12 +76,24 @@ public:
     glm::vec2 cell_center(int x, int y) const;
     std::optional<float> sample_height(glm::vec2 point) const;
 
-    AoeObstacleId add_static_obstacle(const AoeStaticObstacleDesc& obstacle);
-    bool update_static_obstacle(AoeObstacleId,
-                                const AoeStaticObstacleDesc& obstacle);
-    bool remove_static_obstacle(AoeObstacleId);
+    AoeObstacleId add_runtime_static_obstacle(
+        const AoeStaticObstacleDesc& obstacle);
+    bool update_runtime_static_obstacle(
+        AoeObstacleId, const AoeStaticObstacleDesc& obstacle);
+    bool remove_runtime_static_obstacle(AoeObstacleId);
     const AoeStaticObstacleDesc* static_obstacle(AoeObstacleId) const;
+    std::optional<AoeStaticObstacleKind> static_obstacle_kind(
+        AoeObstacleId) const;
     std::size_t static_obstacle_count() const { return obstacles_.size(); }
+    std::size_t base_static_obstacle_count() const {
+        return base_static_obstacle_count_;
+    }
+    std::size_t runtime_static_obstacle_count() const {
+        return obstacles_.size() - base_static_obstacle_count_;
+    }
+    void visit_static_obstacles(const std::function<void(
+        AoeObstacleId, AoeStaticObstacleKind,
+        const AoeStaticObstacleDesc&)>& visitor) const;
     void visit_static_obstacles(const std::function<void(
         AoeObstacleId, const AoeStaticObstacleDesc&)>& visitor) const;
 
@@ -90,6 +105,7 @@ public:
 private:
     struct ObstacleRecord {
         AoeObstacleId id = 0;
+        AoeStaticObstacleKind kind = AoeStaticObstacleKind::Base;
         AoeStaticObstacleDesc desc;
     };
 
@@ -105,6 +121,7 @@ private:
     std::uint32_t height_ = 0;
     std::vector<float> heights_;
     std::vector<ObstacleRecord> obstacles_;
+    std::size_t base_static_obstacle_count_ = 0;
     std::unordered_map<AoeObstacleId, std::size_t> obstacle_lookup_;
     std::vector<std::vector<std::size_t>> static_buckets_;
     mutable std::vector<std::uint32_t> static_query_marks_;

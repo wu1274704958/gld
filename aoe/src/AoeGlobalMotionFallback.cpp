@@ -64,37 +64,28 @@ void AoePassThroughGlobalMotionPlugin::fixed_tick(
     for (const auto entity : reg.view<AoeGlobalMotionDecision>())
         reg.get<AoeGlobalMotionDecision>(entity).valid = false;
 
-    for (const auto entity : reg.view<AoeMovementIntent, AoePosition,
-                                      AoeCollider, AoeGameplayIdentity,
-                                      AoeTeam>()) {
+    std::uint64_t active_intents = 0;
+    for (const auto entity : reg.view<AoeMovementIntent>()) {
         const auto& intent = reg.get<AoeMovementIntent>(entity);
         if (!intent.valid || intent.produced_tick != tick) continue;
-        const bool finite = std::isfinite(intent.velocity.x) &&
-                            std::isfinite(intent.velocity.y);
+        const bool finite = std::isfinite(intent.raw_path_velocity.x) &&
+                            std::isfinite(intent.raw_path_velocity.y);
         const glm::vec2 velocity = acceleration_limited_velocity(
-            reg, entity, finite ? intent.velocity : glm::vec2{0.f},
+            reg, entity,
+            finite ? intent.raw_path_velocity : glm::vec2{0.f},
             navigation.steering_max_acceleration, fixed_dt);
-        const auto& collider = reg.get<AoeCollider>(entity);
-        entt::entity squad = entt::null;
-        if (const auto* member = reg.try_get<AoeSquadMember>(entity))
-            squad = member->squad;
-        index.records.push_back({entity,
-            reg.get<AoeGameplayIdentity>(entity).instance_id, squad,
-            reg.get<AoeTeam>(entity).id, intent.kind,
-            reg.get<AoePosition>(entity).value,
-            {collider.radius_x, collider.radius_y}, velocity});
-        index.maximum_reach = std::max(index.maximum_reach,
-            std::max(collider.radius_x, collider.radius_y) +
-            glm::length(velocity));
+        // The pass-through backend deliberately leaves AoeUnitFlowIndex
+        // empty. global_motion_safety_tick therefore has no records to clip:
+        // neither dynamic units nor static geometry affect this diagnostic
+        // route-playback mode.
         reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
             AoeGlobalMotionDecision{.velocity = velocity,
                 .stop_reason = finite ? AoeMotionStopReason::None
                                       : AoeMotionStopReason::Unknown,
                 .produced_tick = tick, .valid = true});
-        if (intent.locally_infeasible)
-            ++gameplay.flow_infeasible_assignments;
+        ++active_intents;
     }
-    gameplay.flow_active_intents += index.records.size();
+    gameplay.flow_active_intents += active_intents;
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
         .unit_flow_ms += std::chrono::duration<double, std::milli>(

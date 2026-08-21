@@ -141,6 +141,42 @@ maximum map edge, and all other out-of-bounds points, return `std::nullopt`.
 This version stores height for later combat rules but does not apply slope or
 high-ground bonuses.
 
+Map-definition `static_obstacles` are immutable base obstacles. ECS-backed
+buildings and other runtime-static shapes use the explicit
+`add/update/remove_runtime_static_obstacle` API. Both categories participate in
+the same collision queries and advance `static_revision()` when the effective
+static map changes.
+
+`AoeNavMeshResource` is a runtime-only Recast/Detour derivative of the logic
+map. The fixed pipeline first synchronizes runtime-static obstacles, then builds
+the initial NavMesh before squad path requests. It exposes backend-neutral
+polygon corridors and ordered left/right portals. The resource records its
+source map revision; revision mismatches currently mark it stale, emit one
+warning per revision, and keep the old mesh queryable. Updating/replacing the
+mesh after a revision change is intentionally left as a `!TODO`. No NavMesh
+cache files are written.
+
+`AoeNavMeshRouteSplitModule` consumes the one corridor produced by
+`AoeNavMeshSquadPathfinderPlugin` and builds a shared turn-aware formation
+trajectory through its portal midpoints. Formation rotation overlaps entry
+into each outgoing segment instead of stopping at the spine point; adjacent
+orientation frames are at most 10 degrees apart and center frames at most 0.5
+world units apart.
+Every member keeps its existing slot binding and receives a route derived from
+the same center, forward, and bottleneck-compression frame. Full member sweeps
+are validated against current static geometry before the split is accepted.
+Results are cached by order, layout, LogicMap, and NavMesh revision.
+
+`AoeLayoutRouteSplitFormationPlugin` retains the minimal MovingControl bridge
+that only publishes valid member routes as `AoeMoveGoal`. The preview uses
+`AoeLayoutRouteSplitMovingFormationPlugin` instead: its synchronized
+MovingControl projects every member onto shared Squad progress, derives
+inner/outer turn speed limits, and caps members that lead the slowest member.
+The update is O(member_count), performs no slot rematching, and preserves a
+continuous whole-formation 180-degree turn. AttackControl and
+CommandCompletion are still pass-through. Distance-aware corridor selection
+and narrow-corridor lane reflow are deliberately deferred.
+
 A map can be installed programmatically:
 
 ```cpp
@@ -252,10 +288,11 @@ the local layer rather than permitting unit penetration.
 Global motion is another required static phase. The default
 `AoeDefaultGlobalMotionPlugin` retains the late-bound `gpu_image` planner and
 the headless `cpu_unit_flow` fallback. `AoePassThroughGlobalMotionPlugin` is a
-performance-floor backend: it preserves acceleration limiting and final static
-obstacle safety, but deliberately omits dynamic unit coordination and dynamic
-pair safety. Static phases cannot be switched at runtime; select the plugin
-types when composing the application or benchmark.
+diagnostic route-playback backend: it follows raw path velocity and preserves
+acceleration limiting, but deliberately performs no local-result correction,
+dynamic-unit coordination, dynamic pair safety, or static-geometry clipping.
+Static phases cannot be switched at runtime; select the plugin types when
+composing the application or benchmark.
 
 Squad AttackMove engagement is also selected statically. The full plugin owns
 automatic target acquisition and member target maintenance. The pass-through
@@ -276,18 +313,20 @@ motion plugin before rebuilding the same executable:
 using ProductionGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     AoeFullLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 using GlobalMotionFloorGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     AoeFullLocalAvoidancePlugin, AoePassThroughGlobalMotionPlugin>;
 ```
 
 The squad preview's `SquadGameplayDef` is the intended benchmark edit point.
 Its GPU plugin is installed only when the selected Global Motion phase uses the
 runtime planner registry. Restore `AoeDefaultGlobalMotionPlugin` after measuring;
-the pass-through result is a cost floor, not a behavior-equivalent production
-configuration.
+the pass-through result is a cost floor and trajectory viewer, not a
+behavior-equivalent production configuration.
 
 `AoeLocomotionState` exposes actual velocity, actual speed, previous velocity,
 cumulative travelled distance, and `effective_max_speed`. The latter is the
@@ -300,6 +339,20 @@ animate proportionally. Attack Move target scans that find no enemy preserve
 formation velocity instead of restarting acceleration every fixed tick. Idle
 remains fixed-clock-driven, while attack/death/disappear timing continues to use
 action ticks.
+
+`AoeDefaultUnitMovementIntentPlugin` is the required static phase between the
+Unit Pathfinder and Local Avoidance phases. It reads the current path waypoint
+and writes `AoePathMotionRequest`; waypoint cursor advancement remains in the
+fixed pipeline, so the plugin never mutates `AoeNavigationPath`. Intermediate
+route waypoints run at the Unit's effective speed and are advanced before
+intent generation in the same tick. Formation routes also advance an
+intermediate waypoint after crossing its directed target plane inside a
+bounded lateral corridor, so turn-limited Units cannot orbit a missed point.
+Only the final waypoint uses arrival braking.
+`movement.rotation_speed_degrees_per_second` is optional in schema 2
+(default `360`) and limits both the raw path vector and the final velocity after
+Local Avoidance/Global Motion. Speed remains the only per-Unit linear limit;
+Global Motion continues to own acceleration behavior.
 
 Custom single-unit or squad planners use the same static registry interface:
 
@@ -331,6 +384,7 @@ struct MyLocalAvoidancePlugin {
 using MyGameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     MyLocalAvoidancePlugin, AoeDefaultGlobalMotionPlugin>;
 app.add_plugin(MyGameplay{"aoe_units"});
 ```
@@ -391,6 +445,16 @@ front slots first. Equal scores keep spawn-ordinal order, and unmatched tags
 score zero. The built-in `DefaultSkirmishFormation` uses the rule table above
 and produces a collision-aware square grid.
 
+Every registered layout generator exposes `generate(context)` and
+`generate_for_width(context, maximum_width)`. Both return slots plus local
+`min/max` bounds whose width and height include each Unit's collision radius.
+The width-constrained square layout reduces columns and increases rows without
+changing spacing or member priority order; a width below the legal one-column
+footprint fails. `AoeSquadLayoutState` owns the authoritative natural layout and
+its revision. Width-constrained variants are transient caller-owned values and
+do not overwrite that state. RouteSplit does not consume the new variant API
+yet; its future route plan will own or cache the selected narrow layout.
+
 `request_aoe_squad_move`, `request_aoe_squad_attack`,
 `request_aoe_squad_attack_move`, and `request_aoe_squad_stop` apply orders to
 the whole squad. Squad movement is capped to the slowest living member. Attack
@@ -435,10 +499,13 @@ is 128 total, while the maximum preset contains 10,000 units per side. The main
 camera automatically fits the complete isometric map and updates after a window
 resize. Space reissues mutual Attack Move, S stops both squads, and R respawns
 the current preset. G toggles map boundaries and obstacles, N toggles
-anchor/member paths and formation slots, P toggles rendered SLD foot markers, C
-toggles the interpolated gameplay collision ellipses, and L traces one blue
-Archer to the console. The HUD and profile CSV identify the statically selected
-local-avoidance backend. Collision, navigation, foot, and trace
+anchor/member paths and formation slots, and M toggles the NavMesh, corridor,
+shared formation trajectory, turn-frame axes, and member split routes. P toggles
+rendered SLD foot markers, C toggles the interpolated gameplay collision
+ellipses, and L traces one blue Archer to the console. The current preview
+composition explicitly reports `collision=disabled` because both avoidance and
+GlobalMotion are pass-through. The HUD and profile CSV identify the statically
+selected local-avoidance backend. Collision, navigation, foot, and trace
 diagnostics are disabled when comparing performance because they add
 intentional debug work. F5 rescans unit definitions and respawns, and Escape
 exits. The stress preview disables VSync by default so its FPS reflects actual

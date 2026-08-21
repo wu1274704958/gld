@@ -34,6 +34,7 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
 endif()
 
 include(CTest)
+include(FetchContent)
 
 option(GLD_ENABLE_PERFORMANCE_MONITORING
     "Compile detailed CPU/GPU performance diagnostics (FPS is always enabled)"
@@ -81,13 +82,21 @@ find_package(EnTT CONFIG REQUIRED)
 
 find_package(nlohmann_json CONFIG QUIET)
 if(NOT nlohmann_json_FOUND)
-    include(FetchContent)
     FetchContent_Declare(nlohmann_json
         URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
         URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(nlohmann_json)
 endif()
+
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(recastnavigation)
 
 set(GLD_PLATFORM_LIBS "")
 if(WIN32)
@@ -142,21 +151,28 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_include_directories(gld_aoe_map PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
     target_link_libraries(gld_aoe_map PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
 
+    add_library(gld_aoe_navmesh STATIC aoe/src/AoeNavMesh.cpp)
+    target_include_directories(gld_aoe_navmesh PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
+    target_link_libraries(gld_aoe_navmesh PUBLIC gld_aoe_map EnTT::EnTT
+        PRIVATE Recast Detour)
+
     add_library(gld_aoe_gameplay STATIC
         aoe/src/AoeGameplay.cpp
         aoe/src/AoeCombat.cpp
         aoe/src/AoeSquadEngagement.cpp
         aoe/src/AoeSquadEngagementFallback.cpp
         aoe/src/AoeFormation.cpp
+        aoe/src/AoeFormationModular.cpp
         aoe/src/AoeFormationFallback.cpp
         aoe/src/AoeSquadArrivalRematch.cpp
         aoe/src/AoeSquadArrivalRematchFallback.cpp
+        aoe/src/AoeUnitMovementIntent.cpp
         aoe/src/AoeGlobalMotion.cpp
         aoe/src/AoeGlobalMotionFallback.cpp
         aoe/src/AoeLocalAvoidance.cpp
         aoe/src/AoeLocalAvoidanceFallback.cpp)
     target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
-    target_link_libraries(gld_aoe_gameplay PUBLIC gld_aoe_map nlohmann_json::nlohmann_json EnTT::EnTT)
+    target_link_libraries(gld_aoe_gameplay PUBLIC gld_aoe_navmesh nlohmann_json::nlohmann_json EnTT::EnTT)
     if(MSVC)
         target_compile_options(gld_aoe_gameplay PRIVATE /bigobj)
     endif()
@@ -208,6 +224,9 @@ if(GLM_FOUND AND GLFW3_FOUND)
         add_executable(aoe_map_tests aoe/tests/AoeMapTests.cpp)
         target_link_libraries(aoe_map_tests PRIVATE gld_aoe_gameplay)
         add_test(NAME aoe_map_tests COMMAND aoe_map_tests)
+        add_executable(aoe_navmesh_tests aoe/tests/AoeNavMeshTests.cpp)
+        target_link_libraries(aoe_navmesh_tests PRIVATE gld_aoe_navmesh)
+        add_test(NAME aoe_navmesh_tests COMMAND aoe_navmesh_tests)
         add_executable(aoe2x_gameplay_system_tests
             aoe2x/tests/Aoe2xGameplaySystemTests.cpp)
         target_include_directories(aoe2x_gameplay_system_tests PRIVATE

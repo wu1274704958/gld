@@ -22,16 +22,20 @@ glm::vec2 squad_slot_world(const AoePosition& center,
 bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
     auto& reg = world.reg();
     if (!reg.valid(squad) ||
-        !reg.all_of<AoePosition, AoeSquadFormation, AoeSquadMembers>(squad))
+        !reg.all_of<AoePosition, AoeSquadFormation, AoeSquadLayoutState,
+                    AoeSquadMembers>(squad))
         return false;
     auto& formation = reg.get<AoeSquadFormation>(squad);
-    if (formation.slots.empty()) return true;
+    auto& layout_state = reg.get<AoeSquadLayoutState>(squad);
+    if (!layout_state.valid) return false;
+    auto& slots = layout_state.layout.slots;
+    if (slots.empty()) return true;
     const auto& members = reg.get<AoeSquadMembers>(squad);
-    if (formation.slots.size() != members.active.size()) return false;
+    if (slots.size() != members.active.size()) return false;
 
     std::vector<AoeUnitTarget> rematched;
-    rematched.reserve(formation.slots.size());
-    for (const auto& slot : formation.slots) {
+    rematched.reserve(slots.size());
+    for (const auto& slot : slots) {
         if (!detail::aoe_gameplay_squad_member_valid(reg, slot.unit) ||
             !reg.all_of<AoePosition, AoeSquadMember>(slot.unit.entity))
             return false;
@@ -52,8 +56,8 @@ bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
     }
 
     std::vector<std::int64_t> priorities;
-    priorities.reserve(formation.slots.size());
-    for (const auto& slot : formation.slots)
+    priorities.reserve(slots.size());
+    for (const auto& slot : slots)
         if (std::find(priorities.begin(), priorities.end(), slot.priority) ==
             priorities.end())
             priorities.push_back(slot.priority);
@@ -63,10 +67,10 @@ bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
     for (const auto priority : priorities) {
         std::vector<std::size_t> slot_indices;
         std::vector<AoeUnitTarget> units;
-        for (std::size_t i = 0; i < formation.slots.size(); ++i) {
-            if (formation.slots[i].priority != priority) continue;
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            if (slots[i].priority != priority) continue;
             slot_indices.push_back(i);
-            units.push_back(formation.slots[i].unit);
+            units.push_back(slots[i].unit);
         }
         if (units.size() <= 1) continue;
         std::stable_sort(units.begin(), units.end(),
@@ -106,7 +110,7 @@ bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
                         units[current_row - 1].entity).value;
                     const glm::vec2 slot_position = squad_slot_world(
                         center, formation,
-                        formation.slots[slot_indices[candidate - 1]]);
+                        slots[slot_indices[candidate - 1]]);
                     const glm::vec2 difference = unit_position - slot_position;
                     const double cost = static_cast<double>(
                         glm::dot(difference, difference));
@@ -148,8 +152,8 @@ bool rematch_squad_arrival_slots(EcsWorld& world, entt::entity squad) {
         }
     }
 
-    for (std::size_t i = 0; i < formation.slots.size(); ++i)
-        formation.slots[i].unit = rematched[i];
+    for (std::size_t i = 0; i < slots.size(); ++i)
+        slots[i].unit = rematched[i];
     return true;
 }
 

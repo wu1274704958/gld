@@ -22,8 +22,9 @@ struct AoeDefaultGlobalMotionPlugin {
     static void fixed_tick(EcsWorld&, std::uint64_t tick);
 };
 
-// Performance-floor backend: preserves acceleration limiting and static
-// collision safety, but deliberately performs no dynamic unit coordination.
+// Diagnostic route-playback backend: follows raw path velocity with
+// acceleration limiting, but deliberately performs no local, dynamic-unit or
+// static-geometry collision correction.
 struct AoePassThroughGlobalMotionPlugin {
     using phase = AoeGlobalMotionPhase;
     static constexpr std::string_view name = "pass_through";

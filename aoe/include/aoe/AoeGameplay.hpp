@@ -23,6 +23,7 @@
 #include <ecs/Components.hpp>
 #include <ecs/Events.hpp>
 #include <ecs/assets/AssetServer.hpp>
+#include <aoe/AoeFormationLayout.hpp>
 #include <aoe/AoeGameplayComponents.hpp>
 #include <aoe/AoeMap.hpp>
 
@@ -56,7 +57,10 @@ struct AttackDefinition {
     std::optional<glm::vec3> projectile_launch_offset;
 };
 
-struct MovementDefinition { float speed = 1.f; };
+struct MovementDefinition {
+    float speed = 1.f;
+    float rotation_speed_radians_per_second = 6.28318530718f;
+};
 struct TargetAcquisitionDefinition {
     AoeTargetAcquisitionType strategy =
         AoeTargetAcquisitionType::NearestEnemy;
@@ -152,7 +156,10 @@ struct AoeLevel { std::uint32_t value = 1; };
 // Tick-start authoritative position used only to interpolate presentation.
 // Gameplay systems always read AoePosition directly.
 struct AoePositionHistory { glm::vec2 previous{0.f}; };
-struct AoeMovement { float speed = 1.f; };
+struct AoeMovement {
+    float speed = 1.f;
+    float rotation_speed_radians_per_second = 6.28318530718f;
+};
 
 enum class AoeMovementIntentKind {
     None, Move, FormationSlot, AttackApproach
@@ -252,10 +259,6 @@ struct AoeTeam { std::uint32_t id = 0; };
 struct AoeFacing { int direction = 0; int direction_count = 16; };
 struct AoePresentationOptions { int player_color = 1; std::uint32_t layers = 0x1u; };
 
-struct AoeUnitTarget {
-    entt::entity entity{entt::null};
-    std::uint64_t instance_id = 0;
-};
 struct AoeAttackOrder { AoeUnitTarget target; };
 struct AoeAttackMoveOrder { glm::vec2 destination{0.f}; };
 struct AoeMoveGoal {
@@ -505,143 +508,6 @@ std::optional<AoeUnitTarget> dispatch_aoe_target(
     const AoeTargetAcquisitionContext&);
 std::string_view aoe_target_acquisition_name(AoeTargetAcquisitionType);
 
-template<std::size_t N>
-struct AoeFixedString {
-    char value[N]{};
-
-    consteval AoeFixedString(const char (&source)[N]) {
-        std::copy_n(source, N, value);
-    }
-
-    constexpr std::string_view view() const { return {value, N - 1}; }
-    constexpr bool operator==(const AoeFixedString&) const = default;
-};
-
-template<AoeFixedString Tag, int Priority>
-struct AoeFormationTagPriority {
-    static constexpr auto tag = Tag;
-    static constexpr int priority = Priority;
-};
-
-enum class AoeFormationType { Skirmish };
-
-struct AoeFormationMemberInfo {
-    AoeUnitTarget unit{};
-    std::uint32_t ordinal = 0;
-    std::vector<std::string> tags;
-    glm::vec2 collision_radius{0.f};
-};
-
-struct AoeFormationContext {
-    std::vector<AoeFormationMemberInfo> members;
-    float spacing = .75f;
-};
-
-struct AoeFormationSlot {
-    AoeUnitTarget unit{};
-    glm::vec2 local_offset{0.f};
-    std::int64_t priority = 0;
-};
-
-template<class T>
-concept AoeFormationLogic = requires(const AoeFormationContext& context) {
-    { T::layout(context) } -> std::same_as<std::vector<AoeFormationSlot>>;
-};
-
-template<class... TagPriorities>
-struct AoeSquareFormation {
-private:
-    static consteval bool unique_tags() {
-        constexpr std::array tags{TagPriorities::tag.view()...};
-        for (std::size_t i = 0; i < tags.size(); ++i)
-            for (std::size_t j = i + 1; j < tags.size(); ++j)
-                if (tags[i] == tags[j]) return false;
-        return true;
-    }
-
-    template<class Rule>
-    static std::int64_t contribution(const AoeFormationMemberInfo& member) {
-        return std::find(member.tags.begin(), member.tags.end(),
-                         Rule::tag.view()) != member.tags.end()
-            ? static_cast<std::int64_t>(Rule::priority) : 0;
-    }
-
-public:
-    static_assert(unique_tags(), "formation tag priority rules must be unique");
-
-    static std::int64_t priority(const AoeFormationMemberInfo& member) {
-        return (std::int64_t{0} + ... + contribution<TagPriorities>(member));
-    }
-
-    static std::vector<AoeFormationSlot> layout(
-        const AoeFormationContext& context) {
-        if (!std::isfinite(context.spacing) || context.spacing < 0.f)
-            return {};
-        struct Ranked {
-            const AoeFormationMemberInfo* member = nullptr;
-            std::int64_t priority = 0;
-        };
-        std::vector<Ranked> ranked;
-        ranked.reserve(context.members.size());
-        float radius = 0.f;
-        for (const auto& member : context.members) {
-            ranked.push_back({&member, priority(member)});
-            radius = std::max(radius, std::max(
-                member.collision_radius.x, member.collision_radius.y));
-        }
-        std::stable_sort(ranked.begin(), ranked.end(),
-            [](const Ranked& a, const Ranked& b) {
-                if (a.priority != b.priority) return a.priority > b.priority;
-                return a.member->ordinal < b.member->ordinal;
-            });
-        const std::size_t count = ranked.size();
-        if (!count) return {};
-        const std::size_t columns = static_cast<std::size_t>(
-            std::ceil(std::sqrt(static_cast<double>(count))));
-        const std::size_t rows = (count + columns - 1) / columns;
-        const float cell = radius * 2.f + context.spacing;
-        std::vector<AoeFormationSlot> result;
-        result.reserve(count);
-        std::size_t index = 0;
-        for (std::size_t row = 0; row < rows; ++row) {
-            const std::size_t row_count = std::min(columns, count - index);
-            const float y = (static_cast<float>(rows - 1) * .5f -
-                             static_cast<float>(row)) * cell;
-            for (std::size_t column = 0; column < row_count; ++column) {
-                const float x = (static_cast<float>(column) -
-                    static_cast<float>(row_count - 1) * .5f) * cell;
-                result.push_back({ranked[index].member->unit, {x, y},
-                                  ranked[index].priority});
-                ++index;
-            }
-        }
-        return result;
-    }
-};
-
-using DefaultSkirmishFormation = AoeSquareFormation<
-    AoeFormationTagPriority<"spearman", 300>,
-    AoeFormationTagPriority<"cavalry", 200>,
-    AoeFormationTagPriority<"scout", 100>,
-    AoeFormationTagPriority<"archer", -100>>;
-
-class AoeFormationRegistry {
-public:
-    using LayoutFn = std::vector<AoeFormationSlot> (*)(
-        const AoeFormationContext&);
-
-    template<AoeFormationType Type, AoeFormationLogic T>
-    void bind() { bind_erased(Type, &T::layout); }
-
-    bool contains(AoeFormationType) const;
-    std::vector<AoeFormationSlot> layout(
-        AoeFormationType, const AoeFormationContext&) const;
-
-private:
-    void bind_erased(AoeFormationType, LayoutFn);
-    std::unordered_map<AoeFormationType, LayoutFn> entries_;
-};
-
 struct AoeSquadCompositionEntry {
     std::string definition_id;
     std::uint32_t count = 1;
@@ -690,7 +556,6 @@ struct AoeSquadFormation {
     AoeFormationType type = AoeFormationType::Skirmish;
     float spacing = .75f;
     glm::vec2 forward{1.f, 0.f};
-    std::vector<AoeFormationSlot> slots;
     bool dirty = true;
     bool teleport_on_next_layout = true;
     // Attack Move performs one role-preserving nearest-slot rematch after its
@@ -872,6 +737,8 @@ struct AoeNavigationSettings {
     std::uint32_t repath_cooldown_ticks = 3;
     std::uint32_t steering_facing_stable_ticks = 2;
     float steering_max_acceleration = 4.f;
+    // Retained for the paused aoe2x formation implementation. AoE gameplay
+    // uses AoeMovement::rotation_speed_radians_per_second instead.
     float steering_max_turn_radians_per_second = 6.28318530718f;
     float steering_stalled_speed = .05f;
     float squad_leash = 3.f;
@@ -972,6 +839,7 @@ struct AoeGameplayPerformanceDiagnostics {
     double position_history_ms = 0.0;
     double squad_spawn_resolution_ms = 0.0;
     double static_obstacle_index_ms = 0.0;
+    double nav_mesh_build_ms = 0.0;
     double dynamic_obstacle_index_ms = 0.0;
     double squad_command_ms = 0.0;
     double command_ms = 0.0;
@@ -979,6 +847,11 @@ struct AoeGameplayPerformanceDiagnostics {
     double squad_engagement_ms = 0.0;
     double squad_control_ms = 0.0;
     double formation_ms = 0.0;
+    double formation_layout_ms = 0.0;
+    double formation_route_split_ms = 0.0;
+    double formation_moving_control_ms = 0.0;
+    double formation_attack_control_ms = 0.0;
+    double formation_command_completion_ms = 0.0;
     double squad_arrival_rematch_ms = 0.0;
     double squad_traffic_ms = 0.0;
     double attack_move_acquisition_ms = 0.0;
@@ -1174,6 +1047,7 @@ aoe_gameplay_select_stalled_in_range_target(
 #include <aoe/AoeFormation.hpp>
 #include <aoe/AoeSquadEngagement.hpp>
 #include <aoe/AoeSquadArrivalRematch.hpp>
+#include <aoe/AoeUnitMovementIntent.hpp>
 #include <aoe/AoeLocalAvoidance.hpp>
 #include <aoe/AoeGlobalMotion.hpp>
 
@@ -1273,6 +1147,7 @@ void run_aoe_pathfinder_requests(EcsWorld& world) {
 
 template<class SquadEngagementPlugin, class FormationPlugin,
          class SquadArrivalRematchPlugin,
+         class UnitMovementIntentPlugin,
          class LocalAvoidancePlugin,
          class GlobalMotionPlugin,
          class UnitPathfinderPlugin = AoeGridAStarUnitPathfinderPlugin,
@@ -1316,6 +1191,18 @@ void aoe_gameplay_fixed_system(EcsWorld& world) {
             UnitPathfinderPlugin, AoeUnitPathfinderRequests>(world);
         aoe_gameplay_fixed_after_unit_pathfinder_before_local(
             world, clock.tick);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        const auto movement_intent_started =
+            std::chrono::steady_clock::now();
+#endif
+        UnitMovementIntentPlugin::fixed_tick(world, clock.tick);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        world.resource_or_add<AoeGameplayPerformanceDiagnostics>()
+            .movement_intent_ms +=
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() -
+                movement_intent_started).count();
+#endif
         LocalAvoidancePlugin::fixed_tick(world, clock.tick);
         GlobalMotionPlugin::fixed_tick(world, clock.tick);
         aoe_gameplay_fixed_after_global(world, clock.tick);
@@ -1348,6 +1235,9 @@ struct AoeGameplayDef {
                       AoeSquadArrivalRematchPhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one squad-arrival-rematch phase plugin");
     static_assert(detail::gameplay_phase_count_v<
+                      AoeUnitMovementIntentPhase, Plugins...> == 1,
+        "AoeGameplayDef requires exactly one unit-movement-intent phase plugin");
+    static_assert(detail::gameplay_phase_count_v<
                       AoeLocalAvoidancePhase, Plugins...> == 1,
         "AoeGameplayDef requires exactly one local-avoidance phase plugin");
     static_assert(detail::gameplay_phase_count_v<
@@ -1366,6 +1256,8 @@ struct AoeGameplayDef {
         AoeFormationPhase, Plugins...>;
     using SquadArrivalRematchPlugin = detail::gameplay_plugin_for_phase_t<
         AoeSquadArrivalRematchPhase, Plugins...>;
+    using UnitMovementIntentPlugin = detail::gameplay_plugin_for_phase_t<
+        AoeUnitMovementIntentPhase, Plugins...>;
     using LocalAvoidancePlugin = detail::gameplay_plugin_for_phase_t<
         AoeLocalAvoidancePhase, Plugins...>;
     using GlobalMotionPlugin = detail::gameplay_plugin_for_phase_t<
@@ -1391,6 +1283,7 @@ struct AoeGameplayDef {
             detail::aoe_gameplay_fixed_system<
                 SquadEngagementPlugin, FormationPlugin,
                 SquadArrivalRematchPlugin,
+                UnitMovementIntentPlugin,
                 LocalAvoidancePlugin,
                 GlobalMotionPlugin,
                 UnitPathfinderPlugin,
@@ -1402,6 +1295,7 @@ struct AoeGameplayDef {
 using AoeGameplayPlugin = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 

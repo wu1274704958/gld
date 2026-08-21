@@ -23,6 +23,7 @@
 #include <FindPath.hpp>
 #include <resource_mgr.hpp>
 #include <aoe/AoeGameplay.hpp>
+#include <aoe/AoeNavMesh.hpp>
 #include <aoe_gpu_motion/AoeGpuMotion.hpp>
 #include <aoe2/Aoe2Plugin.hpp>
 #include <aoe2_gameplay/Aoe2GameplayBridge.hpp>
@@ -50,12 +51,13 @@ namespace fs = std::filesystem;
 
 using SquadGameplayDef = AoeGameplayDef<
     AoePassThroughSquadEngagementPlugin,
-    AoePassThroughFormationPlugin,
+    AoeLayoutRouteSplitMovingFormationPlugin,
     AoePassThroughSquadArrivalRematchPlugin,
-    AoeFullLocalAvoidancePlugin,
+    AoeDefaultUnitMovementIntentPlugin,
+    AoePassThroughLocalAvoidancePlugin,
     AoePassThroughGlobalMotionPlugin,
     AoeGridAStarUnitPathfinderPlugin,
-    AoeGridAStarSquadPathfinderPlugin>;
+    AoeNavMeshSquadPathfinderPlugin>;
 
 namespace {
 constexpr std::uint32_t UnitLayer = 0x1u;
@@ -113,6 +115,10 @@ struct PreviewState {
     bool trace_unit_foot = false;
     bool draw_map = true;
     bool draw_navigation = false;
+    bool draw_nav_mesh = true;
+    std::uint64_t nav_query_revision = 0;
+    std::uint64_t nav_query_order_revision = 0;
+    AoeNavCorridor nav_corridor;
     int stress_preset = 1;
     std::vector<AoeStaticObstacleDesc> map_obstacles;
     std::uint64_t last_dynamic_queries = 0;
@@ -435,6 +441,9 @@ void reset_scene(EcsWorld& world) {
     state.blue = spawn_squad(world, BlueSpawn, {1.f, 0.f}, 1, 1);
     state.red = spawn_squad(world, RedSpawn, {-1.f, 0.f}, 2, 2);
     state.orders_issued = false;
+    state.nav_query_revision = 0;
+    state.nav_query_order_revision = 0;
+    state.nav_corridor = {};
     state.trace_entity = entt::null;
     state.trace_instance_id = 0;
     state.trace_direction = -1;
@@ -636,6 +645,12 @@ void input_system(EcsWorld& world) {
             ? "navigation gizmos enabled (affects performance)"
             : "navigation gizmos disabled";
     }
+    if (keyboard->just_now_pressed(GLFW_KEY_M)) {
+        state->draw_nav_mesh = !state->draw_nav_mesh;
+        state->latest = state->draw_nav_mesh
+            ? "NavMesh corridor gizmos enabled"
+            : "NavMesh corridor gizmos disabled";
+    }
     if (keyboard->just_now_pressed(GLFW_KEY_L)) {
         state->trace_unit_foot = !state->trace_unit_foot;
         state->trace_entity = entt::null;
@@ -821,17 +836,19 @@ void draw_squad_navigation(EcsWorld& world, entt::entity squad,
                            glm::vec4 guide_color, glm::vec4 member_color) {
     auto& reg = world.reg();
     if (!reg.valid(squad) ||
-        !reg.all_of<AoePosition, AoeSquadFormation, AoeSquadMembers>(squad))
+        !reg.all_of<AoePosition, AoeSquadFormation, AoeSquadLayoutState,
+                    AoeSquadMembers>(squad))
         return;
     auto& gizmos = world.resource<Gizmos>();
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto& layout = reg.get<AoeSquadLayoutState>(squad);
     gizmos.cross(project_logical_position(center.value), 5.f,
                  {1.f, 1.f, 1.f, 1.f}, UnitLayer);
     if (const auto* path = reg.try_get<AoeNavigationPath>(squad))
         draw_navigation_path(gizmos, center.value, *path, guide_color);
 
-    for (const auto& slot : formation.slots) {
+    for (const auto& slot : layout.layout.slots) {
         const glm::vec2 destination = formation_slot_world(
             center, formation, slot);
         gizmos.cross(project_logical_position(destination), 2.5f,
@@ -848,8 +865,64 @@ void draw_squad_navigation(EcsWorld& world, entt::entity squad,
     }
 }
 
+void draw_split_member_routes(EcsWorld& world, entt::entity squad,
+                              glm::vec4 color) {
+    auto& reg = world.reg();
+    if (!reg.valid(squad) || !reg.all_of<AoeSquadLayoutState>(squad)) return;
+    auto& gizmos = world.resource<Gizmos>();
+    for (const auto& slot : reg.get<AoeSquadLayoutState>(
+             squad).layout.slots) {
+        if (!reg.valid(slot.unit.entity) ||
+            !reg.all_of<AoeGameplayIdentity, AoePosition,
+                        AoeFormationRouteOwner>(slot.unit.entity) ||
+            reg.get<AoeGameplayIdentity>(slot.unit.entity).instance_id !=
+                slot.unit.instance_id)
+            continue;
+        const auto& owner = reg.get<AoeFormationRouteOwner>(slot.unit.entity);
+        if (owner.squad != squad ||
+            owner.unit_instance_id != slot.unit.instance_id)
+            continue;
+        if (const auto* path = reg.try_get<AoeNavigationPath>(slot.unit.entity))
+            draw_navigation_path(gizmos,
+                reg.get<AoePosition>(slot.unit.entity).value, *path, color);
+    }
+}
+
+void draw_formation_trajectory(EcsWorld& world, entt::entity squad,
+                               glm::vec4 center_color,
+                               glm::vec4 frame_color) {
+    auto& reg = world.reg();
+    if (!reg.valid(squad)) return;
+    const auto* trajectory =
+        reg.try_get<AoeFormationRouteTrajectory>(squad);
+    if (!trajectory || !trajectory->valid || trajectory->frames.empty())
+        return;
+    auto& gizmos = world.resource<Gizmos>();
+    constexpr float AxisLength = .55f;
+    for (std::size_t index = 0; index < trajectory->frames.size(); ++index) {
+        const auto& frame = trajectory->frames[index];
+        if (index > 0) {
+            const auto& previous = trajectory->frames[index - 1];
+            if (glm::length(frame.center - previous.center) > 1e-5f)
+                gizmos.line(project_logical_position(previous.center),
+                            project_logical_position(frame.center),
+                            center_color, UnitLayer);
+        }
+        // Forward axes expose the continuous moving turn along the shared
+        // trajectory, including 90/180-degree direction changes.
+        gizmos.line(project_logical_position(frame.center),
+                    project_logical_position(
+                        frame.center + frame.forward * AxisLength),
+                    frame_color, UnitLayer);
+    }
+    gizmos.cross(project_logical_position(trajectory->frames.front().center),
+                 4.f, center_color, UnitLayer);
+    gizmos.cross(project_logical_position(trajectory->frames.back().center),
+                 4.f, frame_color, UnitLayer);
+}
+
 void submit_map_navigation_gizmos(EcsWorld& world) {
-    const auto& preview = world.resource<PreviewState>();
+    auto& preview = world.resource<PreviewState>();
     const auto* map = world.try_resource<AoeLogicMap>();
     if (!map || !map->valid()) return;
     auto& gizmos = world.resource<Gizmos>();
@@ -894,6 +967,59 @@ void submit_map_navigation_gizmos(EcsWorld& world) {
         draw_squad_navigation(world, preview.red,
             {1.f, .25f, .3f, 1.f}, {1.f, .25f, .3f, .3f});
     }
+    const auto* nav_mesh = world.try_resource<AoeNavMeshResource>();
+    if (!preview.draw_nav_mesh || !nav_mesh || !nav_mesh->queryable()) return;
+    const auto* squad_corridor = world.reg().valid(preview.blue)
+        ? world.reg().try_get<AoeFormationNavCorridor>(preview.blue) : nullptr;
+    if (squad_corridor && squad_corridor->valid &&
+        (preview.nav_query_revision !=
+             squad_corridor->corridor.map_revision ||
+         preview.nav_query_order_revision != squad_corridor->order_revision)) {
+        preview.nav_corridor = squad_corridor->corridor;
+        preview.nav_query_revision = squad_corridor->corridor.map_revision;
+        preview.nav_query_order_revision = squad_corridor->order_revision;
+    }
+    const auto corridor_contains = [&](AoeNavPolygonId id) {
+        return std::find(preview.nav_corridor.polygons.begin(),
+                         preview.nav_corridor.polygons.end(), id) !=
+               preview.nav_corridor.polygons.end();
+    };
+    for (const auto& polygon : nav_mesh->debug_polygons()) {
+        const glm::vec4 color = corridor_contains(polygon.id)
+            ? glm::vec4{.1f, 1.f, .65f, .95f}
+            : glm::vec4{.15f, .72f, .82f, .35f};
+        for (std::size_t index = 0; index < polygon.vertices.size(); ++index)
+            gizmos.line(project_logical_position(polygon.vertices[index]),
+                project_logical_position(
+                    polygon.vertices[(index + 1) % polygon.vertices.size()]),
+                color, UnitLayer);
+    }
+    draw_formation_trajectory(world, preview.blue,
+        {.05f, .8f, 1.f, .9f}, {.2f, 1.f, .55f, .55f});
+    draw_formation_trajectory(world, preview.red,
+        {1.f, .2f, .4f, .85f}, {1.f, .7f, .25f, .5f});
+    draw_split_member_routes(world, preview.blue, {.15f, 1.f, .55f, .55f});
+    draw_split_member_routes(world, preview.red, {1.f, .3f, .5f, .45f});
+    if (preview.nav_corridor.status != AoeNavCorridorStatus::Ready) return;
+    const glm::vec4 portal_color{1.f, .82f, .12f, .95f};
+    const glm::vec4 route_color{1.f, .95f, .25f, 1.f};
+    gizmos.cross(project_logical_position(preview.nav_corridor.start_on_mesh),
+                 6.f, {.15f, 1.f, .3f, 1.f}, UnitLayer);
+    gizmos.cross(project_logical_position(preview.nav_corridor.goal_on_mesh),
+                 6.f, {1.f, .2f, .2f, 1.f}, UnitLayer);
+    glm::vec2 previous = preview.nav_corridor.start_on_mesh;
+    for (const auto& portal : preview.nav_corridor.portals) {
+        gizmos.line(project_logical_position(portal.left),
+                    project_logical_position(portal.right),
+                    portal_color, UnitLayer);
+        const glm::vec2 midpoint = (portal.left + portal.right) * .5f;
+        gizmos.line(project_logical_position(previous),
+                    project_logical_position(midpoint), route_color, UnitLayer);
+        previous = midpoint;
+    }
+    gizmos.line(project_logical_position(previous),
+                project_logical_position(preview.nav_corridor.goal_on_mesh),
+                route_color, UnitLayer);
 }
 
 void submit_unit_foot_gizmos(EcsWorld& world) {
@@ -1145,7 +1271,9 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
             reg.all_of<Aoe2UnitRender>(link->render))
             ++render_ready;
     }
-    for (const auto& slot : formation.slots) {
+    const auto* layout = reg.try_get<AoeSquadLayoutState>(squad);
+    if (!layout || !layout->valid) return;
+    for (const auto& slot : layout->layout.slots) {
         if (!reg.valid(slot.unit.entity) ||
             !reg.all_of<AoeGameplayIdentity, AoePosition>(slot.unit.entity) ||
             reg.get<AoeGameplayIdentity>(slot.unit.entity).instance_id !=
@@ -1195,6 +1323,16 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
             << " speed-scale=" << traffic->speed_scale
             << " lateral=" << traffic->lateral_offset;
     out << '\n';
+    if (const auto* route_plan =
+            reg.try_get<AoeFormationRoutePlan>(squad)) {
+        out << "  route-layout natural=" << route_plan->natural_width
+            << " bottleneck=" << route_plan->bottleneck_width
+            << " selected=" << route_plan->selected_width
+            << " narrowed=" << (route_plan->narrowed ? "yes" : "no")
+            << " progress pre=" << route_plan->prelude_progress
+            << " travel=" << route_plan->travel_progress
+            << " post=" << route_plan->postlude_progress << '\n';
+    }
     const std::size_t error_limit = std::min<std::size_t>(spawn.errors.size(), 3);
     for (std::size_t i = 0; i < error_limit; ++i)
         out << "    spawn error: " << spawn.errors[i] << '\n';
@@ -1231,10 +1369,17 @@ void diagnostics_system(EcsWorld& world) {
         world.try_resource<AoeGlobalMotionPlannerDiagnostics>();
     const auto* gpu_motion = world.try_resource<AoeGpuMotionDiagnostics>();
     const auto* logic_map = world.try_resource<AoeLogicMap>();
+    const auto* nav_mesh = world.try_resource<AoeNavMeshResource>();
+    const auto* route_split =
+        world.try_resource<AoeFormationRouteSplitDiagnostics>();
+    const auto* moving_diagnostics =
+        world.try_resource<AoeFormationMovingDiagnostics>();
     const auto* pool = world.try_resource<AoeGameplayPool>();
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     const auto* pathfinder_performance =
         world.try_resource<AoePathfinderPerformanceDiagnostics>();
+    const auto* formation_performance =
+        world.try_resource<AoeGameplayPerformanceDiagnostics>();
 #endif
     std::size_t active_units = 0;
     for ([[maybe_unused]] const auto entity :
@@ -1268,13 +1413,28 @@ void diagnostics_system(EcsWorld& world) {
         << SquadGameplayDef::SquadEngagementPlugin::name << " (static)"
         << " | formation="
         << SquadGameplayDef::FormationPlugin::name << " (static)"
+        << " [layout="
+        << SquadGameplayDef::FormationPlugin::SquadLayoutModule::name
+        << " route="
+        << SquadGameplayDef::FormationPlugin::RouteSplitModule::name
+        << " moving="
+        << SquadGameplayDef::FormationPlugin::MovingControlModule::name
+        << " attack="
+        << SquadGameplayDef::FormationPlugin::AttackControlModule::name
+        << " completion="
+        << SquadGameplayDef::FormationPlugin::CommandCompletionModule::name
+        << ']'
         << " | arrival-rematch="
         << SquadGameplayDef::SquadArrivalRematchPlugin::name << " (static)"
+        << " | unit-movement-intent="
+        << SquadGameplayDef::UnitMovementIntentPlugin::name << " (static)"
         << " | local-avoidance="
         << SquadGameplayDef::LocalAvoidancePlugin::name << " (static)"
         << " | global-motion="
         << SquadGameplayDef::GlobalMotionPlugin::name << " (static)"
+        << " collision=disabled"
         << " | N navigation=" << (preview.draw_navigation ? "ON" : "OFF")
+        << " | M navmesh=" << (preview.draw_nav_mesh ? "ON" : "OFF")
         << " | C collision=" << (preview.draw_unit_colliders ? "ON" : "OFF")
         << " | P feet=" << (preview.draw_unit_feet ? "ON" : "OFF")
         << " | L trace=" << (preview.trace_unit_foot ? "ON" : "OFF")
@@ -1297,6 +1457,66 @@ void diagnostics_system(EcsWorld& world) {
     out << " unit-pathfinder=" << SquadGameplayDef::UnitPathfinderPlugin::name
         << " squad-pathfinder=" << SquadGameplayDef::SquadPathfinderPlugin::name
         << '\n';
+    if (nav_mesh) {
+        const char* nav_status = "uninitialized";
+        switch (nav_mesh->status()) {
+        case AoeNavMeshStatus::Uninitialized: break;
+        case AoeNavMeshStatus::Ready: nav_status = "ready"; break;
+        case AoeNavMeshStatus::Stale: nav_status = "stale"; break;
+        case AoeNavMeshStatus::BuildFailed: nav_status = "failed"; break;
+        }
+        const auto& nav_diagnostics = nav_mesh->diagnostics();
+        out << "navmesh status=" << nav_status
+            << " logic-rev=" << (logic_map ? logic_map->static_revision() : 0)
+            << " source-rev=" << nav_mesh->source_map_revision()
+            << " polygons=" << nav_diagnostics.polygon_count
+            << " build=" << nav_diagnostics.build_ms << "ms"
+            << " queries=" << nav_diagnostics.query_count
+            << " avg=" << nav_diagnostics.query_average_ms() << "ms"
+            << " max=" << nav_diagnostics.query_max_ms << "ms";
+        if (!nav_mesh->error().empty()) out << " error=" << nav_mesh->error();
+        out << '\n';
+    }
+    if (route_split) {
+        out << "route-split splits=" << route_split->splits
+            << " cache-hits=" << route_split->cache_hits
+            << " members=" << route_split->members_routed
+            << " failed=" << route_split->members_failed
+            << " portals=" << route_split->portals_processed
+            << " frames=" << route_split->frames_generated
+            << " max-frames=" << route_split->maximum_frames
+            << " avg=" << route_split->average_ms() << "ms"
+            << " max=" << route_split->max_ms << "ms\n";
+    }
+    const auto append_moving_state = [&](std::string_view label,
+                                         entt::entity squad) {
+        const auto* moving = world.reg().valid(squad)
+            ? world.reg().try_get<AoeFormationMovingState>(squad) : nullptr;
+        if (!moving) return;
+        const char* status = "none";
+        switch (moving->status) {
+        case AoeFormationMovingStatus::None: break;
+        case AoeFormationMovingStatus::Moving: status = "moving"; break;
+        case AoeFormationMovingStatus::Arrived: status = "arrived"; break;
+        case AoeFormationMovingStatus::Failed: status = "failed"; break;
+        }
+        out << label << " synchronized-moving status=" << status
+            << " progress=" << moving->shared_progress
+            << " max-lead=" << moving->maximum_lead
+            << " active=" << moving->active_members << '\n';
+    };
+    append_moving_state("BLUE", preview.blue);
+    append_moving_state("RED ", preview.red);
+    if (moving_diagnostics) {
+        out << "moving-control updates=" << moving_diagnostics->updates
+            << " members=" << moving_diagnostics->members_synchronized;
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        out << " avg=" << moving_diagnostics->average_ms() << "ms"
+            << " max=" << moving_diagnostics->max_ms << "ms\n";
+#else
+        out << " timing=disabled\n";
+#endif
+    }
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
     if (pathfinder_performance) {
         const auto append_pathfinder = [&](std::string_view role,
@@ -1390,6 +1610,25 @@ void diagnostics_system(EcsWorld& world) {
         << " escalations=" << gameplay.flow_deadlock_escalations << '\n';
     out << "movement ms=" << gameplay.movement_last_ms
         << " peak=" << gameplay.movement_peak_ms << '\n';
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+    if (formation_performance)
+        out << "formation ms total=" << formation_performance->formation_ms
+            << " layout=" << formation_performance->formation_layout_ms
+            << " route=" << formation_performance->formation_route_split_ms
+            << " moving="
+            << formation_performance->formation_moving_control_ms
+            << " attack="
+            << formation_performance->formation_attack_control_ms
+            << " completion="
+            << formation_performance->formation_command_completion_ms
+            << '\n'
+            << "unit-intent ms="
+            << formation_performance->movement_intent_ms
+            << " turn-limited="
+            << formation_performance->movement_turn_limited
+            << " final-steering-limited="
+            << formation_performance->movement_steering_limited << '\n';
+#endif
     if (aoe2_performance) {
         out << "aoe2 anim_ms=" << aoe2_performance->animation_ms
             << " batch_ms=" << aoe2_performance->batch_total_ms
@@ -1478,11 +1717,11 @@ void system_profile_end(EcsWorld& world) {
         profile->csv
             << "frame,capture_s,frame_ms,preceding_raw_dt_ms,time_fps,hud_fps,hud_avg_ms,"
                "hud_p95_ms,hud_max_ms,fixed_ticks,dropped_s,gameplay_units,"
-               "render_units,squad_engagement_backend,formation_backend,arrival_rematch_backend,local_avoidance_backend,global_motion_backend,"
+               "render_units,squad_engagement_backend,formation_backend,formation_layout_backend,formation_route_split_backend,formation_moving_control_backend,formation_attack_control_backend,formation_command_completion_backend,arrival_rematch_backend,unit_movement_intent_backend,local_avoidance_backend,global_motion_backend,"
                "projectiles,g_clear_ms,g_spawn_ms,g_fixed_ms,"
                "g_recycle_ms,g_history_ms,g_squad_spawn_ms,g_static_index_ms,"
-               "g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
-               "g_membership_ms,g_squad_traffic_ms,g_squad_engagement_ms,g_squad_control_ms,g_formation_ms,g_arrival_rematch_ms,"
+               "g_navmesh_build_ms,g_dynamic_index_ms,g_squad_command_ms,g_command_ms,"
+               "g_membership_ms,g_squad_traffic_ms,g_squad_engagement_ms,g_squad_control_ms,g_formation_ms,g_formation_layout_ms,g_formation_route_split_ms,g_formation_moving_control_ms,g_formation_attack_control_ms,g_formation_command_completion_ms,g_arrival_rematch_ms,"
                "g_acquisition_ms,g_navigation_ms,g_movement_intent_ms,"
                "g_local_avoidance_ms,g_unit_flow_ms,g_motion_safety_ms,"
                "g_movement_ms,g_combat_ms,g_projectile_ms,g_lifecycle_ms,"
@@ -1562,17 +1801,29 @@ void system_profile_end(EcsWorld& world) {
         << clock.dropped_seconds << ',' << gameplay_units << ',' << render_units << ','
         << SquadGameplayDef::SquadEngagementPlugin::name << ','
         << SquadGameplayDef::FormationPlugin::name << ','
+        << SquadGameplayDef::FormationPlugin::SquadLayoutModule::name << ','
+        << SquadGameplayDef::FormationPlugin::RouteSplitModule::name << ','
+        << SquadGameplayDef::FormationPlugin::MovingControlModule::name << ','
+        << SquadGameplayDef::FormationPlugin::AttackControlModule::name << ','
+        << SquadGameplayDef::FormationPlugin::CommandCompletionModule::name << ','
         << SquadGameplayDef::SquadArrivalRematchPlugin::name << ','
+        << SquadGameplayDef::UnitMovementIntentPlugin::name << ','
         << SquadGameplayDef::LocalAvoidancePlugin::name << ','
         << SquadGameplayDef::GlobalMotionPlugin::name << ','
         << projectiles << ',' << gameplay.clear_events_ms << ',' << gameplay.spawn_ms << ','
         << gameplay.fixed_total_ms << ',' << gameplay.recycle_ms << ','
         << gameplay.position_history_ms << ',' << gameplay.squad_spawn_resolution_ms << ','
-        << gameplay.static_obstacle_index_ms << ',' << gameplay.dynamic_obstacle_index_ms << ','
+        << gameplay.static_obstacle_index_ms << ',' << gameplay.nav_mesh_build_ms << ','
+        << gameplay.dynamic_obstacle_index_ms << ','
         << gameplay.squad_command_ms << ',' << gameplay.command_ms << ','
         << gameplay.membership_cleanup_ms << ',' << gameplay.squad_traffic_ms << ','
         << gameplay.squad_engagement_ms << ',' << gameplay.squad_control_ms << ','
-        << gameplay.formation_ms << ',' << gameplay.squad_arrival_rematch_ms << ','
+        << gameplay.formation_ms << ',' << gameplay.formation_layout_ms << ','
+        << gameplay.formation_route_split_ms << ','
+        << gameplay.formation_moving_control_ms << ','
+        << gameplay.formation_attack_control_ms << ','
+        << gameplay.formation_command_completion_ms << ','
+        << gameplay.squad_arrival_rematch_ms << ','
         << gameplay.attack_move_acquisition_ms << ',' << gameplay.navigation_ms << ','
         << gameplay.movement_intent_ms << ',' << gameplay.local_avoidance_ms << ','
         << gameplay.unit_flow_ms << ',' << gameplay.motion_safety_ms << ','
@@ -1750,7 +2001,7 @@ int main() {
             "Controls: 1-6 stress preset "
             "(128/512/2000/5000/10000/20000 total), "
             "Space mutual AttackMove, S stop, "
-            "G map, N navigation, C collision, P feet, "
+            "G map, N navigation, M NavMesh, C collision, P feet, "
             "L trace, R reset, F5 rescan, "
             "Middle-drag pan, Wheel zoom, "
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)

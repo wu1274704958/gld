@@ -44,8 +44,57 @@ inline constexpr auto InvalidFormationType =
     static_cast<AoeFormationType>(99);
 
 struct InvalidFormation {
-    static std::vector<AoeFormationSlot> layout(const AoeFormationContext&) {
-        return {};
+    static std::optional<AoeFormationLayout> generate(
+        const AoeFormationContext&) {
+        return AoeFormationLayout{};
+    }
+
+    static std::optional<AoeFormationLayout> generate_for_width(
+        const AoeFormationContext&, float) {
+        return AoeFormationLayout{};
+    }
+};
+
+struct MalformedBoundsFormation {
+    static std::optional<AoeFormationLayout> generate(
+        const AoeFormationContext& context) {
+        auto result = DefaultSkirmishFormation::generate(context);
+        if (result) result->bounds.local_max.x =
+            result->bounds.local_min.x - 1.f;
+        return result;
+    }
+
+    static std::optional<AoeFormationLayout> generate_for_width(
+        const AoeFormationContext& context, float maximum_width) {
+        return generate(context);
+    }
+};
+
+struct MalformedSlotFormation {
+    static std::optional<AoeFormationLayout> generate(
+        const AoeFormationContext& context) {
+        auto result = DefaultSkirmishFormation::generate(context);
+        if (result && !result->slots.empty())
+            result->slots.front().local_offset.x =
+                std::numeric_limits<float>::infinity();
+        return result;
+    }
+
+    static std::optional<AoeFormationLayout> generate_for_width(
+        const AoeFormationContext& context, float maximum_width) {
+        return generate(context);
+    }
+};
+
+struct IgnoresMaximumWidthFormation {
+    static std::optional<AoeFormationLayout> generate(
+        const AoeFormationContext& context) {
+        return DefaultSkirmishFormation::generate(context);
+    }
+
+    static std::optional<AoeFormationLayout> generate_for_width(
+        const AoeFormationContext& context, float maximum_width) {
+        return generate(context);
     }
 };
 
@@ -53,6 +102,7 @@ struct StaticGameplayPluginProbeState {
     std::uint32_t engagement_calls = 0;
     std::uint32_t formation_calls = 0;
     std::uint32_t arrival_rematch_calls = 0;
+    std::uint32_t movement_intent_calls = 0;
     std::uint32_t local_calls = 0;
     std::uint32_t global_calls = 0;
     std::uint32_t sequence = 0;
@@ -102,7 +152,7 @@ struct StaticLocalAvoidanceProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.local_calls;
-        probe.sequence = probe.sequence == 3 ? 4 : 99;
+        probe.sequence = probe.sequence == 4 ? 5 : 99;
         probe.last_tick = tick;
     }
 };
@@ -123,6 +173,22 @@ struct StaticSquadArrivalRematchProbe {
     }
 };
 
+struct StaticUnitMovementIntentProbe {
+    using phase = AoeUnitMovementIntentPhase;
+    static constexpr std::string_view name = "test_movement_intent_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<StaticGameplayPluginProbeState>();
+    }
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& probe = world.resource<StaticGameplayPluginProbeState>();
+        ++probe.movement_intent_calls;
+        probe.sequence = probe.sequence == 3 ? 4 : 99;
+        probe.last_tick = tick;
+    }
+};
+
 struct StaticGlobalMotionProbe {
     using phase = AoeGlobalMotionPhase;
     static constexpr std::string_view name = "test_global_probe";
@@ -133,10 +199,74 @@ struct StaticGlobalMotionProbe {
     static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
         auto& probe = world.resource<StaticGameplayPluginProbeState>();
         ++probe.global_calls;
-        probe.sequence = probe.sequence == 4 ? 5 : 99;
+        probe.sequence = probe.sequence == 5 ? 6 : 99;
         probe.last_tick = tick;
     }
 };
+
+struct SidewaysGlobalMotionProbe {
+    using phase = AoeGlobalMotionPhase;
+    static constexpr std::string_view name = "sideways_test";
+    static constexpr bool uses_runtime_planner = false;
+
+    static void install(App&) {}
+
+    static void fixed_tick(EcsWorld& world, std::uint64_t tick) {
+        auto& reg = world.reg();
+        for (const auto entity : reg.view<AoePathMotionRequest>()) {
+            const auto& request = reg.get<AoePathMotionRequest>(entity);
+            if (!request.valid || request.produced_tick != tick) continue;
+            reg.emplace_or_replace<AoeGlobalMotionDecision>(entity,
+                AoeGlobalMotionDecision{
+                    .velocity = {0.f, request.max_speed},
+                    .produced_tick = tick,
+                    .valid = true});
+        }
+    }
+};
+
+struct FormationModuleProbeState {
+    std::vector<std::uint32_t> calls;
+};
+
+template<class Role, std::uint32_t Sequence, bool Stops = false>
+struct FormationModuleProbe {
+    using role = Role;
+    static constexpr std::string_view name = Stops
+        ? "stop_probe" : "order_probe";
+
+    static void install(App& app) {
+        app.world.resource_or_add<FormationModuleProbeState>();
+    }
+
+    static AoeFormationModuleResult run(
+        EcsWorld& world, AoeFormationSquadContext&) {
+        world.resource_or_add<FormationModuleProbeState>()
+            .calls.push_back(Sequence);
+        if constexpr (Stops)
+            return AoeFormationModuleResult::StopSquad;
+        return AoeFormationModuleResult::Continue;
+    }
+};
+
+using FormationLayoutProbe =
+    FormationModuleProbe<AoeSquadLayoutRole, 1>;
+using FormationRouteProbe =
+    FormationModuleProbe<AoeFormationRouteSplitRole, 2>;
+using FormationStoppingRouteProbe =
+    FormationModuleProbe<AoeFormationRouteSplitRole, 2, true>;
+using FormationMovingProbe =
+    FormationModuleProbe<AoeFormationMovingControlRole, 3>;
+using FormationAttackProbe =
+    FormationModuleProbe<AoeFormationAttackControlRole, 4>;
+using FormationCompletionProbe =
+    FormationModuleProbe<AoeFormationCommandCompletionRole, 5>;
+using FormationOrderProbePlugin = AoeFormationPlugin<
+    FormationLayoutProbe, FormationRouteProbe, FormationMovingProbe,
+    FormationAttackProbe, FormationCompletionProbe>;
+using FormationStopProbePlugin = AoeFormationPlugin<
+    FormationLayoutProbe, FormationStoppingRouteProbe, FormationMovingProbe,
+    FormationAttackProbe, FormationCompletionProbe>;
 
 struct CountingPathfinderState {
     std::uint32_t calls = 0;
@@ -211,6 +341,15 @@ AoeMapDefinition flat_map(std::uint32_t width = 20,
     return result;
 }
 
+AoeMapDefinition centered_flat_map(std::uint32_t width = 40,
+                                   std::uint32_t height = 40) {
+    auto result = flat_map(width, height);
+    result.id = "centered_gameplay_map";
+    result.origin = {-static_cast<float>(width) * .5f,
+                     -static_cast<float>(height) * .5f};
+    return result;
+}
+
 AoeMapDefinition squad_stress_map() {
     AoeMapDefinition result;
     result.id = "squad_stress_map";
@@ -235,6 +374,72 @@ AoeMapDefinition squad_stress_map() {
     return result;
 }
 
+AoeFormationRoutePose sample_route_plan_pose(
+    const AoeFormationRoutePlan& plan, float distance) {
+    assert(!plan.poses.empty());
+    if (distance <= plan.poses.front().distance) {
+        auto result = plan.poses.front();
+        result.center += result.forward * (distance - result.distance);
+        result.distance = distance;
+        return result;
+    }
+    if (distance >= plan.poses.back().distance) {
+        auto result = plan.poses.back();
+        result.center += result.forward * (distance - result.distance);
+        result.distance = distance;
+        return result;
+    }
+    const auto upper = std::lower_bound(plan.poses.begin(), plan.poses.end(),
+        distance, [](const AoeFormationRoutePose& pose, float value) {
+            return pose.distance < value;
+        });
+    const auto& next = *upper;
+    const auto& previous = *(upper - 1);
+    const float alpha = (distance - previous.distance) /
+        (next.distance - previous.distance);
+    const float angle = std::atan2(
+        previous.forward.x * next.forward.y -
+            previous.forward.y * next.forward.x,
+        glm::dot(previous.forward, next.forward));
+    const float cosine = std::cos(angle * alpha);
+    const float sine = std::sin(angle * alpha);
+    return {distance, glm::mix(previous.center, next.center, alpha),
+        glm::normalize(glm::vec2{
+            previous.forward.x * cosine - previous.forward.y * sine,
+            previous.forward.x * sine + previous.forward.y * cosine})};
+}
+
+void assert_snake_travel_moves_forward(
+    const AoeFormationRoutePlan& plan, float minimum_ratio) {
+    assert(plan.valid && plan.poses.size() >= 2);
+    for (const auto& slot : plan.travel_layout.slots) {
+        bool have_previous = false;
+        glm::vec2 previous_center{0.f};
+        glm::vec2 previous_point{0.f};
+        for (const auto& pose : plan.poses) {
+            const auto sampled = sample_route_plan_pose(
+                plan, pose.distance + slot.local_offset.y);
+            const glm::vec2 right{sampled.forward.y, -sampled.forward.x};
+            const glm::vec2 point = sampled.center +
+                right * slot.local_offset.x;
+            if (have_previous) {
+                const glm::vec2 center_delta = sampled.center - previous_center;
+                const float center_distance2 = glm::dot(
+                    center_delta, center_delta);
+                if (center_distance2 > 1e-10f) {
+                    const float ratio = glm::dot(
+                        point - previous_point, center_delta) /
+                        center_distance2;
+                    assert(ratio + 1e-3f >= minimum_ratio);
+                }
+            }
+            previous_center = sampled.center;
+            previous_point = point;
+            have_previous = true;
+        }
+    }
+}
+
 template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
          class GlobalMotionPlugin = AoeDefaultGlobalMotionPlugin,
          class FormationPlugin = AoeFullFormationPlugin,
@@ -242,7 +447,9 @@ template<class LocalAvoidancePlugin = AoeFullLocalAvoidancePlugin,
          class SquadArrivalRematchPlugin =
              AoeFullSquadArrivalRematchPlugin,
          class UnitPathfinderPlugin = AoeGridAStarUnitPathfinderPlugin,
-         class SquadPathfinderPlugin = AoeGridAStarSquadPathfinderPlugin>
+         class SquadPathfinderPlugin = AoeGridAStarSquadPathfinderPlugin,
+         class UnitMovementIntentPlugin =
+             AoeDefaultUnitMovementIntentPlugin>
 struct Fixture {
     EcsWorld world;
     std::shared_ptr<MemoryFileSystem> fs = std::make_shared<MemoryFileSystem>();
@@ -316,6 +523,7 @@ struct Fixture {
             gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
                 SquadEngagementPlugin, FormationPlugin,
                 SquadArrivalRematchPlugin,
+                UnitMovementIntentPlugin,
                 LocalAvoidancePlugin,
                 GlobalMotionPlugin,
                 UnitPathfinderPlugin,
@@ -328,32 +536,62 @@ struct Fixture {
 using FullGameplayDef = AoeGameplayDef<
     AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin>;
 using PassThroughGameplayDef =
     AoeGameplayDef<AoeFullSquadEngagementPlugin,
                    AoeFullFormationPlugin,
                    AoeFullSquadArrivalRematchPlugin,
+                   AoeDefaultUnitMovementIntentPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoeDefaultGlobalMotionPlugin>;
 using MotionFloorGameplayDef =
     AoeGameplayDef<AoePassThroughSquadEngagementPlugin,
                    AoePassThroughFormationPlugin,
                    AoePassThroughSquadArrivalRematchPlugin,
+                   AoeDefaultUnitMovementIntentPlugin,
                    AoePassThroughLocalAvoidancePlugin,
                    AoePassThroughGlobalMotionPlugin>;
 using ProbeGameplayDef =
     AoeGameplayDef<StaticSquadEngagementProbe, StaticFormationProbe,
                    StaticSquadArrivalRematchProbe,
+                   StaticUnitMovementIntentProbe,
                    StaticLocalAvoidanceProbe,
                    StaticGlobalMotionProbe>;
 static_assert(AoeGameplayStaticPlugin<AoeFullSquadEngagementPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughSquadEngagementPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullFormationPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughFormationPlugin>);
+static_assert(AoeGameplayStaticPlugin<AoeLayoutOnlyFormationPlugin>);
+static_assert(AoeGameplayStaticPlugin<
+    AoeLayoutRouteSplitFormationPlugin>);
+static_assert(AoeGameplayStaticPlugin<
+    AoeLayoutRouteSplitMovingFormationPlugin>);
+static_assert(AoeFormationModule<
+    AoeFullSquadLayoutModule, AoeSquadLayoutRole>);
+static_assert(AoeFormationModule<
+    AoePassThroughRouteSplitModule, AoeFormationRouteSplitRole>);
+static_assert(AoeFormationModule<
+    AoeNavMeshRouteSplitModule, AoeFormationRouteSplitRole>);
+static_assert(AoeFormationModule<
+    AoePassThroughMovingControlModule, AoeFormationMovingControlRole>);
+static_assert(AoeFormationModule<
+    AoeSynchronizedFormationMovingControlModule,
+    AoeFormationMovingControlRole>);
+static_assert(AoeFormationModule<
+    AoePassThroughAttackControlModule, AoeFormationAttackControlRole>);
+static_assert(AoeFormationModule<
+    AoePassThroughCommandCompletionModule,
+    AoeFormationCommandCompletionRole>);
+static_assert(std::same_as<
+    AoeLayoutOnlyFormationPlugin::SquadLayoutModule,
+    AoeFullSquadLayoutModule>);
 static_assert(AoeGameplayStaticPlugin<AoeFullSquadArrivalRematchPlugin>);
 static_assert(AoeGameplayStaticPlugin<
     AoePassThroughSquadArrivalRematchPlugin>);
+static_assert(AoeGameplayStaticPlugin<
+    AoeDefaultUnitMovementIntentPlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeFullLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoePassThroughLocalAvoidancePlugin>);
 static_assert(AoeGameplayStaticPlugin<AoeDefaultGlobalMotionPlugin>);
@@ -362,6 +600,8 @@ static_assert(AoeGameplayPathfinderPlugin<
     AoeGridAStarUnitPathfinderPlugin>);
 static_assert(AoeGameplayPathfinderPlugin<
     AoeGridAStarSquadPathfinderPlugin>);
+static_assert(AoeGameplayPathfinderPlugin<
+    AoeNavMeshSquadPathfinderPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::SquadEngagementPlugin,
     AoeFullSquadEngagementPlugin>);
@@ -371,6 +611,9 @@ static_assert(std::same_as<
 static_assert(std::same_as<
     AoeGameplayPlugin::SquadArrivalRematchPlugin,
     AoeFullSquadArrivalRematchPlugin>);
+static_assert(std::same_as<
+    AoeGameplayPlugin::UnitMovementIntentPlugin,
+    AoeDefaultUnitMovementIntentPlugin>);
 static_assert(std::same_as<
     AoeGameplayPlugin::LocalAvoidancePlugin,
     AoeFullLocalAvoidancePlugin>);
@@ -444,6 +687,7 @@ int main() {
         assert(installed_probe.engagement_calls == 0 &&
                installed_probe.formation_calls == 0 &&
                installed_probe.arrival_rematch_calls == 0 &&
+               installed_probe.movement_intent_calls == 0 &&
                installed_probe.local_calls == 0 &&
                installed_probe.global_calls == 0 &&
                installed_probe.sequence == 0 &&
@@ -459,8 +703,9 @@ int main() {
         assert(ran_probe.engagement_calls == 1 &&
                ran_probe.formation_calls == 1 &&
                ran_probe.arrival_rematch_calls == 1 &&
+               ran_probe.movement_intent_calls == 1 &&
                ran_probe.local_calls == 1 && ran_probe.global_calls == 1 &&
-               ran_probe.sequence == 5 && ran_probe.last_tick == 1);
+               ran_probe.sequence == 6 && ran_probe.last_tick == 1);
         app_server.shutdown();
         app.shutdown();
     }
@@ -498,6 +743,14 @@ int main() {
     const auto parsed = parse(definition_json());
     assert(parsed && parsed->id == "test" && parsed->level == 2);
     assert(parsed->movement.speed == 2.f);
+    assert(std::abs(parsed->movement.rotation_speed_radians_per_second -
+                    2.f * glm::pi<float>()) < 1e-5f);
+    auto turning_definition = definition_json();
+    turning_definition["movement"]
+        ["rotation_speed_degrees_per_second"] = 90.f;
+    assert(std::abs(parse(turning_definition)->movement
+                        .rotation_speed_radians_per_second -
+                    glm::half_pi<float>()) < 1e-5f);
     assert(parsed->tags == std::vector<std::string>({"scout", "cavalry"}));
     assert(parsed->lifecycle.recycle_after_death);
     assert(parsed->lifecycle.death_duration_seconds == 0.2f);
@@ -508,6 +761,129 @@ int main() {
     assert(parsed->target_acquisition.disengage_radius == 9.f);
     assert(parsed->attack->projectile_launch_offset ==
            std::optional<glm::vec3>(glm::vec3(0.f, .5f, 1.5f)));
+
+    // Unit Movement Intent preserves speed while limiting only vector length
+    // and angular change; no acceleration state lives in this phase.
+    bool turn_limited = false;
+    const glm::vec2 quarter_turn = aoe_constrain_unit_velocity(
+        {2.f, 0.f}, {0.f, 4.f}, 2.f, glm::pi<float>(), .1f,
+        &turn_limited);
+    assert(turn_limited && std::abs(glm::length(quarter_turn) - 2.f) < 1e-5f);
+    assert(std::abs(std::atan2(quarter_turn.y, quarter_turn.x) -
+                    glm::radians(18.f)) < 1e-5f);
+    const glm::vec2 half_turn = aoe_constrain_unit_velocity(
+        {2.f, 0.f}, {-2.f, 0.f}, 2.f, glm::pi<float>(), .1f);
+    assert(std::abs(std::atan2(half_turn.y, half_turn.x)) <=
+           glm::radians(18.f) + 1e-5f);
+    glm::vec2 jitter_velocity{2.f, 0.f};
+    for (int index = 0; index < 12; ++index) {
+        const glm::vec2 target = index % 2 == 0
+            ? glm::vec2{0.f, 2.f} : glm::vec2{0.f, -2.f};
+        const glm::vec2 next = aoe_constrain_unit_velocity(
+            jitter_velocity, target, 2.f, glm::half_pi<float>(), .1f);
+        const float change = std::acos(std::clamp(glm::dot(
+            glm::normalize(jitter_velocity), glm::normalize(next)),
+            -1.f, 1.f));
+        assert(change <= glm::radians(9.f) + 1e-4f);
+        jitter_velocity = next;
+    }
+
+    // The plugin reads AoeNavigationPath without advancing it. Core cursor
+    // traversal consumes coincident intermediate waypoints before the plugin,
+    // allowing the next segment to be emitted in the same tick at full speed.
+    Fixture intent_fixture;
+    const auto intent_unit = intent_fixture.unit({0.f, 0.f}, 50.f, 1);
+    intent_fixture.world.reg().emplace<AoeMoveGoal>(
+        intent_unit, AoeMoveGoal{.destination = {1.f, 0.f}});
+    intent_fixture.world.reg().emplace<AoeSquadMember>(intent_unit);
+    intent_fixture.world.reg().emplace<AoeNavigationPath>(intent_unit,
+        AoeNavigationPath{.waypoints = {{.1f, 0.f}, {1.f, 0.f}},
+                          .requested_goal = {1.f, 0.f},
+                          .request_sequence = 41});
+    const AoeNavigationPath path_before = intent_fixture.world.reg()
+        .get<AoeNavigationPath>(intent_unit);
+    AoeDefaultUnitMovementIntentPlugin::fixed_tick(
+        intent_fixture.world, 1);
+    const auto& path_after_plugin = intent_fixture.world.reg()
+        .get<AoeNavigationPath>(intent_unit);
+    assert(path_after_plugin.waypoints == path_before.waypoints &&
+           path_after_plugin.current == path_before.current &&
+           path_after_plugin.requested_goal == path_before.requested_goal &&
+           path_after_plugin.map_revision == path_before.map_revision &&
+           path_after_plugin.request_sequence == path_before.request_sequence &&
+           path_after_plugin.last_repath_tick == path_before.last_repath_tick &&
+           path_after_plugin.blocked_ticks == path_before.blocked_ticks &&
+           path_after_plugin.no_path == path_before.no_path &&
+           path_after_plugin.include_dynamic_obstacles ==
+               path_before.include_dynamic_obstacles &&
+           path_after_plugin.dynamic_repath_requested ==
+               path_before.dynamic_repath_requested &&
+           path_after_plugin.dynamic_repath_failed ==
+               path_before.dynamic_repath_failed);
+    assert(std::abs(glm::length(intent_fixture.world.reg()
+               .get<AoePathMotionRequest>(intent_unit).velocity) - 2.f) < 1e-5f);
+
+    auto& intent_path = intent_fixture.world.reg()
+        .get<AoeNavigationPath>(intent_unit);
+    intent_path.waypoints = {{0.f, 0.f}, {.1f, 0.f}, {1.f, 0.f}};
+    intent_path.current = 0;
+    intent_fixture.world.reg().emplace<AoeFormationMemberRouteProgress>(
+        intent_unit, AoeFormationMemberRouteProgress{
+            .origin = {0.f, 0.f},
+            .waypoint_progress = {0.f, .1f, 1.f},
+            .segment_speed_ratio = {1.f, 1.f, 1.f}});
+    gld::ecs::aoe::detail::
+        aoe_gameplay_fixed_after_unit_pathfinder_before_local(
+        intent_fixture.world, 2);
+    AoeDefaultUnitMovementIntentPlugin::fixed_tick(
+        intent_fixture.world, 2);
+    assert(intent_path.current == 1);
+    const auto& middle_request = intent_fixture.world.reg()
+        .get<AoePathMotionRequest>(intent_unit);
+    assert(middle_request.valid &&
+           middle_request.kind == AoeMovementIntentKind::FormationSlot &&
+           std::abs(glm::length(middle_request.velocity) - 2.f) < 1e-5f);
+
+    // A turn-limited member that crosses the intermediate waypoint plane
+    // inside the bounded capture corridor advances instead of orbiting it.
+    intent_fixture.world.reg().get<AoePosition>(intent_unit).value = {.15f, 0.f};
+    gld::ecs::aoe::detail::
+        aoe_gameplay_fixed_after_unit_pathfinder_before_local(
+        intent_fixture.world, 3);
+    assert(intent_path.current == 2);
+    intent_fixture.world.reg().get<AoePosition>(intent_unit).value = {.9f, 0.f};
+    AoeDefaultUnitMovementIntentPlugin::fixed_tick(
+        intent_fixture.world, 3);
+    const auto& final_request = intent_fixture.world.reg()
+        .get<AoePathMotionRequest>(intent_unit);
+    assert(final_request.valid &&
+           std::abs(glm::length(final_request.velocity) - .4f) < 1e-4f);
+    intent_path.no_path = true;
+    AoeDefaultUnitMovementIntentPlugin::fixed_tick(
+        intent_fixture.world, 4);
+    assert(!intent_fixture.world.reg()
+                .get<AoeUnitMovementIntentState>(intent_unit).valid);
+    assert(!intent_fixture.world.reg()
+                .get<AoePathMotionRequest>(intent_unit).valid);
+
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            SidewaysGlobalMotionProbe> final_constraint_fixture;
+    const auto constrained_unit = final_constraint_fixture.unit(
+        {0.f, 0.f}, 50.f, 1);
+    auto& constrained_movement = final_constraint_fixture.world.reg()
+        .get<AoeMovement>(constrained_unit);
+    constrained_movement.rotation_speed_radians_per_second = glm::pi<float>();
+    final_constraint_fixture.world.reg().get<AoeLocomotionState>(
+        constrained_unit).velocity = {2.f, 0.f};
+    assert(request_aoe_move(final_constraint_fixture.world,
+                            constrained_unit, {10.f, 0.f}));
+    final_constraint_fixture.advance_ticks(1);
+    const glm::vec2 constrained_velocity = final_constraint_fixture.world.reg()
+        .get<AoeLocomotionState>(constrained_unit).velocity;
+    assert(glm::length(constrained_velocity) <= 2.f + 1e-5f);
+    assert(std::abs(std::atan2(constrained_velocity.y,
+                               constrained_velocity.x)) <=
+           glm::radians(18.f) + 1e-4f);
 
     AoeProjectileRegistry registry;
     registry.bind<ArrowProjectileLogic>("arrow");
@@ -583,7 +959,7 @@ int main() {
     tangent_wall.shape = AoeStaticObstacleShape::Aabb;
     tangent_wall.center = {2.65f, 6.f};
     tangent_wall.half_extents = {.25f, 1.2f};
-    tangent_map.add_static_obstacle(tangent_wall);
+    tangent_map.add_runtime_static_obstacle(tangent_wall);
     AoeSteeringContext tangent_context{
         .instance_id = 7,
         .position = {2.f, 6.f},
@@ -641,7 +1017,10 @@ int main() {
         {{entt::entity{2}, 2}, 1, {"cavalry"}, {.2f, .2f}},
         {{entt::entity{3}, 3}, 2, {"cavalry", "scout"}, {.2f, .2f}},
         {{entt::entity{4}, 4}, 3, {"unknown"}, {.2f, .2f}}};
-    const auto formation_slots = TestSquareFormation::layout(formation_context);
+    const auto generated_formation =
+        TestSquareFormation::generate(formation_context);
+    assert(generated_formation);
+    const auto& formation_slots = generated_formation->slots;
     assert(formation_slots.size() == 4);
     assert(formation_slots[0].unit.entity == entt::entity{3});
     assert(formation_slots[0].priority == 300);
@@ -654,12 +1033,48 @@ int main() {
     assert(formation_slots[0].local_offset.y > formation_slots[2].local_offset.y);
     assert(std::abs(glm::length(formation_slots[1].local_offset -
                                 formation_slots[0].local_offset) - .9f) < 1e-5f);
+    assert(std::abs(generated_formation->bounds.width() - 1.3f) < 1e-5f);
+    assert(std::abs(generated_formation->bounds.height() - 1.3f) < 1e-5f);
+
+    const auto unchanged_width =
+        TestSquareFormation::generate_for_width(formation_context, 1.3f);
+    assert(unchanged_width && unchanged_width->slots.size() == 4);
+    for (std::size_t index = 0; index < formation_slots.size(); ++index) {
+        assert(unchanged_width->slots[index].unit.entity ==
+               formation_slots[index].unit.entity);
+        assert(unchanged_width->slots[index].priority ==
+               formation_slots[index].priority);
+        assert(glm::length(unchanged_width->slots[index].local_offset -
+                           formation_slots[index].local_offset) < 1e-5f);
+    }
+    const auto narrow_formation =
+        TestSquareFormation::generate_for_width(formation_context, .4f);
+    assert(narrow_formation && narrow_formation->slots.size() == 4);
+    assert(std::abs(narrow_formation->bounds.width() - .4f) < 1e-5f);
+    assert(std::abs(narrow_formation->bounds.height() - 3.1f) < 1e-5f);
+    for (std::size_t index = 0; index < formation_slots.size(); ++index) {
+        assert(narrow_formation->slots[index].unit.entity ==
+               formation_slots[index].unit.entity);
+        assert(narrow_formation->slots[index].priority ==
+               formation_slots[index].priority);
+    }
+    assert(!TestSquareFormation::generate_for_width(
+        formation_context, .399f));
+    assert(!TestSquareFormation::generate_for_width(
+        formation_context, 0.f));
+    assert(!TestSquareFormation::generate_for_width(
+        formation_context, std::numeric_limits<float>::infinity()));
 
     AoeFormationRegistry formation_registry;
     formation_registry.bind<AoeFormationType::Skirmish, TestSquareFormation>();
     assert(formation_registry.contains(AoeFormationType::Skirmish));
-    assert(formation_registry.layout(
-        AoeFormationType::Skirmish, formation_context).size() == 4);
+    const auto registered_formation = formation_registry.generate(
+        AoeFormationType::Skirmish, formation_context);
+    assert(registered_formation && registered_formation->slots.size() == 4);
+    const auto registered_narrow = formation_registry.generate_for_width(
+        AoeFormationType::Skirmish, formation_context, .4f);
+    assert(registered_narrow &&
+           std::abs(registered_narrow->bounds.width() - .4f) < 1e-5f);
     bool duplicate_formation_rejected = false;
     try {
         formation_registry.bind<AoeFormationType::Skirmish,
@@ -669,12 +1084,776 @@ int main() {
     }
     assert(duplicate_formation_rejected);
 
+    AoeFormationRegistry malformed_bounds_registry;
+    malformed_bounds_registry.bind<AoeFormationType::Skirmish,
+                                   MalformedBoundsFormation>();
+    assert(!malformed_bounds_registry.generate(
+        AoeFormationType::Skirmish, formation_context));
+
+    AoeFormationRegistry malformed_slot_registry;
+    malformed_slot_registry.bind<AoeFormationType::Skirmish,
+                                 MalformedSlotFormation>();
+    assert(!malformed_slot_registry.generate(
+        AoeFormationType::Skirmish, formation_context));
+
+    AoeFormationRegistry ignores_width_registry;
+    ignores_width_registry.bind<AoeFormationType::Skirmish,
+                                IgnoresMaximumWidthFormation>();
+    assert(!ignores_width_registry.generate_for_width(
+        AoeFormationType::Skirmish, formation_context, .4f));
+
+    // A large Squad can request a legal single-column variant without
+    // changing member identity, ordering, or spacing.
+    AoeFormationContext large_formation_context;
+    large_formation_context.spacing = .5f;
+    large_formation_context.members.reserve(2500);
+    for (std::uint32_t index = 0; index < 2500; ++index) {
+        large_formation_context.members.push_back({
+            {static_cast<entt::entity>(index + 1), index + 1},
+            index,
+            {},
+            {.2f, .2f},
+        });
+    }
+    const auto large_narrow = TestSquareFormation::generate_for_width(
+        large_formation_context, .4f);
+    assert(large_narrow && large_narrow->slots.size() == 2500);
+    assert(std::abs(large_narrow->bounds.width() - .4f) < 1e-5f);
+    assert(std::abs(large_narrow->bounds.height() - 2249.5f) < 1e-3f);
+    for (std::uint32_t index = 0; index < 2500; ++index) {
+        assert(large_narrow->slots[index].unit.entity ==
+               static_cast<entt::entity>(index + 1));
+        assert(std::abs(large_narrow->slots[index].local_offset.x) < 1e-5f);
+        if (index > 0)
+            assert(std::abs(large_narrow->slots[index - 1].local_offset.y -
+                            large_narrow->slots[index].local_offset.y - .9f) <
+                   1e-3f);
+    }
+    const auto large_ten_columns = TestSquareFormation::generate_for_width(
+        large_formation_context, 8.5f);
+    assert(large_ten_columns &&
+           std::abs(large_ten_columns->bounds.width() - 8.5f) < 1e-4f);
+    assert(std::abs(large_ten_columns->bounds.height() - 224.5f) < 1e-3f);
+
+    // The modular formation composition runs in its declared order and a
+    // module can stop processing the current squad without invoking later
+    // modules.
+    AoeSquadSpawnOptions module_probe_options;
+    module_probe_options.composition = {{"test", 1, 1}};
+    module_probe_options.center = {3.f, 4.f};
+    {
+        Fixture<AoeFullLocalAvoidancePlugin,
+                AoeDefaultGlobalMotionPlugin,
+                FormationOrderProbePlugin> fixture;
+        const auto squad = spawn_aoe_gameplay_squad(
+            fixture.world, module_probe_options);
+        assert(squad != entt::null);
+        spawn_aoe_gameplay_unit_system(fixture.world);
+        fixture.advance_ticks(1);
+        assert(fixture.world.resource<FormationModuleProbeState>().calls ==
+               std::vector<std::uint32_t>({1, 2, 3, 4, 5}));
+    }
+    {
+        Fixture<AoeFullLocalAvoidancePlugin,
+                AoeDefaultGlobalMotionPlugin,
+                FormationStopProbePlugin> fixture;
+        const auto squad = spawn_aoe_gameplay_squad(
+            fixture.world, module_probe_options);
+        assert(squad != entt::null);
+        spawn_aoe_gameplay_unit_system(fixture.world);
+        fixture.advance_ticks(1);
+        assert(fixture.world.resource<FormationModuleProbeState>().calls ==
+               std::vector<std::uint32_t>({1, 2}));
+    }
+
+    // The extracted SquadLayout is behaviorally identical to the legacy Full
+    // backend for initial placement, facing, history and squad bounds.
+    Fixture<> full_layout_fixture;
+    Fixture<AoeFullLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin,
+            AoeLayoutOnlyFormationPlugin> modular_layout_fixture;
+    AoeSquadSpawnOptions layout_options;
+    layout_options.composition = {{"test", 4, 1}};
+    layout_options.center = {6.f, 5.f};
+    layout_options.forward = {0.f, 1.f};
+    layout_options.formation_spacing = .4f;
+    layout_options.team_id = 3;
+    const auto full_layout_squad = spawn_aoe_gameplay_squad(
+        full_layout_fixture.world, layout_options);
+    const auto modular_layout_squad = spawn_aoe_gameplay_squad(
+        modular_layout_fixture.world, layout_options);
+    spawn_aoe_gameplay_unit_system(full_layout_fixture.world);
+    spawn_aoe_gameplay_unit_system(modular_layout_fixture.world);
+    full_layout_fixture.advance_ticks(1);
+    modular_layout_fixture.advance_ticks(1);
+    const auto& full_formation = full_layout_fixture.world.reg()
+        .get<AoeSquadFormation>(full_layout_squad);
+    auto& modular_formation = modular_layout_fixture.world.reg()
+        .get<AoeSquadFormation>(modular_layout_squad);
+    const auto& full_layout = full_layout_fixture.world.reg()
+        .get<AoeSquadLayoutState>(full_layout_squad).layout;
+    auto& modular_layout_state = modular_layout_fixture.world.reg()
+        .get<AoeSquadLayoutState>(modular_layout_squad);
+    auto& modular_layout = modular_layout_state.layout;
+    assert(full_layout.slots.size() == modular_layout.slots.size());
+    for (std::size_t index = 0; index < full_layout.slots.size(); ++index) {
+        const auto& full_slot = full_layout.slots[index];
+        const auto& modular_slot = modular_layout.slots[index];
+        const auto full_ordinal = full_layout_fixture.world.reg()
+            .get<AoeSquadMember>(full_slot.unit.entity).ordinal;
+        const auto modular_ordinal = modular_layout_fixture.world.reg()
+            .get<AoeSquadMember>(modular_slot.unit.entity).ordinal;
+        assert(full_ordinal == modular_ordinal);
+        assert(full_slot.priority == modular_slot.priority);
+        assert(glm::length(full_slot.local_offset -
+                           modular_slot.local_offset) < 1e-5f);
+        const auto full_position = full_layout_fixture.world.reg()
+            .get<AoePosition>(full_slot.unit.entity).value;
+        const auto modular_position = modular_layout_fixture.world.reg()
+            .get<AoePosition>(modular_slot.unit.entity).value;
+        assert(glm::length(full_position - modular_position) < 1e-5f);
+        assert(glm::length(modular_position - aoe_formation_slot_world(
+            modular_layout_fixture.world.reg().get<AoePosition>(
+                modular_layout_squad), modular_formation,
+            modular_slot)) < 1e-5f);
+        assert(glm::length(full_layout_fixture.world.reg()
+            .get<AoePositionHistory>(full_slot.unit.entity).previous -
+            modular_layout_fixture.world.reg()
+            .get<AoePositionHistory>(modular_slot.unit.entity).previous) <
+            1e-5f);
+        assert(full_layout_fixture.world.reg()
+            .get<AoeFacing>(full_slot.unit.entity).direction ==
+            modular_layout_fixture.world.reg()
+            .get<AoeFacing>(modular_slot.unit.entity).direction);
+    }
+    const auto full_bound = full_layout_fixture.world.reg()
+        .get<AoeCollider>(full_layout_squad);
+    const auto modular_bound = modular_layout_fixture.world.reg()
+        .get<AoeCollider>(modular_layout_squad);
+    assert(std::abs(full_bound.radius_x - modular_bound.radius_x) < 1e-5f);
+    assert(std::abs(full_bound.radius_y - modular_bound.radius_y) < 1e-5f);
+    assert(std::abs(full_bound.height - modular_bound.height) < 1e-5f);
+    assert(!modular_formation.dirty &&
+           !modular_formation.teleport_on_next_layout);
+    assert(modular_layout_fixture.world.reg().get<AoeSquadState>(
+               modular_layout_squad).phase == AoeSquadPhase::Idle);
+
+    // A later dirty rebuild updates slots and bounds, but never teleports
+    // members or rewrites interpolation history.
+    std::vector<glm::vec2> positions_before_rebuild;
+    std::vector<glm::vec2> history_before_rebuild;
+    for (const auto& member : modular_layout_fixture.world.reg()
+             .get<AoeSquadMembers>(modular_layout_squad).active) {
+        positions_before_rebuild.push_back(modular_layout_fixture.world.reg()
+            .get<AoePosition>(member.entity).value);
+        history_before_rebuild.push_back(modular_layout_fixture.world.reg()
+            .get<AoePositionHistory>(member.entity).previous);
+    }
+    const auto first_offset_before_rebuild =
+        modular_layout.slots.front().local_offset;
+    const auto revision_before_rebuild = modular_layout_state.revision;
+    modular_formation.spacing += .75f;
+    modular_formation.dirty = true;
+    modular_formation.teleport_on_next_layout = false;
+    AoeLayoutOnlyFormationPlugin::fixed_tick(
+        modular_layout_fixture.world, 2);
+    assert(!modular_formation.dirty);
+    assert(modular_layout_state.revision == revision_before_rebuild + 1);
+    assert(glm::length(modular_layout.slots.front().local_offset -
+                       first_offset_before_rebuild) > 1e-5f);
+    const auto& rebuilt_members = modular_layout_fixture.world.reg()
+        .get<AoeSquadMembers>(modular_layout_squad).active;
+    for (std::size_t index = 0; index < rebuilt_members.size(); ++index) {
+        assert(glm::length(modular_layout_fixture.world.reg()
+            .get<AoePosition>(rebuilt_members[index].entity).value -
+            positions_before_rebuild[index]) < 1e-5f);
+        assert(glm::length(modular_layout_fixture.world.reg()
+            .get<AoePositionHistory>(rebuilt_members[index].entity).previous -
+            history_before_rebuild[index]) < 1e-5f);
+    }
+
+    // A rejected rebuild is recoverable when prior slots exist.
+    const auto retained_slots = modular_layout.slots;
+    const auto retained_bounds = modular_layout.bounds;
+    const auto retained_revision = modular_layout_state.revision;
+    modular_formation.type = InvalidFormationType;
+    modular_formation.dirty = true;
+    AoeLayoutOnlyFormationPlugin::fixed_tick(
+        modular_layout_fixture.world, 3);
+    assert(!modular_formation.dirty);
+    assert(modular_layout_state.revision == retained_revision);
+    assert(modular_layout.bounds.local_min == retained_bounds.local_min);
+    assert(modular_layout.bounds.local_max == retained_bounds.local_max);
+    assert(modular_layout.slots.size() == retained_slots.size());
+    for (std::size_t index = 0; index < retained_slots.size(); ++index) {
+        assert(modular_layout.slots[index].unit.entity ==
+               retained_slots[index].unit.entity);
+        assert(modular_layout.slots[index].priority ==
+               retained_slots[index].priority);
+        assert(glm::length(modular_layout.slots[index].local_offset -
+                           retained_slots[index].local_offset) < 1e-5f);
+    }
+    assert(modular_layout_fixture.world.reg().get<AoeSquadSpawnState>(
+               modular_layout_squad).status == AoeSquadSpawnStatus::Ready);
+    assert(modular_layout_fixture.world.reg().get<AoeSquadSpawnState>(
+               modular_layout_squad).errors ==
+           std::vector<std::string>{
+               "formation layout rejected; retaining previous slots"});
+
+    // With no previous layout, failure is terminal and clears every command
+    // or route that could keep the squad and its members active.
+    Fixture<AoeFullLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin,
+            AoeLayoutOnlyFormationPlugin> failed_layout_fixture;
+    const auto failed_layout_squad = spawn_aoe_gameplay_squad(
+        failed_layout_fixture.world, layout_options);
+    spawn_aoe_gameplay_unit_system(failed_layout_fixture.world);
+    failed_layout_fixture.advance_ticks(1);
+    auto& failed_layout = failed_layout_fixture.world.reg()
+        .get<AoeSquadFormation>(failed_layout_squad);
+    failed_layout_fixture.world.reg().get<AoeSquadLayoutState>(
+        failed_layout_squad) = {};
+    failed_layout.type = InvalidFormationType;
+    failed_layout.dirty = true;
+    failed_layout_fixture.world.reg().get<AoeSquadOrder>(
+        failed_layout_squad) = {
+            AoeSquadOrderType::MoveTo, {15.f, 5.f}, {}, 9};
+    failed_layout_fixture.world.reg().get<AoeSquadState>(
+        failed_layout_squad).phase = AoeSquadPhase::Moving;
+    failed_layout_fixture.world.reg().emplace_or_replace<AoeNavigationPath>(
+        failed_layout_squad, AoeNavigationPath{{{15.f, 5.f}}, 0});
+    for (const auto& member : failed_layout_fixture.world.reg()
+             .get<AoeSquadMembers>(failed_layout_squad).active) {
+        failed_layout_fixture.world.reg().emplace_or_replace<
+            AoeAttackMoveOrder>(member.entity,
+                               AoeAttackMoveOrder{{15.f, 5.f}});
+        failed_layout_fixture.world.reg().emplace_or_replace<
+            AoeMoveGoal>(member.entity, AoeMoveGoal{{15.f, 5.f}});
+        failed_layout_fixture.world.reg().emplace_or_replace<
+            AoeNavigationPath>(member.entity,
+                              AoeNavigationPath{{{15.f, 5.f}}, 0});
+        failed_layout_fixture.world.reg().emplace_or_replace<
+            AoeSquadMoveSpeedLimit>(member.entity,
+                                   AoeSquadMoveSpeedLimit{1.f});
+    }
+    AoeLayoutOnlyFormationPlugin::fixed_tick(
+        failed_layout_fixture.world, 10);
+    assert(failed_layout_fixture.world.reg().get<AoeSquadSpawnState>(
+               failed_layout_squad).status == AoeSquadSpawnStatus::Failed);
+    assert(failed_layout_fixture.world.reg().get<AoeSquadState>(
+               failed_layout_squad).phase == AoeSquadPhase::Failed);
+    assert(failed_layout_fixture.world.reg().get<AoeSquadOrder>(
+               failed_layout_squad).type == AoeSquadOrderType::Idle);
+    assert(!failed_layout_fixture.world.reg().all_of<AoeNavigationPath>(
+        failed_layout_squad));
+    const auto& terminal_layout_result = failed_layout_fixture.world.reg()
+        .get<AoeFormationResult>(failed_layout_squad);
+    assert(terminal_layout_result.valid &&
+           terminal_layout_result.produced_tick == 10 &&
+           terminal_layout_result.status ==
+               AoeFormationResultStatus::Failed);
+    for (const auto& member : failed_layout_fixture.world.reg()
+             .get<AoeSquadMembers>(failed_layout_squad).active) {
+        assert(!failed_layout_fixture.world.reg().all_of<
+            AoeAttackMoveOrder>(member.entity));
+        assert(!failed_layout_fixture.world.reg().all_of<
+            AoeMoveGoal>(member.entity));
+        assert(!failed_layout_fixture.world.reg().all_of<
+            AoeNavigationPath>(member.entity));
+        assert(!failed_layout_fixture.world.reg().all_of<
+            AoeSquadMoveSpeedLimit>(member.entity));
+        assert(failed_layout_fixture.world.reg().get<AoeActionState>(
+                   member.entity).state == UnitState::Idle);
+    }
+
+    // Without RouteSplit, the minimal MovingControl bridge has no member route
+    // to activate. Commands remain pending and no member execution state is
+    // synthesized while only SquadLayout is enabled.
+    Fixture<AoeFullLocalAvoidancePlugin,
+            AoeDefaultGlobalMotionPlugin,
+            AoeLayoutOnlyFormationPlugin,
+            AoePassThroughSquadEngagementPlugin>
+        layout_only_behavior_fixture;
+    const auto layout_only_squad = spawn_aoe_gameplay_squad(
+        layout_only_behavior_fixture.world, layout_options);
+    spawn_aoe_gameplay_unit_system(layout_only_behavior_fixture.world);
+    layout_only_behavior_fixture.advance_ticks(1);
+    const auto layout_only_anchor = layout_only_behavior_fixture.world.reg()
+        .get<AoePosition>(layout_only_squad).value;
+    assert(request_aoe_squad_move(
+        layout_only_behavior_fixture.world, layout_only_squad,
+        {16.f, 5.f}));
+    layout_only_behavior_fixture.advance_ticks(3);
+    assert(glm::length(layout_only_behavior_fixture.world.reg()
+        .get<AoePosition>(layout_only_squad).value -
+        layout_only_anchor) < 1e-5f);
+    assert(layout_only_behavior_fixture.world.reg().get<AoeSquadOrder>(
+               layout_only_squad).type == AoeSquadOrderType::MoveTo);
+    for (const auto& member : layout_only_behavior_fixture.world.reg()
+             .get<AoeSquadMembers>(layout_only_squad).active) {
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeMoveGoal>(member.entity));
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeNavigationPath>(member.entity));
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeAttackOrder>(member.entity));
+    }
+    const auto layout_only_enemy = layout_only_behavior_fixture.unit(
+        {8.f, 5.f}, 50.f, 9);
+    assert(request_aoe_squad_attack(
+        layout_only_behavior_fixture.world, layout_only_squad,
+        layout_only_enemy));
+    layout_only_behavior_fixture.advance_ticks(2);
+    assert(layout_only_behavior_fixture.world.reg().get<AoeSquadOrder>(
+               layout_only_squad).type == AoeSquadOrderType::AttackTarget);
+    assert(glm::length(layout_only_behavior_fixture.world.reg()
+        .get<AoePosition>(layout_only_squad).value -
+        layout_only_anchor) < 1e-5f);
+    for (const auto& member : layout_only_behavior_fixture.world.reg()
+             .get<AoeSquadMembers>(layout_only_squad).active) {
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeMoveGoal>(member.entity));
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeNavigationPath>(member.entity));
+        assert(!layout_only_behavior_fixture.world.reg().all_of<
+            AoeAttackOrder>(member.entity));
+    }
+
+    // RouteSplit consumes one squad-level NavMesh corridor and emits one
+    // statically safe virtual-portal Funnel route per slot. Re-running the
+    // same episode hits the split cache and performs no additional query.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoePassThroughGlobalMotionPlugin,
+            AoeLayoutRouteSplitMovingFormationPlugin,
+            AoePassThroughSquadEngagementPlugin,
+            AoePassThroughSquadArrivalRematchPlugin,
+            AoeGridAStarUnitPathfinderPlugin,
+            AoeNavMeshSquadPathfinderPlugin>
+        route_split_fixture;
+    route_split_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
+    AoeSquadSpawnOptions route_split_options;
+    route_split_options.composition = {{"test", 4, 1}};
+    route_split_options.center = {-12.f, 0.f};
+    route_split_options.forward = {1.f, 0.f};
+    route_split_options.formation_spacing = .4f;
+    const auto route_split_squad = spawn_aoe_gameplay_squad(
+        route_split_fixture.world, route_split_options);
+    spawn_aoe_gameplay_unit_system(route_split_fixture.world);
+    route_split_fixture.advance_ticks(1);
+    assert(request_aoe_squad_move(
+        route_split_fixture.world, route_split_squad, {12.f, 0.f}));
+    std::vector<glm::vec2> split_initial_positions;
+    for (const auto& member : route_split_fixture.world.reg().get<
+             AoeSquadMembers>(route_split_squad).active)
+        split_initial_positions.push_back(route_split_fixture.world.reg().get<
+            AoePosition>(member.entity).value);
+    route_split_fixture.advance_ticks(1);
+    const auto& split_corridor = route_split_fixture.world.reg().get<
+        AoeFormationNavCorridor>(route_split_squad);
+    const auto& split_state = route_split_fixture.world.reg().get<
+        AoeFormationRouteSplitState>(route_split_squad);
+    assert(split_corridor.valid);
+    assert(split_state.status == AoeFormationRouteSplitStatus::Ready);
+    assert(split_state.units.size() == 4);
+    const auto& split_trajectory = route_split_fixture.world.reg().get<
+        AoeFormationRouteTrajectory>(route_split_squad);
+    const auto& split_plan = route_split_fixture.world.reg().get<
+        AoeFormationRoutePlan>(route_split_squad);
+    assert(split_plan.valid && !split_plan.narrowed);
+    assert(split_plan.travel_layout.slots.size() == 4);
+    assert(split_plan.poses.size() >= 2);
+    assert(std::abs(split_plan.natural_width -
+                    split_plan.selected_width) < 1e-5f);
+    assert(std::abs(split_plan.prelude_progress +
+                    split_plan.travel_progress +
+                    split_plan.postlude_progress -
+                    split_plan.total_progress) < 1e-4f);
+    assert(split_trajectory.valid && split_trajectory.frames.size() >= 2 &&
+           split_trajectory.total_progress > 0.f);
+    const auto& split_diagnostics = route_split_fixture.world.resource<
+        AoeFormationRouteSplitDiagnostics>();
+    assert(split_diagnostics.splits == 1);
+    assert(split_diagnostics.members_routed == 4);
+    assert(split_diagnostics.members_failed == 0);
+    assert(route_split_fixture.world.resource<AoeNavMeshResource>()
+               .diagnostics().query_count == 1);
+    std::vector<glm::vec2> split_goals;
+    const auto& split_map = route_split_fixture.world.resource<AoeLogicMap>();
+    for (const auto& slot : route_split_fixture.world.reg().get<
+             AoeSquadLayoutState>(route_split_squad).layout.slots) {
+        const auto entity = slot.unit.entity;
+        const auto& path = route_split_fixture.world.reg().get<
+            AoeNavigationPath>(entity);
+        const auto& collider = route_split_fixture.world.reg().get<
+            AoeCollider>(entity);
+        assert(!path.no_path && !path.waypoints.empty());
+        assert(route_split_fixture.world.reg().all_of<
+            AoeFormationRouteOwner>(entity));
+        const auto& route_progress = route_split_fixture.world.reg().get<
+            AoeFormationMemberRouteProgress>(entity);
+        assert(route_progress.squad == route_split_squad &&
+               route_progress.waypoint_progress.size() ==
+                   path.waypoints.size() &&
+               route_progress.segment_speed_ratio.size() ==
+                   path.waypoints.size());
+        assert(route_split_fixture.world.reg().all_of<
+            AoeMoveGoal, AoeFormationMoveGoalOwner>(entity));
+        assert(path.request_sequence == route_split_fixture.world.reg().get<
+            AoeSquadOrder>(route_split_squad).revision);
+        assert(glm::length(route_split_fixture.world.reg().get<
+            AoeMoveGoal>(entity).destination - path.requested_goal) < 1e-5f);
+        glm::vec2 previous = route_split_fixture.world.reg().get<
+            AoePosition>(entity).value;
+        for (const auto waypoint : path.waypoints) {
+            assert(split_map.static_safe_fraction(previous, waypoint,
+                {collider.radius_x, collider.radius_y}) >= .999f);
+            previous = waypoint;
+        }
+        split_goals.push_back(path.requested_goal);
+    }
+    bool distinct_split_goals = false;
+    for (std::size_t index = 1; index < split_goals.size(); ++index)
+        distinct_split_goals = distinct_split_goals ||
+            glm::length(split_goals[index] - split_goals.front()) > .1f;
+    assert(distinct_split_goals);
+    bool split_member_moved = false;
+    const auto& split_members = route_split_fixture.world.reg().get<
+        AoeSquadMembers>(route_split_squad).active;
+    for (std::size_t index = 0; index < split_members.size(); ++index)
+        split_member_moved = split_member_moved || glm::length(
+            route_split_fixture.world.reg().get<AoePosition>(
+                split_members[index].entity).value -
+            split_initial_positions[index]) > 1e-5f;
+    assert(split_member_moved);
+    route_split_fixture.advance_ticks(1);
+    assert(route_split_fixture.world.resource<AoeNavMeshResource>()
+               .diagnostics().query_count == 1);
+    assert(route_split_fixture.world.resource<
+               AoeFormationRouteSplitDiagnostics>().splits == 1);
+    assert(route_split_fixture.world.resource<
+               AoeFormationRouteSplitDiagnostics>().cache_hits >= 1);
+    assert(request_aoe_squad_stop(
+        route_split_fixture.world, route_split_squad));
+    route_split_fixture.advance_ticks(1);
+    for (const auto& member : route_split_fixture.world.reg().get<
+             AoeSquadMembers>(route_split_squad).active) {
+        assert(!route_split_fixture.world.reg().all_of<
+            AoeFormationRouteOwner>(member.entity));
+        assert(!route_split_fixture.world.reg().all_of<
+            AoeNavigationPath>(member.entity));
+        assert(!route_split_fixture.world.reg().all_of<
+            AoeMoveGoal, AoeFormationMoveGoalOwner>(member.entity));
+        assert(!route_split_fixture.world.reg().any_of<
+            AoeFormationMemberRouteProgress,
+            AoeSquadMoveSpeedLimit>(member.entity));
+    }
+    assert(!route_split_fixture.world.reg().any_of<
+        AoeFormationRouteTrajectory, AoeFormationMovingState>(
+            route_split_squad));
+
+    // A corridor narrower than the natural 5x5 footprint selects one
+    // generator-owned travel layout for the complete route. The authoritative
+    // natural Squad layout remains unchanged and is restored by Postlude.
+    Fixture<AoePassThroughLocalAvoidancePlugin,
+            AoePassThroughGlobalMotionPlugin,
+            AoeLayoutRouteSplitMovingFormationPlugin,
+            AoePassThroughSquadEngagementPlugin,
+            AoePassThroughSquadArrivalRematchPlugin,
+            AoeGridAStarUnitPathfinderPlugin,
+            AoeNavMeshSquadPathfinderPlugin>
+        narrow_route_fixture;
+    narrow_route_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
+    AoeSquadSpawnOptions narrow_route_options = route_split_options;
+    narrow_route_options.composition = {{"test", 25, 1}};
+    const auto narrow_route_squad = spawn_aoe_gameplay_squad(
+        narrow_route_fixture.world, narrow_route_options);
+    spawn_aoe_gameplay_unit_system(narrow_route_fixture.world);
+    narrow_route_fixture.advance_ticks(1);
+    const auto narrow_natural_revision = narrow_route_fixture.world.reg().get<
+        AoeSquadLayoutState>(narrow_route_squad).revision;
+    const auto narrow_natural_layout = narrow_route_fixture.world.reg().get<
+        AoeSquadLayoutState>(narrow_route_squad).layout;
+    assert(request_aoe_squad_move(
+        narrow_route_fixture.world, narrow_route_squad, {12.f, 0.f}));
+    narrow_route_fixture.advance_ticks(1);
+    assert(narrow_route_fixture.world.reg().all_of<
+        AoeFormationRoutePlan>(narrow_route_squad));
+    const auto& narrow_plan = narrow_route_fixture.world.reg().get<
+        AoeFormationRoutePlan>(narrow_route_squad);
+    assert(narrow_plan.valid && narrow_plan.narrowed);
+    assert(narrow_plan.natural_width > narrow_plan.bottleneck_width);
+    assert(narrow_plan.selected_width <=
+           narrow_plan.bottleneck_width + 1e-5f);
+    assert(narrow_plan.travel_layout.slots.size() == 25);
+    const auto& narrow_layout_after = narrow_route_fixture.world.reg().get<
+        AoeSquadLayoutState>(narrow_route_squad);
+    assert(narrow_layout_after.revision == narrow_natural_revision);
+    assert(std::abs(narrow_layout_after.layout.bounds.width() -
+                    narrow_natural_layout.bounds.width()) < 1e-5f);
+    for (std::size_t index = 0;
+         index < narrow_natural_layout.slots.size(); ++index) {
+        assert(narrow_layout_after.layout.slots[index].unit.entity ==
+               narrow_natural_layout.slots[index].unit.entity);
+        assert(glm::length(
+            narrow_layout_after.layout.slots[index].local_offset -
+               narrow_natural_layout.slots[index].local_offset) < 1e-5f);
+    }
+    // Turn-aware RouteSplit keeps one immutable slot assignment while it
+    // generates a shared, subdivided 90-degree moving turn. MovingControl
+    // publishes per-member speed limits that map different turn radii back to
+    // the same Squad progress in one O(member_count) pass.
+    using TurnFixture = Fixture<
+        AoePassThroughLocalAvoidancePlugin,
+        AoePassThroughGlobalMotionPlugin,
+        AoeLayoutRouteSplitMovingFormationPlugin,
+        AoePassThroughSquadEngagementPlugin,
+        AoePassThroughSquadArrivalRematchPlugin,
+        AoeGridAStarUnitPathfinderPlugin,
+        AoeNavMeshSquadPathfinderPlugin>;
+    TurnFixture quarter_turn_fixture;
+    quarter_turn_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    AoeSquadSpawnOptions turn_options;
+    turn_options.composition = {{"test", 5, 1}};
+    turn_options.center = {0.f, 0.f};
+    turn_options.forward = {1.f, 0.f};
+    turn_options.formation_spacing = .4f;
+    const auto quarter_turn_squad = spawn_aoe_gameplay_squad(
+        quarter_turn_fixture.world, turn_options);
+    spawn_aoe_gameplay_unit_system(quarter_turn_fixture.world);
+    quarter_turn_fixture.advance_ticks(1);
+    const auto slots_before_turn = quarter_turn_fixture.world.reg().get<
+        AoeSquadLayoutState>(quarter_turn_squad).layout.slots;
+    const auto layout_revision_before_turn = quarter_turn_fixture.world.reg()
+        .get<AoeSquadLayoutState>(quarter_turn_squad).revision;
+    assert(request_aoe_squad_move(
+        quarter_turn_fixture.world, quarter_turn_squad, {0.f, 10.f}));
+    quarter_turn_fixture.advance_ticks(1);
+    const auto& quarter_turn_trajectory = quarter_turn_fixture.world.reg().get<
+        AoeFormationRouteTrajectory>(quarter_turn_squad);
+    const auto& quarter_turn_plan = quarter_turn_fixture.world.reg().get<
+        AoeFormationRoutePlan>(quarter_turn_squad);
+    assert(quarter_turn_trajectory.valid);
+    assert_snake_travel_moves_forward(quarter_turn_plan,
+        quarter_turn_fixture.world.resource<
+            AoeFormationRouteSplitSettings>().minimum_member_forward_ratio);
+    std::size_t quarter_turn_rotation_frames = 0;
+    std::size_t quarter_turn_in_place_frames = 0;
+    float quarter_turn_rotation = 0.f;
+    for (std::size_t index = 1;
+         index < quarter_turn_trajectory.frames.size(); ++index) {
+        const auto& previous = quarter_turn_trajectory.frames[index - 1];
+        const auto& current = quarter_turn_trajectory.frames[index];
+        const float angle = std::acos(std::clamp(
+            glm::dot(previous.forward, current.forward), -1.f, 1.f));
+        assert(angle <= glm::radians(10.f) + 1e-4f);
+        if (angle > 1e-5f) {
+            ++quarter_turn_rotation_frames;
+            quarter_turn_rotation += angle;
+            if (glm::length(current.center - previous.center) < 1e-5f)
+                ++quarter_turn_in_place_frames;
+        }
+    }
+    assert(quarter_turn_rotation_frames >= 9);
+    assert(quarter_turn_in_place_frames == 0);
+    assert(quarter_turn_rotation >= glm::radians(89.f));
+    const auto& layout_after_turn = quarter_turn_fixture.world.reg().get<
+        AoeSquadLayoutState>(quarter_turn_squad);
+    assert(layout_after_turn.revision ==
+           layout_revision_before_turn);
+    assert(layout_after_turn.layout.slots.size() == slots_before_turn.size());
+    float minimum_turn_speed = std::numeric_limits<float>::infinity();
+    float maximum_turn_speed = 0.f;
+    for (std::size_t index = 0; index < slots_before_turn.size(); ++index) {
+        const auto& before = slots_before_turn[index];
+        const auto& after = layout_after_turn.layout.slots[index];
+        assert(after.unit.entity == before.unit.entity &&
+               after.unit.instance_id == before.unit.instance_id &&
+               after.priority == before.priority &&
+               glm::length(after.local_offset - before.local_offset) < 1e-5f);
+        const auto& path = quarter_turn_fixture.world.reg().get<
+            AoeNavigationPath>(after.unit.entity);
+        const auto& progress = quarter_turn_fixture.world.reg().get<
+            AoeFormationMemberRouteProgress>(after.unit.entity);
+        assert(progress.waypoint_progress.size() == path.waypoints.size() &&
+               progress.segment_speed_ratio.size() == path.waypoints.size());
+        const float speed = quarter_turn_fixture.world.reg().get<
+            AoeSquadMoveSpeedLimit>(after.unit.entity).value;
+        minimum_turn_speed = std::min(minimum_turn_speed, speed);
+        maximum_turn_speed = std::max(maximum_turn_speed, speed);
+    }
+    assert(maximum_turn_speed - minimum_turn_speed > .05f);
+    quarter_turn_fixture.advance_ticks(8);
+    const auto& synchronized_turn = quarter_turn_fixture.world.reg().get<
+        AoeFormationMovingState>(quarter_turn_squad);
+    const auto& moving_settings = quarter_turn_fixture.world.resource<
+        AoeFormationMovingSettings>();
+    assert(synchronized_turn.maximum_lead <=
+           moving_settings.allowed_progress_lead + .05f);
+
+    // Reissuing an order replaces all ownership revisions. Removing a member
+    // dirties the layout, rebuilds the shared routes, and strips the dead
+    // member's route metadata in the same fixed tick.
+    const auto previous_order_revision = quarter_turn_fixture.world.reg().get<
+        AoeSquadOrder>(quarter_turn_squad).revision;
+    assert(request_aoe_squad_move(
+        quarter_turn_fixture.world, quarter_turn_squad, {-10.f, 0.f}));
+    quarter_turn_fixture.advance_ticks(1);
+    const auto replacement_revision = quarter_turn_fixture.world.reg().get<
+        AoeSquadOrder>(quarter_turn_squad).revision;
+    assert(replacement_revision > previous_order_revision);
+    for (const auto& member : quarter_turn_fixture.world.reg().get<
+             AoeSquadMembers>(quarter_turn_squad).active) {
+        assert(quarter_turn_fixture.world.reg().get<
+                   AoeFormationRouteOwner>(member.entity)
+                   .squad_order_revision == replacement_revision);
+        assert(quarter_turn_fixture.world.reg().get<
+                   AoeFormationMemberRouteProgress>(member.entity)
+                   .squad_order_revision == replacement_revision);
+    }
+    const auto removed_turn_member = quarter_turn_fixture.world.reg().get<
+        AoeSquadMembers>(quarter_turn_squad).active.front().entity;
+    assert(set_aoe_unit_health(
+        quarter_turn_fixture.world, removed_turn_member, 0.f));
+    quarter_turn_fixture.advance_ticks(1);
+    assert(!quarter_turn_fixture.world.reg().any_of<
+        AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
+        AoeFormationMemberRouteProgress, AoeSquadMoveSpeedLimit,
+        AoeMoveGoal, AoeNavigationPath>(removed_turn_member));
+
+    // A 180-degree command uses a forward-only bounded-radius turn. No
+    // adjacent orientation frame may exceed the configured ten-degree bound,
+    // no rotation frame stops, and no member reverses along the Travel curve.
+    TurnFixture half_turn_fixture;
+    half_turn_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    const auto half_turn_squad = spawn_aoe_gameplay_squad(
+        half_turn_fixture.world, turn_options);
+    spawn_aoe_gameplay_unit_system(half_turn_fixture.world);
+    half_turn_fixture.advance_ticks(1);
+    const auto half_turn_layout_revision = half_turn_fixture.world.reg().get<
+        AoeSquadLayoutState>(half_turn_squad).revision;
+    assert(request_aoe_squad_move(
+        half_turn_fixture.world, half_turn_squad, {-10.f, 0.f}));
+    half_turn_fixture.advance_ticks(1);
+    const auto& half_turn_trajectory = half_turn_fixture.world.reg().get<
+        AoeFormationRouteTrajectory>(half_turn_squad);
+    const auto& half_turn_plan = half_turn_fixture.world.reg().get<
+        AoeFormationRoutePlan>(half_turn_squad);
+    assert_snake_travel_moves_forward(half_turn_plan,
+        half_turn_fixture.world.resource<
+            AoeFormationRouteSplitSettings>().minimum_member_forward_ratio);
+    std::size_t half_turn_rotation_frames = 0;
+    std::size_t half_turn_in_place_frames = 0;
+    float half_turn_rotation = 0.f;
+    for (std::size_t index = 1;
+         index < half_turn_trajectory.frames.size(); ++index) {
+        const auto& previous = half_turn_trajectory.frames[index - 1];
+        const auto& current = half_turn_trajectory.frames[index];
+        const float angle = std::acos(std::clamp(
+            glm::dot(previous.forward, current.forward), -1.f, 1.f));
+        assert(angle <= glm::radians(10.f) + 1e-4f);
+        if (angle > 1e-5f) {
+            ++half_turn_rotation_frames;
+            half_turn_rotation += angle;
+            if (glm::length(current.center - previous.center) < 1e-5f)
+                ++half_turn_in_place_frames;
+        }
+    }
+    assert(half_turn_trajectory.valid &&
+           half_turn_rotation_frames >= 18 &&
+           half_turn_in_place_frames == 0 &&
+           half_turn_rotation >= glm::radians(179.f));
+    bool half_turn_selected_left = false;
+    for (const auto& pose : half_turn_plan.poses)
+        half_turn_selected_left = half_turn_selected_left || pose.center.y > .1f;
+    assert(half_turn_selected_left);
+    assert(half_turn_fixture.world.reg().get<AoeSquadLayoutState>(
+               half_turn_squad).revision == half_turn_layout_revision);
+
+    // A static obstacle occupying the deterministic left U-turn candidate
+    // forces the same 180-degree command to select the safe right candidate.
+    auto right_turn_map = centered_flat_map();
+    AoeStaticObstacleDesc left_turn_blocker;
+    left_turn_blocker.shape = AoeStaticObstacleShape::Aabb;
+    left_turn_blocker.center = {0.f, 2.f};
+    left_turn_blocker.half_extents = {3.f, .4f};
+    right_turn_map.static_obstacles.push_back(left_turn_blocker);
+    TurnFixture right_turn_fixture;
+    right_turn_fixture.world.add_resource<AoeLogicMap>(right_turn_map);
+    const auto right_turn_squad = spawn_aoe_gameplay_squad(
+        right_turn_fixture.world, turn_options);
+    spawn_aoe_gameplay_unit_system(right_turn_fixture.world);
+    right_turn_fixture.advance_ticks(1);
+    assert(request_aoe_squad_move(
+        right_turn_fixture.world, right_turn_squad, {-10.f, 0.f}));
+    right_turn_fixture.advance_ticks(1);
+    const auto& right_turn_plan = right_turn_fixture.world.reg().get<
+        AoeFormationRoutePlan>(right_turn_squad);
+    bool right_turn_selected_right = false;
+    for (const auto& pose : right_turn_plan.poses)
+        right_turn_selected_right =
+            right_turn_selected_right || pose.center.y < -.1f;
+    assert(right_turn_selected_right);
+    assert_snake_travel_moves_forward(right_turn_plan,
+        right_turn_fixture.world.resource<
+            AoeFormationRouteSplitSettings>().minimum_member_forward_ratio);
+
+    // The clockwise mirror must also finish. This catches members circling a
+    // dense turn waypoint while MovingControl waits on the slowest progress.
+    TurnFixture mirrored_turn_fixture;
+    mirrored_turn_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    const auto mirrored_turn_squad = spawn_aoe_gameplay_squad(
+        mirrored_turn_fixture.world, turn_options);
+    spawn_aoe_gameplay_unit_system(mirrored_turn_fixture.world);
+    mirrored_turn_fixture.advance_ticks(1);
+    assert(request_aoe_squad_move(
+        mirrored_turn_fixture.world, mirrored_turn_squad, {0.f, -10.f}));
+    for (int tick = 0; tick < 200 &&
+         mirrored_turn_fixture.world.reg().get<AoeSquadOrder>(
+             mirrored_turn_squad).type != AoeSquadOrderType::Idle; ++tick)
+        mirrored_turn_fixture.advance_ticks(1);
+    assert(mirrored_turn_fixture.world.reg().get<AoeSquadOrder>(
+               mirrored_turn_squad).type == AoeSquadOrderType::Idle);
+    for (const auto& member : mirrored_turn_fixture.world.reg().get<
+             AoeSquadMembers>(mirrored_turn_squad).active)
+        assert(mirrored_turn_fixture.world.reg().get<AoeLocomotionState>(
+                   member.entity).stalled_ticks == 0);
+
+    // RouteSplit validates the full member sweep against current static
+    // geometry even when the diagnostic GlobalMotion backend later skips all
+    // collision checks. A stale corridor crossing a new wall must fail closed.
+    TurnFixture unsafe_turn_fixture;
+    unsafe_turn_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    const auto unsafe_turn_squad = spawn_aoe_gameplay_squad(
+        unsafe_turn_fixture.world, turn_options);
+    spawn_aoe_gameplay_unit_system(unsafe_turn_fixture.world);
+    unsafe_turn_fixture.advance_ticks(1);
+    AoeStaticObstacleDesc turn_wall;
+    turn_wall.shape = AoeStaticObstacleShape::Aabb;
+    turn_wall.center = {0.f, 2.f};
+    turn_wall.half_extents = {6.f, .2f};
+    unsafe_turn_fixture.world.resource<AoeLogicMap>()
+        .add_runtime_static_obstacle(turn_wall);
+    assert(request_aoe_squad_move(
+        unsafe_turn_fixture.world, unsafe_turn_squad, {0.f, 10.f}));
+    unsafe_turn_fixture.advance_ticks(1);
+    assert(unsafe_turn_fixture.world.reg().get<
+               AoeFormationRouteSplitState>(unsafe_turn_squad).status ==
+           AoeFormationRouteSplitStatus::Failed);
+    for (const auto& member : unsafe_turn_fixture.world.reg().get<
+             AoeSquadMembers>(unsafe_turn_squad).active)
+        assert(!unsafe_turn_fixture.world.reg().all_of<AoeMoveGoal>(
+            member.entity));
+
     const auto schema1 = parse(definition_json(1));
     assert(schema1 && schema1->movement.speed == 1.f);
     assert(!schema1->lifecycle.recycle_after_death);
     auto invalid_speed = definition_json();
     invalid_speed["movement"]["speed"] = 0.0;
     assert(!parse(invalid_speed));
+    auto invalid_rotation_speed = definition_json();
+    invalid_rotation_speed["movement"]
+        ["rotation_speed_degrees_per_second"] = 0.0;
+    assert(!parse(invalid_rotation_speed));
     auto invalid_lifecycle = definition_json();
     invalid_lifecycle["lifecycle"]["death_duration_seconds"] = -0.1;
     assert(!parse(invalid_lifecycle));
@@ -758,6 +1937,7 @@ int main() {
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
         AoeFullSquadArrivalRematchPlugin,
+        AoeDefaultUnitMovementIntentPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(
         history_fixture.world);
@@ -777,6 +1957,7 @@ int main() {
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
         AoeFullSquadArrivalRematchPlugin,
+        AoeDefaultUnitMovementIntentPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(raw_time_fixture.world);
     const auto& raw_clock =
@@ -792,6 +1973,7 @@ int main() {
     gld::ecs::aoe::detail::aoe_gameplay_fixed_system<
         AoeFullSquadEngagementPlugin, AoeFullFormationPlugin,
         AoeFullSquadArrivalRematchPlugin,
+        AoeDefaultUnitMovementIntentPlugin,
         AoeFullLocalAvoidancePlugin,
         AoeDefaultGlobalMotionPlugin>(dt_fallback_fixture.world);
     const auto& fallback_clock =
@@ -826,7 +2008,7 @@ int main() {
     movement_wall.shape = AoeStaticObstacleShape::Aabb;
     movement_wall.center = {6.f, 6.f};
     movement_wall.half_extents = {.45f, 1.5f};
-    movement_map.add_static_obstacle(movement_wall);
+    movement_map.add_runtime_static_obstacle(movement_wall);
     const auto map_mover = map_movement_fixture.unit({2.f, 6.f}, 50.f, 1);
     assert(request_aoe_move(map_movement_fixture.world, map_mover, {10.f, 6.f}));
     map_movement_fixture.advance_ticks(1);
@@ -849,7 +2031,7 @@ int main() {
     sealed_wall.shape = AoeStaticObstacleShape::Aabb;
     sealed_wall.center = {6.f, 6.f};
     sealed_wall.half_extents = {.45f, 6.f};
-    const auto sealed_id = sealed_map.add_static_obstacle(sealed_wall);
+    const auto sealed_id = sealed_map.add_runtime_static_obstacle(sealed_wall);
     const auto sealed_mover = sealed_map_fixture.unit({2.f, 6.f}, 50.f, 1);
     assert(request_aoe_move(sealed_map_fixture.world, sealed_mover, {10.f, 6.f}));
     sealed_map_fixture.advance_ticks(1);
@@ -857,7 +2039,7 @@ int main() {
                sealed_mover).no_path);
     assert(sealed_map_fixture.world.reg().get<AoeActionState>(
                sealed_mover).state == UnitState::Idle);
-    assert(sealed_map.remove_static_obstacle(sealed_id));
+    assert(sealed_map.remove_runtime_static_obstacle(sealed_id));
     sealed_map_fixture.advance_ticks(60);
     assert(glm::length(sealed_map_fixture.world.reg()
                .get<AoePosition>(sealed_mover).value - glm::vec2(10.f, 6.f)) < .05f);
@@ -1009,9 +2191,9 @@ int main() {
     assert(!local_bypass_fixture.world.try_resource<
         AoeLocalAvoidanceScratch>());
 
-    // Global pass-through is a distinct static performance-floor pipeline. It
-    // builds only the records required by final static safety, applies the
-    // normal acceleration cap, and performs no conflict coordination.
+    // Global pass-through is a diagnostic route-playback pipeline. It follows
+    // raw path velocity, applies the normal acceleration cap, and leaves the
+    // safety index empty so neither static nor dynamic collision clips it.
     Fixture<AoePassThroughLocalAvoidancePlugin,
             AoePassThroughGlobalMotionPlugin> motion_floor_fixture;
     motion_floor_fixture.world.add_resource<AoeLogicMap>(flat_map());
@@ -1034,7 +2216,7 @@ int main() {
            motion_floor_decision.produced_tick == 1 &&
            motion_floor_decision.mode == AoeGlobalMotionMode::Clear &&
            motion_floor_decision.reason == AoeMotionDecisionReason::None);
-    assert(motion_floor_index.records.size() == 1 &&
+    assert(motion_floor_index.records.empty() &&
            motion_floor_index.candidates.empty() &&
            motion_floor_index.selected.empty());
     assert(!motion_floor_fixture.world.reg().all_of<AoeGlobalMotionState>(
@@ -1061,7 +2243,7 @@ int main() {
     assert(!stale_decision || !stale_decision->valid);
     auto& invalid_intent = invalid_motion_fixture.world.reg()
         .get<AoeMovementIntent>(invalid_motion_unit);
-    invalid_intent.velocity = {
+    invalid_intent.raw_path_velocity = {
         std::numeric_limits<float>::quiet_NaN(), 1.f};
     invalid_intent.produced_tick = 7;
     AoePassThroughGlobalMotionPlugin::fixed_tick(
@@ -1071,9 +2253,18 @@ int main() {
     assert(invalid_decision.valid && invalid_decision.produced_tick == 7 &&
            glm::length(invalid_decision.velocity) == 0.f &&
            invalid_decision.stop_reason == AoeMotionStopReason::Unknown);
+    invalid_intent.velocity = {2.f, 0.f};
+    invalid_intent.raw_path_velocity = {0.f, 2.f};
+    invalid_intent.produced_tick = 8;
+    AoePassThroughGlobalMotionPlugin::fixed_tick(
+        invalid_motion_fixture.world, 8);
+    const auto& raw_route_decision = invalid_motion_fixture.world.reg()
+        .get<AoeGlobalMotionDecision>(invalid_motion_unit);
+    assert(glm::length(raw_route_decision.velocity - glm::vec2{0.f, 2.f}) <
+           1e-5f);
 
-    // The last safety stage may shorten the displacement, but it cannot
-    // rotate the direction selected by global planning.
+    // The diagnostic pass-through backend is not clipped even when its raw
+    // route enters a static obstacle.
     Fixture<AoePassThroughLocalAvoidancePlugin,
             AoePassThroughGlobalMotionPlugin,
             AoeFullFormationPlugin,
@@ -1090,7 +2281,7 @@ int main() {
     safety_wall.center = {2.35f, 2.f};
     safety_wall.half_extents = {.05f, 1.f};
     safety_fixture.world.resource<AoeLogicMap>()
-        .add_static_obstacle(safety_wall);
+        .add_runtime_static_obstacle(safety_wall);
     const auto safety_unit = safety_fixture.unit({2.f, 2.f}, 50.f, 1);
     assert(request_aoe_move(safety_fixture.world,
                             safety_unit, {10.f, 2.f}));
@@ -1099,11 +2290,15 @@ int main() {
         .get<AoeGlobalMotionDecision>(safety_unit);
     const auto& safety_locomotion = safety_fixture.world.reg()
         .get<AoeLocomotionState>(safety_unit);
-    assert(safety_decision.static_safe_fraction < 1.f);
+    assert(safety_decision.static_safe_fraction == 1.f &&
+           safety_decision.dynamic_safe_fraction == 1.f &&
+           safety_decision.safe_fraction == 1.f);
     assert(safety_decision.velocity.x > 0.f &&
            std::abs(safety_decision.velocity.y) < 1e-5f);
     assert(safety_locomotion.velocity.x >= 0.f &&
            std::abs(safety_locomotion.velocity.y) < 1e-5f);
+    assert(safety_fixture.world.reg().get<AoePosition>(
+               safety_unit).value.x > 2.1f);
 
     // Unit-level flow coordination consumes local intent. Same-direction,
     // same-speed traffic stays unchanged when no collision is predicted,
@@ -1211,7 +2406,7 @@ int main() {
     corridor_wall.center = {10.f, 1.1f};
     corridor_wall.half_extents = {10.f, .25f};
     backing_flow_fixture.world.resource<AoeLogicMap>()
-        .add_static_obstacle(corridor_wall);
+        .add_runtime_static_obstacle(corridor_wall);
     auto& backing_settings =
         backing_flow_fixture.world.resource<AoeNavigationSettings>();
     backing_settings.unit_flow_enabled = true;
@@ -1302,7 +2497,8 @@ int main() {
     const auto& squad_members = squad_fixture.world.reg()
         .get<AoeSquadMembers>(squad);
     assert(squad_members.active.size() == 4);
-    assert(squad_fixture.world.reg().get<AoeSquadFormation>(squad).slots.size() == 4);
+    assert(squad_fixture.world.reg().get<AoeSquadLayoutState>(
+               squad).layout.slots.size() == 4);
     assert(squad_fixture.world.reg().get<AoeSquadState>(squad).movement_speed == 2.f);
     assert(squad_fixture.world.reg().get<AoePosition>(squad).value.x > 0.f);
     for (const auto& member : squad_members.active) {
@@ -1406,7 +2602,7 @@ int main() {
     squad_wall.center = {9.f, 6.f};
     squad_wall.half_extents = {.45f, 2.5f};
     mapped_squad_fixture.world.resource<AoeLogicMap>()
-        .add_static_obstacle(squad_wall);
+        .add_runtime_static_obstacle(squad_wall);
     assert(request_aoe_squad_move(
         mapped_squad_fixture.world, mapped_squad, {16.f, 6.f}));
     mapped_squad_fixture.advance_ticks(1);
@@ -1487,7 +2683,7 @@ int main() {
     revision_probe.center = {50.f, 2.f};
     revision_probe.radius = .25f;
     single_query_fixture.world.resource<AoeLogicMap>()
-        .add_static_obstacle(revision_probe);
+        .add_runtime_static_obstacle(revision_probe);
     single_query_fixture.advance_ticks(3);
     assert(query_calls() == 3);
 
@@ -1553,7 +2749,9 @@ int main() {
     arrival_reflow_fixture.advance_ticks(1);
     auto& arrival_formation = arrival_reflow_fixture.world.reg()
         .get<AoeSquadFormation>(arrival_reflow_squad);
-    assert(arrival_formation.slots.size() == 4);
+    auto& arrival_slots = arrival_reflow_fixture.world.reg()
+        .get<AoeSquadLayoutState>(arrival_reflow_squad).layout.slots;
+    assert(arrival_slots.size() == 4);
     const auto slot_world = [&](const AoeFormationSlot& slot) {
         const auto center = arrival_reflow_fixture.world.reg()
             .get<AoePosition>(arrival_reflow_squad).value;
@@ -1562,12 +2760,12 @@ int main() {
         return center + right * slot.local_offset.x +
                forward * slot.local_offset.y;
     };
-    const auto first_unit = arrival_formation.slots[0].unit;
-    const auto second_unit = arrival_formation.slots[1].unit;
+    const auto first_unit = arrival_slots[0].unit;
+    const auto second_unit = arrival_slots[1].unit;
     arrival_reflow_fixture.world.reg().get<AoePosition>(
-        first_unit.entity).value = slot_world(arrival_formation.slots[1]);
+        first_unit.entity).value = slot_world(arrival_slots[1]);
     arrival_reflow_fixture.world.reg().get<AoePosition>(
-        second_unit.entity).value = slot_world(arrival_formation.slots[0]);
+        second_unit.entity).value = slot_world(arrival_slots[0]);
     auto& arrival_order = arrival_reflow_fixture.world.reg()
         .get<AoeSquadOrder>(arrival_reflow_squad);
     arrival_order = {AoeSquadOrderType::AttackMove,
@@ -1580,9 +2778,9 @@ int main() {
     // result on the next tick before completing the order.
     arrival_reflow_fixture.advance_ticks(2);
     assert(arrival_formation.arrival_reflow_done);
-    assert(arrival_formation.slots[0].unit.entity == second_unit.entity);
-    assert(arrival_formation.slots[1].unit.entity == first_unit.entity);
-    arrival_reflow_fixture.advance_ticks(10);
+    assert(arrival_slots[0].unit.entity == second_unit.entity);
+    assert(arrival_slots[1].unit.entity == first_unit.entity);
+    arrival_reflow_fixture.advance_ticks(20);
     assert(arrival_reflow_fixture.world.reg().get<AoeSquadState>(
                arrival_reflow_squad).phase == AoeSquadPhase::Idle);
     assert(arrival_reflow_fixture.world.reg().get<AoeSquadOrder>(
@@ -1596,19 +2794,21 @@ int main() {
     role_reflow_fixture.advance_ticks(1);
     auto& role_formation = role_reflow_fixture.world.reg()
         .get<AoeSquadFormation>(role_reflow_squad);
-    assert(role_formation.slots.size() == 4);
-    role_formation.slots[0].priority = 300;
-    role_formation.slots[1].priority = 300;
-    role_formation.slots[2].priority = -100;
-    role_formation.slots[3].priority = -100;
-    const auto role_zero = role_formation.slots[0].unit;
-    const auto role_two = role_formation.slots[2].unit;
+    auto& role_slots = role_reflow_fixture.world.reg()
+        .get<AoeSquadLayoutState>(role_reflow_squad).layout.slots;
+    assert(role_slots.size() == 4);
+    role_slots[0].priority = 300;
+    role_slots[1].priority = 300;
+    role_slots[2].priority = -100;
+    role_slots[3].priority = -100;
+    const auto role_zero = role_slots[0].unit;
+    const auto role_two = role_slots[2].unit;
     const auto role_center = role_reflow_fixture.world.reg()
         .get<AoePosition>(role_reflow_squad).value;
     const glm::vec2 role_forward = glm::normalize(role_formation.forward);
     const glm::vec2 role_right{role_forward.y, -role_forward.x};
     const auto role_slot_world = [&](std::size_t index) {
-        const auto& slot = role_formation.slots[index];
+        const auto& slot = role_slots[index];
         return role_center + role_right * slot.local_offset.x +
                role_forward * slot.local_offset.y;
     };
@@ -1623,10 +2823,10 @@ int main() {
     role_formation.arrival_reflow_done = false;
     role_reflow_fixture.advance_ticks(2);
     assert(role_formation.arrival_reflow_done);
-    assert(role_formation.slots[0].unit.entity == role_zero.entity);
-    assert(role_formation.slots[2].unit.entity == role_two.entity);
-    assert(role_formation.slots[0].priority == 300);
-    assert(role_formation.slots[2].priority == -100);
+    assert(role_slots[0].unit.entity == role_zero.entity);
+    assert(role_slots[2].unit.entity == role_two.entity);
+    assert(role_slots[0].priority == 300);
+    assert(role_slots[2].priority == -100);
 
     // The pass-through arrival-rematch phase performs no assignment work. Its
     // persistent request suppresses per-tick retries while members continue to
@@ -1642,15 +2842,17 @@ int main() {
     pass_through_reflow_fixture.advance_ticks(1);
     auto& pass_through_formation = pass_through_reflow_fixture.world.reg()
         .get<AoeSquadFormation>(pass_through_reflow_squad);
-    const auto pass_first = pass_through_formation.slots[0].unit;
-    const auto pass_second = pass_through_formation.slots[1].unit;
+    auto& pass_through_slots = pass_through_reflow_fixture.world.reg()
+        .get<AoeSquadLayoutState>(pass_through_reflow_squad).layout.slots;
+    const auto pass_first = pass_through_slots[0].unit;
+    const auto pass_second = pass_through_slots[1].unit;
     const auto pass_center = pass_through_reflow_fixture.world.reg()
         .get<AoePosition>(pass_through_reflow_squad).value;
     const glm::vec2 pass_forward = glm::normalize(
         pass_through_formation.forward);
     const glm::vec2 pass_right{pass_forward.y, -pass_forward.x};
     const auto pass_slot_world = [&](std::size_t index) {
-        const auto& slot = pass_through_formation.slots[index];
+        const auto& slot = pass_through_slots[index];
         return pass_center + pass_right * slot.local_offset.x +
                pass_forward * slot.local_offset.y;
     };
@@ -1679,8 +2881,8 @@ int main() {
         .get<AoeSquadArrivalRematchRequest>(pass_through_reflow_squad);
     assert(persistent_request.valid &&
            persistent_request.requested_tick == first_request.requested_tick);
-    assert(pass_through_formation.slots[0].unit.entity == pass_first.entity);
-    assert(pass_through_formation.slots[1].unit.entity == pass_second.entity);
+    assert(pass_through_slots[0].unit.entity == pass_first.entity);
+    assert(pass_through_slots[1].unit.entity == pass_second.entity);
     assert(!pass_through_formation.arrival_reflow_done);
     for (const auto& member : pass_through_reflow_fixture.world.reg()
              .get<AoeSquadMembers>(pass_through_reflow_squad).active)
@@ -1740,10 +2942,12 @@ int main() {
     stale_reflow_fixture.advance_ticks(1);
     auto& stale_formation = stale_reflow_fixture.world.reg()
         .get<AoeSquadFormation>(stale_reflow_squad);
+    const auto& stale_slots = stale_reflow_fixture.world.reg()
+        .get<AoeSquadLayoutState>(stale_reflow_squad).layout.slots;
     const auto stale_center = stale_reflow_fixture.world.reg()
         .get<AoePosition>(stale_reflow_squad).value;
     stale_reflow_fixture.world.reg().get<AoePosition>(
-        stale_formation.slots[0].unit.entity).value += glm::vec2{2.f, 0.f};
+        stale_slots[0].unit.entity).value += glm::vec2{2.f, 0.f};
     stale_reflow_fixture.world.reg().get<AoeSquadOrder>(stale_reflow_squad) = {
         AoeSquadOrderType::AttackMove, stale_center, {}, 9};
     stale_reflow_fixture.world.reg().get<AoeSquadState>(
@@ -1765,7 +2969,8 @@ int main() {
     failed_reflow_fixture.advance_ticks(1);
     auto& failed_formation = failed_reflow_fixture.world.reg()
         .get<AoeSquadFormation>(failed_reflow_squad);
-    failed_formation.slots.pop_back();
+    failed_reflow_fixture.world.reg().get<AoeSquadLayoutState>(
+        failed_reflow_squad).layout.slots.pop_back();
     const auto failed_center = failed_reflow_fixture.world.reg()
         .get<AoePosition>(failed_reflow_squad).value;
     failed_reflow_fixture.world.reg().get<AoeSquadOrder>(
@@ -1873,14 +3078,14 @@ int main() {
     blocked_squad_fixture.advance_ticks(1);
     squad_wall.half_extents = {.45f, 6.f};
     const auto blocking_wall = blocked_squad_fixture.world
-        .resource<AoeLogicMap>().add_static_obstacle(squad_wall);
+        .resource<AoeLogicMap>().add_runtime_static_obstacle(squad_wall);
     assert(request_aoe_squad_move(
         blocked_squad_fixture.world, blocked_squad, {16.f, 6.f}));
     blocked_squad_fixture.advance_ticks(1);
     assert(blocked_squad_fixture.world.reg().get<AoeSquadState>(blocked_squad)
                .phase == AoeSquadPhase::Blocked);
     assert(blocked_squad_fixture.world.resource<AoeLogicMap>()
-               .remove_static_obstacle(blocking_wall));
+               .remove_runtime_static_obstacle(blocking_wall));
     blocked_squad_fixture.advance_ticks(120);
     assert(blocked_squad_fixture.world.reg().get<AoeSquadState>(blocked_squad)
                .phase == AoeSquadPhase::Idle);
@@ -2573,6 +3778,7 @@ int main() {
     fixture.world.reg().emplace<AoeEngagementApproach>(target);
     fixture.world.reg().emplace<AoeMovementIntent>(target);
     fixture.world.reg().emplace<AoePathMotionRequest>(target);
+    fixture.world.reg().emplace<AoeUnitMovementIntentState>(target);
     fixture.world.reg().emplace<AoeGlobalMotionState>(target);
     fixture.world.reg().emplace<AoeGlobalMotionDecision>(target);
     aoe_gameplay_recycle_system(fixture.world);
@@ -2583,6 +3789,7 @@ int main() {
     assert(!fixture.world.reg().all_of<AoeEngagementApproach>(target));
     assert(!fixture.world.reg().all_of<AoeMovementIntent>(target));
     assert(!fixture.world.reg().all_of<AoePathMotionRequest>(target));
+    assert(!fixture.world.reg().all_of<AoeUnitMovementIntentState>(target));
     assert(!fixture.world.reg().all_of<AoeGlobalMotionState>(target));
     assert(!fixture.world.reg().all_of<AoeGlobalMotionDecision>(target));
     assert(fixture.world.resource<AoeGameplayPool>().available.size() == 1);

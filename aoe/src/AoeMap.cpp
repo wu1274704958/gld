@@ -181,10 +181,11 @@ std::shared_ptr<AoeMapDefinition> AoeMapDefinitionLoader::finalize(
 }
 
 void AoeLogicMap::visit_static_obstacles(const std::function<void(
-    AoeObstacleId, const AoeStaticObstacleDesc&)>& visitor) const {
+    AoeObstacleId, AoeStaticObstacleKind,
+    const AoeStaticObstacleDesc&)>& visitor) const {
     if (!visitor) return;
     for (const auto& obstacle : obstacles_)
-        visitor(obstacle.id, obstacle.desc);
+        visitor(obstacle.id, obstacle.kind, obstacle.desc);
 }
 
 AoeLogicMap::AoeLogicMap(const AoeMapDefinition& definition) {
@@ -216,14 +217,16 @@ bool AoeLogicMap::reset(const AoeMapDefinition& definition, std::string* error) 
     height_ = definition.height;
     heights_ = definition.heights;
     obstacles_.clear();
+    base_static_obstacle_count_ = 0;
     obstacle_lookup_.clear();
     next_obstacle_id_ = 1;
     static_buckets_.assign(static_cast<std::size_t>(width_) * height_, {});
     for (const auto& obstacle : definition.static_obstacles) {
         const auto id = next_obstacle_id_++;
         obstacle_lookup_[id] = obstacles_.size();
-        obstacles_.push_back({id, obstacle});
+        obstacles_.push_back({id, AoeStaticObstacleKind::Base, obstacle});
     }
+    base_static_obstacle_count_ = obstacles_.size();
     ++static_revision_;
     rebuild_static_index();
     return true;
@@ -264,30 +267,34 @@ std::optional<float> AoeLogicMap::sample_height(glm::vec2 point) const {
     return low + (high - low) * ty;
 }
 
-AoeObstacleId AoeLogicMap::add_static_obstacle(
+AoeObstacleId AoeLogicMap::add_runtime_static_obstacle(
     const AoeStaticObstacleDesc& obstacle) {
     if (!valid_obstacle(obstacle)) return 0;
     const auto id = next_obstacle_id_++;
     obstacle_lookup_[id] = obstacles_.size();
-    obstacles_.push_back({id, obstacle});
+    obstacles_.push_back({id, AoeStaticObstacleKind::Runtime, obstacle});
     ++static_revision_;
     rebuild_static_index();
     return id;
 }
 
-bool AoeLogicMap::update_static_obstacle(
+bool AoeLogicMap::update_runtime_static_obstacle(
     AoeObstacleId id, const AoeStaticObstacleDesc& obstacle) {
     const auto it = obstacle_lookup_.find(id);
-    if (it == obstacle_lookup_.end() || !valid_obstacle(obstacle)) return false;
+    if (it == obstacle_lookup_.end() ||
+        obstacles_[it->second].kind != AoeStaticObstacleKind::Runtime ||
+        !valid_obstacle(obstacle)) return false;
     obstacles_[it->second].desc = obstacle;
     ++static_revision_;
     rebuild_static_index();
     return true;
 }
 
-bool AoeLogicMap::remove_static_obstacle(AoeObstacleId id) {
+bool AoeLogicMap::remove_runtime_static_obstacle(AoeObstacleId id) {
     const auto it = obstacle_lookup_.find(id);
-    if (it == obstacle_lookup_.end()) return false;
+    if (it == obstacle_lookup_.end() ||
+        obstacles_[it->second].kind != AoeStaticObstacleKind::Runtime)
+        return false;
     const std::size_t index = it->second;
     const std::size_t last = obstacles_.size() - 1;
     if (index != last) {
@@ -304,6 +311,21 @@ bool AoeLogicMap::remove_static_obstacle(AoeObstacleId id) {
 const AoeStaticObstacleDesc* AoeLogicMap::static_obstacle(AoeObstacleId id) const {
     const auto it = obstacle_lookup_.find(id);
     return it == obstacle_lookup_.end() ? nullptr : &obstacles_[it->second].desc;
+}
+
+void AoeLogicMap::visit_static_obstacles(const std::function<void(
+    AoeObstacleId, const AoeStaticObstacleDesc&)>& visitor) const {
+    if (!visitor) return;
+    for (const auto& obstacle : obstacles_)
+        visitor(obstacle.id, obstacle.desc);
+}
+
+std::optional<AoeStaticObstacleKind> AoeLogicMap::static_obstacle_kind(
+    AoeObstacleId id) const {
+    const auto it = obstacle_lookup_.find(id);
+    return it == obstacle_lookup_.end()
+        ? std::nullopt
+        : std::optional<AoeStaticObstacleKind>(obstacles_[it->second].kind);
 }
 
 std::size_t AoeLogicMap::cell_index(int x, int y) const {

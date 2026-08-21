@@ -370,6 +370,7 @@ using Gameplay = AoeGameplayDef<
     AoeFullSquadEngagementPlugin,
     AoeFullFormationPlugin,
     AoeFullSquadArrivalRematchPlugin,
+    AoeDefaultUnitMovementIntentPlugin,
     AoeFullLocalAvoidancePlugin,
     AoeDefaultGlobalMotionPlugin,
     MyUnitPathfinder,
@@ -628,7 +629,8 @@ Squad entity 保存：
 
 - `AoeSquadMembers`：pending 与 active member；
 - `AoeSquadSpawnState`：请求数、成功数、失败数及错误；
-- `AoeSquadFormation`：类型、spacing、forward、slots；
+- `AoeSquadFormation`：类型、spacing、forward 与布局失效标记；
+- `AoeSquadLayoutState`：Squad 持有的权威自然布局、bounds 与 revision；
 - `AoeSquadOrder`；
 - `AoeSquadState`；
 - `AoeSquadCombatSettings`；
@@ -655,12 +657,29 @@ Formation 通过 enum 到静态实现的 Registry 配置：
 formations.bind<AoeFormationType::Skirmish, MyFormation>();
 ```
 
-实现接收成员 ordinal、tags、碰撞半径与 spacing，返回每个带 instance ID 成员的 local slot。Registry 会验证：
+实现接收成员 ordinal、tags、碰撞半径与 spacing，并同时提供自然布局和限宽布局：
+
+```cpp
+static std::optional<AoeFormationLayout> generate(
+    const AoeFormationContext& context);
+static std::optional<AoeFormationLayout> generate_for_width(
+    const AoeFormationContext& context, float maximum_width);
+```
+
+`AoeFormationLayout` 包含每个带 instance ID 成员的 local slot，以及包含成员碰撞半径的
+`local_min/local_max` footprint；`width()`/`height()` 返回完整占地尺寸，而不是 slot
+中心之间的距离。Registry 会验证：
 
 - slot 数与成员数一致；
-- 坐标有限；
+- slot 和 bounds 坐标有限，bounds 顺序有效；
 - 每个成员恰好出现一次；
-- 不允许不属于 Squad 的 entity。
+- 不允许不属于 Squad 的 entity；
+- bounds 覆盖所有成员碰撞 footprint；
+- 限宽结果的完整 footprint 不超过请求宽度。
+
+自然布局由 Squad 的 `AoeSquadLayoutState` 持有，是当前 Formation 的权威数据。调用
+`generate_for_width()` 得到的是临时值，不能覆盖自然布局；以后接入窄路规划时，由
+RouteSplit 产生的 route plan 持有或缓存所选变体。当前 RouteSplit 尚未调用该接口。
 
 ### 10.3 当前散兵方阵
 
@@ -682,6 +701,9 @@ cell_size = 2 * max_collision_radius_of_all_members + formation_spacing
 ```
 
 这里使用全队最大的 X/Y 碰撞半径，保证混合单位阵型拥有统一网格。`formation_spacing` 是碰撞外的额外空隙，所以阵型不是强制密铺。代价是少量大单位会放大全队 cell；后续可以实现按行/按成员尺寸打包的 Formation 策略。
+
+`generate_for_width()` 从自然布局列数开始减少列数、相应增加行数，保持成员优先级
+顺序和 cell spacing 不变。宽度小于合法单列的完整碰撞 footprint 时返回失败。
 
 slot local X 表示队形横向，local Y 表示 forward 方向。世界坐标为：
 

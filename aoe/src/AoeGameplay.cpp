@@ -1,4 +1,5 @@
 #include <aoe/AoeGameplay.hpp>
+#include <aoe/AoeNavMesh.hpp>
 #include "AoeGameplayInternal.hpp"
 
 #include <algorithm>
@@ -18,7 +19,7 @@ namespace {
 using json = nlohmann::json;
 constexpr float Epsilon = 1e-5f;
 void squad_traffic_tick(EcsWorld& world, std::uint64_t tick);
-void movement_intent_tick(EcsWorld& world, std::uint64_t tick);
+void advance_waypoint_cursors(EcsWorld& world);
 void global_motion_safety_tick(EcsWorld& world, std::uint64_t tick);
 
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
@@ -177,6 +178,18 @@ std::shared_ptr<AoeUnitDefinition> parse_definition(const json& source) {
             source.at("movement").at("speed"), "movement.speed");
         if (result->movement.speed <= 0.f)
             throw std::runtime_error("movement.speed must be positive");
+        if (source.at("movement").contains(
+                "rotation_speed_degrees_per_second")) {
+            const float degrees = finite_number(
+                source.at("movement").at(
+                    "rotation_speed_degrees_per_second"),
+                "movement.rotation_speed_degrees_per_second");
+            if (degrees <= 0.f)
+                throw std::runtime_error(
+                    "movement.rotation_speed_degrees_per_second must be positive");
+            result->movement.rotation_speed_radians_per_second =
+                glm::radians(degrees);
+        }
         const auto& lifecycle = source.at("lifecycle");
         result->lifecycle.death_duration_seconds = non_negative(
             lifecycle.at("death_duration_seconds"), "lifecycle.death_duration_seconds");
@@ -421,6 +434,21 @@ bool squad_member_valid(const entt::registry& reg, const AoeUnitTarget& member) 
     return reg.all_of<AoeMovement, AoeFacing, AoeTeam>(member.entity);
 }
 
+void invalidate_squad_layout(entt::registry& reg, entt::entity squad) {
+    if (auto* layout = reg.try_get<AoeSquadLayoutState>(squad))
+        layout->valid = false;
+}
+
+void clear_squad_member_formation_route(
+    entt::registry& reg, entt::entity entity, entt::entity squad) {
+    const auto* route_owner = reg.try_get<AoeFormationRouteOwner>(entity);
+    if (route_owner && route_owner->squad == squad)
+        reg.remove<AoeMoveGoal, AoeNavigationPath>(entity);
+    reg.remove<AoeSquadMoveSpeedLimit, FallbackFormationOwnedMovement,
+               AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
+               AoeFormationMemberRouteProgress>(entity);
+}
+
 void detach_squad_member(entt::registry& reg, entt::entity entity) {
     const auto* membership = reg.try_get<AoeSquadMember>(entity);
     if (!membership) return;
@@ -432,15 +460,11 @@ void detach_squad_member(entt::registry& reg, entt::entity entity) {
         if (auto* formation = reg.try_get<AoeSquadFormation>(squad)) {
             formation->dirty = true;
             formation->arrival_reflow_done = false;
-            std::erase_if(formation->slots,
-                [entity](const AoeFormationSlot& slot) {
-                    return slot.unit.entity == entity;
-                });
+            invalidate_squad_layout(reg, squad);
         }
     }
     reg.remove<AoeSquadMember>(entity);
-    reg.remove<AoeSquadMoveSpeedLimit>(entity);
-    reg.remove<FallbackFormationOwnedMovement>(entity);
+    clear_squad_member_formation_route(reg, entity, squad);
 }
 
 bool is_order_command(AoeCommandType type) {
@@ -538,15 +562,6 @@ std::optional<AoeUnitTarget> select_stalled_in_range_target(
     return gap <= attack_range + Epsilon ? target : std::nullopt;
 }
 
-glm::vec2 squad_slot_world(const AoePosition& center,
-                           const AoeSquadFormation& formation,
-                           const AoeFormationSlot& slot) {
-    const glm::vec2 forward = glm::normalize(formation.forward);
-    const glm::vec2 right{forward.y, -forward.x};
-    return center.value + right * slot.local_offset.x +
-           forward * slot.local_offset.y;
-}
-
 bool navigation_destination_valid(const AoeLogicMap* map,
                                   glm::vec2 destination,
                                   glm::vec2 clearance) {
@@ -636,89 +651,16 @@ bool squad_slots_arrived(const entt::registry& reg, entt::entity squad,
                          float tolerance = .05f) {
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
-    for (const auto& slot : formation.slots) {
+    const auto* layout = reg.try_get<AoeSquadLayoutState>(squad);
+    if (!layout || !layout->valid) return false;
+    for (const auto& slot : layout->layout.slots) {
         if (!squad_member_valid(reg, slot.unit)) continue;
         if (glm::length(reg.get<AoePosition>(slot.unit.entity).value -
-                        squad_slot_world(center, formation, slot)) > tolerance)
+                        aoe_formation_slot_world(
+                            center, formation, slot)) > tolerance)
             return false;
     }
     return true;
-}
-
-bool rebuild_squad_layout(EcsWorld& world, entt::entity squad) {
-    auto& reg = world.reg();
-    auto& formation = reg.get<AoeSquadFormation>(squad);
-    auto& members = reg.get<AoeSquadMembers>(squad);
-    auto* formations = world.try_resource<AoeFormationRegistry>();
-    if (!formations || !formations->contains(formation.type)) return false;
-    AoeFormationContext context;
-    context.spacing = formation.spacing;
-    for (const auto& member : members.active) {
-        if (!squad_member_valid(reg, member)) continue;
-        const auto* definition = reg.get<AoeUnitDefinitionRef>(member.entity).value.get();
-        const auto& membership = reg.get<AoeSquadMember>(member.entity);
-        const auto& collider = reg.get<AoeCollider>(member.entity);
-        context.members.push_back({member, membership.ordinal,
-            definition ? definition->tags : std::vector<std::string>{},
-            {collider.radius_x, collider.radius_y}});
-    }
-    auto slots = formations->layout(formation.type, context);
-    if (!context.members.empty() && slots.empty()) return false;
-    formation.slots = std::move(slots);
-    formation.dirty = false;
-
-    float bound = 0.f;
-    float height = 0.f;
-    for (const auto& slot : formation.slots) {
-        if (!squad_member_valid(reg, slot.unit)) continue;
-        const auto& collider = reg.get<AoeCollider>(slot.unit.entity);
-        bound = std::max(bound, glm::length(slot.local_offset) +
-            std::max(collider.radius_x, collider.radius_y));
-        height = std::max(height, collider.height);
-        if (formation.teleport_on_next_layout) {
-            const glm::vec2 position = squad_slot_world(
-                reg.get<AoePosition>(squad), formation, slot);
-            reg.get<AoePosition>(slot.unit.entity).value = position;
-            reg.get_or_emplace<AoePositionHistory>(
-                slot.unit.entity).previous = position;
-            set_facing_toward(reg.get<AoeFacing>(slot.unit.entity), formation.forward);
-        }
-    }
-    reg.emplace_or_replace<AoeCollider>(squad,
-        AoeCollider{bound, bound, std::max(height, Epsilon)});
-    formation.teleport_on_next_layout = false;
-    return true;
-}
-
-void handle_squad_layout_failure(EcsWorld& world, entt::entity squad,
-                                 std::uint64_t tick) {
-    auto& reg = world.reg();
-    auto& formation = reg.get<AoeSquadFormation>(squad);
-    auto& spawn = reg.get<AoeSquadSpawnState>(squad);
-    auto& state = reg.get<AoeSquadState>(squad);
-    auto& order = reg.get<AoeSquadOrder>(squad);
-    const auto& members = reg.get<AoeSquadMembers>(squad);
-    formation.dirty = false;
-    reject(world);
-
-    if (!formation.slots.empty()) {
-        constexpr std::string_view message =
-            "formation layout rejected; retaining previous slots";
-        if (std::find(spawn.errors.begin(), spawn.errors.end(), message) ==
-            spawn.errors.end())
-            spawn.errors.emplace_back(message);
-        return;
-    }
-
-    constexpr std::string_view message = "formation layout failed";
-    if (std::find(spawn.errors.begin(), spawn.errors.end(), message) ==
-        spawn.errors.end())
-        spawn.errors.emplace_back(message);
-    clear_squad_member_orders(reg, members, tick);
-    reg.remove<AoeNavigationPath>(squad);
-    order = {};
-    spawn.status = AoeSquadSpawnStatus::Failed;
-    state.phase = AoeSquadPhase::Failed;
 }
 
 bool slot_destination_valid(const AoeLogicMap* map, glm::vec2 destination,
@@ -827,18 +769,21 @@ void drive_squad_slots_full(EcsWorld& world, entt::entity squad,
     auto& reg = world.reg();
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto* layout = reg.try_get<AoeSquadLayoutState>(squad);
+    if (!layout || !layout->valid) return;
     const auto* map = world.try_resource<AoeLogicMap>();
     const std::uint64_t map_revision = map ? map->static_revision() : 0;
     const auto* traffic = reg.try_get<AoeSquadTrafficState>(squad);
     const float traffic_speed = traffic
         ? std::clamp(traffic->speed_scale, 0.f, 1.f) : 1.f;
-    for (const auto& slot : formation.slots) {
+    for (const auto& slot : layout->layout.slots) {
         if (!squad_member_valid(reg, slot.unit)) continue;
         const auto entity = slot.unit.entity;
         if (const auto* attack = reg.try_get<AoeAttackOrder>(entity);
             attack && target_valid(reg, attack->target))
             continue;
-        const glm::vec2 original = squad_slot_world(center, formation, slot);
+        const glm::vec2 original = aoe_formation_slot_world(
+            center, formation, slot);
         const glm::vec2 destination = resolve_elastic_slot_destination(
             world, squad, entity, slot, original);
         reg.remove<AoeAttackOrder, AoeAttackMoveOrder>(entity);
@@ -898,6 +843,8 @@ void drive_squad_slots_fallback(EcsWorld& world, entt::entity squad,
     auto& reg = world.reg();
     const auto& center = reg.get<AoePosition>(squad);
     const auto& formation = reg.get<AoeSquadFormation>(squad);
+    const auto* layout = reg.try_get<AoeSquadLayoutState>(squad);
+    if (!layout || !layout->valid) return;
     const auto& order = reg.get<AoeSquadOrder>(squad);
     const auto& state = reg.get<AoeSquadState>(squad);
     const auto mode = fallback_intent_mode(order, state);
@@ -922,7 +869,7 @@ void drive_squad_slots_fallback(EcsWorld& world, entt::entity squad,
     intent = {mode, episode_center, forward, speed_limit,
               order.revision, tick, false, false, true};
 
-    for (const auto& slot : formation.slots) {
+    for (const auto& slot : layout->layout.slots) {
         if (!squad_member_valid(reg, slot.unit)) continue;
         const auto entity = slot.unit.entity;
         if (reg.any_of<AoeAttackOrder, AoeEngagementApproach>(entity))
@@ -1270,12 +1217,14 @@ void squad_membership_cleanup_tick(EcsWorld& world) {
                 !membership || membership->squad != squad;
             if (remove && reg.valid(member.entity)) {
                 reg.remove<AoeSquadMember>(member.entity);
-                reg.remove<AoeSquadMoveSpeedLimit>(member.entity);
+                clear_squad_member_formation_route(
+                    reg, member.entity, squad);
             }
             return remove;
         });
         if (members.active.size() != old_size) formation.dirty = true;
         if (members.active.size() != old_size) {
+            invalidate_squad_layout(reg, squad);
             formation.arrival_reflow_done = false;
             reg.remove<AoeSquadArrivalRematchRequest>(squad);
             reg.remove<AoeSquadArrivalRematchResult>(squad);
@@ -1285,7 +1234,12 @@ void squad_membership_cleanup_tick(EcsWorld& world) {
             reg.get<AoeSquadSpawnState>(squad).status = AoeSquadSpawnStatus::Empty;
             reg.get<AoeSquadState>(squad).phase = AoeSquadPhase::Empty;
             reg.get<AoeSquadOrder>(squad) = {};
-            formation.slots.clear();
+            invalidate_squad_layout(reg, squad);
+            reg.remove<AoeFormationRouteSplitState,
+                       AoeFormationRoutePlan,
+                       AoeFormationRouteTrajectory,
+                       AoeFormationMovingState,
+                       AoeFormationNavCorridor>(squad);
         }
     }
 }
@@ -1442,9 +1396,16 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             spawn.status == AoeSquadSpawnStatus::Empty) continue;
         auto& members = reg.get<AoeSquadMembers>(squad);
         auto& formation = reg.get<AoeSquadFormation>(squad);
+        auto& layout = reg.get_or_emplace<AoeSquadLayoutState>(squad);
         auto& order = reg.get<AoeSquadOrder>(squad);
         auto& state = reg.get<AoeSquadState>(squad);
         auto& center = reg.get<AoePosition>(squad);
+        auto& combat = reg.get<AoeSquadCombatSettings>(squad);
+        auto& squad_collider = reg.get<AoeCollider>(squad);
+        auto& team = reg.get<AoeTeam>(squad);
+        AoeFormationSquadContext formation_context{
+            squad, tick, members, spawn, formation, layout, combat, order,
+            state, center, squad_collider, team};
         if (auto* result =
                 reg.try_get<AoeSquadArrivalRematchResult>(squad)) {
             if (result->valid && result->order_revision == order.revision &&
@@ -1481,14 +1442,9 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
             }
         }
 
-        if (formation.dirty && state.phase != AoeSquadPhase::Engaging) {
-            if (!rebuild_squad_layout(world, squad)) {
-                handle_squad_layout_failure(world, squad, tick);
-                continue;
-            }
-            if (state.phase == AoeSquadPhase::Forming)
-                state.phase = AoeSquadPhase::Idle;
-        }
+        if (AoeFullSquadLayoutModule::run(world, formation_context) ==
+            AoeFormationModuleResult::StopSquad)
+            continue;
 
         state.movement_speed = std::numeric_limits<float>::infinity();
         for (const auto& member : members.active)
@@ -1527,10 +1483,9 @@ void squad_control_tick(EcsWorld& world, std::uint64_t tick) {
         }
 
         if (formation.dirty) {
-            if (!rebuild_squad_layout(world, squad)) {
-                handle_squad_layout_failure(world, squad, tick);
+            if (AoeFullSquadLayoutModule::run(world, formation_context) ==
+                AoeFormationModuleResult::StopSquad)
                 continue;
-            }
         }
 
         if (state.phase == AoeSquadPhase::Regrouping) {
@@ -1738,20 +1693,32 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
                 ? attack_approach_destination(world, entity, goal.target)
                 : reg.get<AoePosition>(goal.target.entity).value;
         }
+        auto* path = reg.try_get<AoeNavigationPath>(entity);
         if (reg.all_of<AoeSquadMember>(entity)) {
             // Formation members consume direct provisional waypoints until
             // the squad-center route splitter supplies full member routes.
             // They never enter the unit Pathfinder while still attached to a
             // squad, including when directly approaching a combat target.
-            assign_direct_waypoint(
-                reg, entity, goal.destination, map_revision, tick);
+            const auto& member = reg.get<AoeSquadMember>(entity);
+            const auto* identity = reg.try_get<AoeGameplayIdentity>(entity);
+            const auto* route_owner =
+                reg.try_get<AoeFormationRouteOwner>(entity);
+            const bool owns_split_route = path && identity && route_owner &&
+                route_owner->squad == member.squad &&
+                route_owner->unit_instance_id == identity->instance_id &&
+                reg.valid(member.squad) &&
+                reg.all_of<AoeSquadOrder>(member.squad) &&
+                route_owner->squad_order_revision ==
+                    reg.get<AoeSquadOrder>(member.squad).revision;
+            if (!owns_split_route)
+                assign_direct_waypoint(
+                    reg, entity, goal.destination, map_revision, tick);
             if (state.state == UnitState::Idle) {
                 state.state = UnitState::Moving;
                 state.state_started_tick = tick;
             }
             continue;
         }
-        auto* path = reg.try_get<AoeNavigationPath>(entity);
         const float threshold = goal.target.entity != entt::null
             ? nav_settings.slot_repath_distance : Epsilon;
         bool needs_path = !path ||
@@ -1815,54 +1782,52 @@ void navigation_tick(EcsWorld& world, std::uint64_t tick) {
 }
 
 
-void movement_intent_tick(EcsWorld& world, std::uint64_t tick) {
+void advance_waypoint_cursors(EcsWorld& world) {
     auto& reg = world.reg();
-    for (const auto entity : reg.view<AoePathMotionRequest>())
-        reg.get<AoePathMotionRequest>(entity).valid = false;
-
-    for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMovement,
-                                      AoeMoveGoal, AoeNavigationPath,
-                                      AoeActionState>()) {
-        const auto& state = reg.get<AoeActionState>(entity);
-        const auto& path = reg.get<AoeNavigationPath>(entity);
-        if (state.state == UnitState::Attacking || is_terminal(state.state) ||
-            path.no_path || path.current >= path.waypoints.size())
+    const float fixed_dt = static_cast<float>(
+        world.resource<AoeGameplaySettings>().fixed_dt);
+    for (const auto entity : reg.view<AoePosition, AoeMoveGoal,
+                                      AoeNavigationPath, AoeActionState>()) {
+        const auto& action = reg.get<AoeActionState>(entity);
+        auto& path = reg.get<AoeNavigationPath>(entity);
+        if (action.state == UnitState::Attacking || is_terminal(action.state) ||
+            path.no_path)
             continue;
-        const auto& position = reg.get<AoePosition>(entity);
-        const auto& goal = reg.get<AoeMoveGoal>(entity);
-        const glm::vec2 delta = path.waypoints[path.current] - position.value;
-        const float distance = glm::length(delta);
-        if (!(distance > .01f)) continue;
-        const glm::vec2 direction = delta / distance;
-        float max_speed = reg.get<AoeMovement>(entity).speed;
-        if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity))
-            max_speed = std::min(max_speed, limit->value);
-        float remaining = distance;
-        if (goal.target.entity != entt::null &&
-            path.current + 1 >= path.waypoints.size() &&
-            target_valid(reg, goal.target)) {
-            remaining = std::max(0.f, aoe_surface_gap(
-                position, reg.get<AoeCollider>(entity),
-                reg.get<AoePosition>(goal.target.entity),
-                reg.get<AoeCollider>(goal.target.entity)) -
-                goal.stopping_distance);
-        }
-        float speed = std::min(max_speed, remaining / .25f);
-        if (const auto* locomotion = reg.try_get<AoeLocomotionState>(entity);
-            locomotion && glm::length(locomotion->velocity) > Epsilon) {
-            const float alignment = glm::dot(
-                glm::normalize(locomotion->velocity), direction);
-            speed *= std::clamp((alignment + .25f) / 1.25f, .1f, 1.f);
-        }
-        AoeMovementIntentKind kind = AoeMovementIntentKind::Move;
-        if (reg.all_of<AoeEngagementApproach>(entity))
-            kind = AoeMovementIntentKind::AttackApproach;
-        else if (reg.all_of<AoeSquadMember>(entity))
-            kind = AoeMovementIntentKind::FormationSlot;
-        reg.emplace_or_replace<AoePathMotionRequest>(entity,
-            AoePathMotionRequest{kind, direction * speed,
-                path.waypoints[path.current], max_speed,
-                path.request_sequence, tick, true});
+        const glm::vec2 position = reg.get<AoePosition>(entity).value;
+        const auto* formation_route =
+            reg.try_get<AoeFormationMemberRouteProgress>(entity);
+        const auto passed_formation_waypoint = [&](std::size_t index) {
+            if (!formation_route || index >= path.waypoints.size() ||
+                index + 1 >= path.waypoints.size())
+                return false;
+            const glm::vec2 start = index == 0
+                ? formation_route->origin : path.waypoints[index - 1];
+            const glm::vec2 segment = path.waypoints[index] - start;
+            const float length = glm::length(segment);
+            if (!(length > Epsilon)) return true;
+            const glm::vec2 direction = segment / length;
+            const glm::vec2 beyond = position - path.waypoints[index];
+            if (glm::dot(beyond, direction) < 0.f) return false;
+            const float lateral = std::abs(
+                direction.x * beyond.y - direction.y * beyond.x);
+            float capture = .01f;
+            if (const auto* collider = reg.try_get<AoeCollider>(entity))
+                capture = std::max(capture,
+                    std::max(collider->radius_x, collider->radius_y));
+            if (const auto* movement = reg.try_get<AoeMovement>(entity))
+                capture = std::max(capture,
+                    movement->speed * std::max(0.f, fixed_dt) * 2.f);
+            return lateral <= capture;
+        };
+        // Consume every coincident intermediate waypoint before the movement
+        // intent phase. A turn-limited Formation member may pass beside a
+        // dense waypoint without entering the old 0.01 radius; its directed
+        // segment plane and a bounded lateral capture corridor prevent it
+        // from orbiting that stale waypoint forever.
+        while (path.current + 1 < path.waypoints.size() &&
+               (glm::length(path.waypoints[path.current] - position) <= .01f ||
+                passed_formation_waypoint(path.current)))
+            ++path.current;
     }
 }
 
@@ -2046,6 +2011,13 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             ? displacement / dt : glm::vec2{0.f};
         locomotion.actual_speed = glm::length(locomotion.velocity);
         locomotion.distance_travelled += glm::length(displacement);
+#if defined(GLD_ENABLE_PERFORMANCE_MONITORING)
+        auto& performance =
+            world.resource_or_add<AoeGameplayPerformanceDiagnostics>();
+        performance.movement_actual_speed_sum += locomotion.actual_speed;
+        if (safety < 1.f - Epsilon)
+            ++performance.movement_safe_limited;
+#endif
         const bool backing = valid_decision &&
             decision->mode == AoeGlobalMotionMode::Backing;
         if (locomotion.actual_speed > navigation.steering_stalled_speed &&
@@ -2119,7 +2091,8 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             if (auto* locomotion = reg.try_get<AoeLocomotionState>(entity))
                 locomotion->distance_travelled += snapped;
         }
-        reg.remove<AoeMoveGoal, AoeNavigationPath>(entity);
+        reg.remove<AoeMoveGoal, AoeNavigationPath,
+                   AoeFormationMoveGoalOwner>(entity);
         auto& state = reg.get<AoeActionState>(entity);
         if (!is_terminal(state.state)) {
             state.state = UnitState::Idle;
@@ -2190,6 +2163,8 @@ void fixed_before_squad_pathfinder(EcsWorld& world, std::uint64_t tick) {
         [&] { squad_spawn_resolution_tick(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, static_obstacle_index_ms,
         [&] { aoe_map_static_obstacle_system(world); });
+    GLD_AOE_GAMEPLAY_PHASE(world, nav_mesh_build_ms,
+        [&] { aoe_nav_mesh_build_system(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, dynamic_obstacle_index_ms,
         [&] { aoe_dynamic_obstacle_index_system(world); });
     GLD_AOE_GAMEPLAY_PHASE(world, squad_command_ms,
@@ -2212,12 +2187,12 @@ void fixed_before_unit_pathfinder(EcsWorld& world, std::uint64_t tick) {
 }
 
 void fixed_after_unit_pathfinder_before_local(
-    EcsWorld& world, std::uint64_t tick) {
-    GLD_AOE_GAMEPLAY_PHASE(world, movement_intent_ms,
-        [&] { movement_intent_tick(world, tick); });
+    EcsWorld& world, std::uint64_t) {
+    advance_waypoint_cursors(world);
 }
 
 void fixed_after_global(EcsWorld& world, std::uint64_t tick) {
+    aoe_apply_final_unit_movement_constraints(world, tick);
     GLD_AOE_GAMEPLAY_PHASE(world, motion_safety_ms,
         [&] { global_motion_safety_tick(world, tick); });
     GLD_AOE_GAMEPLAY_PHASE(world, movement_ms,
@@ -2800,7 +2775,7 @@ void aoe_map_static_obstacle_system(EcsWorld& world) {
     for (auto it = bindings.entities.begin(); it != bindings.entities.end();) {
         if (!reg.valid(it->first) ||
             !reg.all_of<AoeMapStaticObstacle, AoePosition>(it->first)) {
-            map->remove_static_obstacle(it->second);
+            map->remove_runtime_static_obstacle(it->second);
             it = bindings.entities.erase(it);
         } else ++it;
     }
@@ -2812,16 +2787,20 @@ void aoe_map_static_obstacle_system(EcsWorld& world) {
         desc.center = center;
         desc.half_extents = component.half_extents;
         desc.radius = component.radius;
-        const bool changed = component.obstacle_id == 0 ||
+        const bool registered_runtime = component.obstacle_id != 0 &&
+            map->static_obstacle_kind(component.obstacle_id) ==
+                AoeStaticObstacleKind::Runtime;
+        const bool changed = !registered_runtime ||
             component.registered_center != center ||
             component.registered_shape != component.shape ||
             component.registered_half_extents != component.half_extents ||
             component.registered_radius != component.radius;
         if (!changed) continue;
         if (!component.obstacle_id)
-            component.obstacle_id = map->add_static_obstacle(desc);
-        else if (!map->update_static_obstacle(component.obstacle_id, desc))
-            component.obstacle_id = map->add_static_obstacle(desc);
+            component.obstacle_id = map->add_runtime_static_obstacle(desc);
+        else if (!map->update_runtime_static_obstacle(
+                     component.obstacle_id, desc))
+            component.obstacle_id = map->add_runtime_static_obstacle(desc);
         if (!component.obstacle_id) continue;
         bindings.entities[entity] = component.obstacle_id;
         component.registered_center = center;
@@ -2857,11 +2836,72 @@ void aoe_dynamic_obstacle_index_system(EcsWorld& world) {
     index.finalize(*map);
 }
 
+namespace {
+std::optional<AoeFormationLayout> validate_formation_layout(
+    std::optional<AoeFormationLayout> candidate,
+    const AoeFormationContext& context,
+    std::optional<float> maximum_width = std::nullopt) {
+    if (!candidate || candidate->slots.size() != context.members.size())
+        return std::nullopt;
+    const auto& bounds = candidate->bounds;
+    if (!std::isfinite(bounds.local_min.x) ||
+        !std::isfinite(bounds.local_min.y) ||
+        !std::isfinite(bounds.local_max.x) ||
+        !std::isfinite(bounds.local_max.y) ||
+        bounds.local_min.x > bounds.local_max.x ||
+        bounds.local_min.y > bounds.local_max.y)
+        return std::nullopt;
+    if (maximum_width &&
+        (!std::isfinite(*maximum_width) || *maximum_width <= 0.f ||
+         bounds.width() > *maximum_width + 1e-5f))
+        return std::nullopt;
+
+    std::unordered_map<entt::entity, const AoeFormationMemberInfo*> members;
+    members.reserve(context.members.size());
+    for (const auto& member : context.members) {
+        if (member.unit.entity == entt::null ||
+            !std::isfinite(member.collision_radius.x) ||
+            !std::isfinite(member.collision_radius.y) ||
+            member.collision_radius.x < 0.f ||
+            member.collision_radius.y < 0.f ||
+            !members.emplace(member.unit.entity, &member).second)
+            return std::nullopt;
+    }
+    std::unordered_set<entt::entity> seen;
+    seen.reserve(candidate->slots.size());
+    for (const auto& slot : candidate->slots) {
+        const auto member = members.find(slot.unit.entity);
+        if (member == members.end() ||
+            member->second->unit.instance_id != slot.unit.instance_id ||
+            !seen.emplace(slot.unit.entity).second ||
+            !std::isfinite(slot.local_offset.x) ||
+            !std::isfinite(slot.local_offset.y))
+            return std::nullopt;
+        const glm::vec2 low =
+            slot.local_offset - member->second->collision_radius;
+        const glm::vec2 high =
+            slot.local_offset + member->second->collision_radius;
+        if (low.x < bounds.local_min.x - 1e-5f ||
+            low.y < bounds.local_min.y - 1e-5f ||
+            high.x > bounds.local_max.x + 1e-5f ||
+            high.y > bounds.local_max.y + 1e-5f)
+            return std::nullopt;
+    }
+    if (candidate->slots.empty() &&
+        (bounds.local_min != glm::vec2(0.f) ||
+         bounds.local_max != glm::vec2(0.f)))
+        return std::nullopt;
+    return candidate;
+}
+} // namespace
+
 void AoeFormationRegistry::bind_erased(
-    AoeFormationType type, LayoutFn function) {
-    if (!function)
-        throw std::invalid_argument("formation binding requires a function");
-    if (!entries_.emplace(type, function).second)
+    AoeFormationType type, GenerateFn generate,
+    GenerateForWidthFn generate_for_width) {
+    if (!generate || !generate_for_width)
+        throw std::invalid_argument(
+            "formation binding requires natural and width-constrained generators");
+    if (!entries_.emplace(type, Entry{generate, generate_for_width}).second)
         throw std::invalid_argument("duplicate formation binding");
 }
 
@@ -2869,29 +2909,23 @@ bool AoeFormationRegistry::contains(AoeFormationType type) const {
     return entries_.contains(type);
 }
 
-std::vector<AoeFormationSlot> AoeFormationRegistry::layout(
+std::optional<AoeFormationLayout> AoeFormationRegistry::generate(
     AoeFormationType type, const AoeFormationContext& context) const {
     const auto it = entries_.find(type);
-    if (it == entries_.end()) return {};
-    auto result = it->second(context);
-    if (result.size() != context.members.size()) return {};
-    for (std::size_t i = 0; i < result.size(); ++i) {
-        const auto& slot = result[i];
-        if (slot.unit.entity == entt::null ||
-            !std::isfinite(slot.local_offset.x) ||
-            !std::isfinite(slot.local_offset.y)) return {};
-        bool belongs = false;
-        for (const auto& member : context.members)
-            if (member.unit.entity == slot.unit.entity &&
-                member.unit.instance_id == slot.unit.instance_id) {
-                belongs = true; break;
-            }
-        if (!belongs) return {};
-        for (std::size_t j = 0; j < i; ++j)
-            if (result[j].unit.entity == slot.unit.entity &&
-                result[j].unit.instance_id == slot.unit.instance_id) return {};
-    }
-    return result;
+    if (it == entries_.end()) return std::nullopt;
+    return validate_formation_layout(it->second.generate(context), context);
+}
+
+std::optional<AoeFormationLayout> AoeFormationRegistry::generate_for_width(
+    AoeFormationType type, const AoeFormationContext& context,
+    float maximum_width) const {
+    if (!std::isfinite(maximum_width) || maximum_width <= 0.f)
+        return std::nullopt;
+    const auto it = entries_.find(type);
+    if (it == entries_.end()) return std::nullopt;
+    return validate_formation_layout(
+        it->second.generate_for_width(context, maximum_width),
+        context, maximum_width);
 }
 
 std::optional<AoeUnitTarget> dispatch_aoe_target(
@@ -3106,7 +3140,10 @@ entt::entity spawn_aoe_gameplay_squad(
         AoeSquadSpawnStatus::Pending,
         static_cast<std::uint32_t>(requested)});
     reg.emplace<AoeSquadFormation>(squad, AoeSquadFormation{
-        options.formation, options.formation_spacing, forward, {}, true, true});
+        .type = options.formation,
+        .spacing = options.formation_spacing,
+        .forward = forward});
+    reg.emplace<AoeSquadLayoutState>(squad);
     reg.emplace<AoeSquadCombatSettings>(squad, AoeSquadCombatSettings{
         options.acquisition_strategy, options.acquisition_radius,
         options.disengage_radius});
@@ -3224,7 +3261,10 @@ bool disband_aoe_gameplay_squad(EcsWorld& world, entt::entity squad) {
     for (const auto& member : members.active)
         if (reg.valid(member.entity)) {
             reg.remove<AoeSquadMember>(member.entity);
-            reg.remove<AoeSquadMoveSpeedLimit>(member.entity);
+            reg.remove<AoeSquadMoveSpeedLimit, AoeFormationRouteOwner,
+                       AoeFormationMoveGoalOwner,
+                       AoeFormationMemberRouteProgress>(member.entity);
+            reg.remove<AoeMoveGoal, AoeNavigationPath>(member.entity);
         }
     reg.destroy(squad);
     return true;
@@ -3305,7 +3345,9 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
         reg.emplace_or_replace<AoeLevel>(entity, AoeLevel{definition->level});
         reg.emplace_or_replace<AoeCollider>(entity, AoeCollider{
             definition->collision.radius_x, definition->collision.radius_y, definition->collision.height});
-        reg.emplace_or_replace<AoeMovement>(entity, AoeMovement{definition->movement.speed});
+        reg.emplace_or_replace<AoeMovement>(entity, AoeMovement{
+            definition->movement.speed,
+            definition->movement.rotation_speed_radians_per_second});
         reg.emplace_or_replace<AoeLocomotionState>(entity);
         reg.emplace_or_replace<AoeTeam>(entity, AoeTeam{request.options.team_id});
         const int direction_count = std::max(1, request.options.direction_count);
@@ -3322,6 +3364,9 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
             instance, mix64(settings.random_seed ^ instance)});
         reg.remove<AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,
                    AoeNavigationPath, AoeLocalAvoidanceState,
+                   AoeUnitMovementIntentState,
+                   AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
+                   AoeFormationMemberRouteProgress,
                    AoeRecyclePending>(entity);
         completed.push_back(entity);
     }
@@ -3347,6 +3392,7 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
                    AoeHealth, AoeLevel, AoeCollider, AoePosition,
                    AoePositionHistory, AoeMovement, AoeTeam,
                    AoeLocomotionState, AoePathMotionRequest,
+                   AoeUnitMovementIntentState,
                    AoeMovementIntent, AoeLocalAvoidanceState,
                    AoeGlobalMotionState,
                    AoeGlobalMotionDecision,
@@ -3355,6 +3401,8 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
                    AoeAttackOrder, AoeAttackMoveOrder, AoeMoveGoal,
                    AoeEngagementApproach, AoeNavigationPath, AoeSquadMember,
                    AoeSquadMoveSpeedLimit, FallbackFormationOwnedMovement,
+                   AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
+                   AoeFormationMemberRouteProgress,
                    AoeMapStaticObstacle,
                    Transform>(entity);
         reg.remove<AoeRecyclePending>(entity);
