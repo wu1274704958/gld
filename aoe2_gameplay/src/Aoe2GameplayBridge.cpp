@@ -11,13 +11,30 @@ namespace gld::ecs::aoe2_gameplay {
 using namespace gld::ecs::aoe2;
 
 namespace {
+constexpr float PresentationMotionEpsilon = 1e-4f;
+
+bool visually_moving(
+    const aoe::AoeActionState& state,
+    const aoe::AoeLocomotionState* locomotion,
+    const aoe::AoeLocalAvoidanceState* avoidance) {
+    if (state.state != aoe::UnitState::Moving ||
+        (avoidance && avoidance->escape_steering))
+        return false;
+    // Presentation-only entities may legitimately omit locomotion. Gameplay
+    // units have it, and their measured speed is the visual source of truth.
+    return !locomotion ||
+        (std::isfinite(locomotion->actual_speed) &&
+         locomotion->actual_speed > PresentationMotionEpsilon);
+}
+
 std::string desired_animation(const aoe::AoeUnitDefinition& definition,
                                const aoe::AoeActionState& state,
+                               const aoe::AoeLocomotionState* locomotion,
                                const aoe::AoeLocalAvoidanceState* avoidance) {
     const auto& presentation = definition.presentation;
     switch (state.state) {
     case aoe::UnitState::Moving: {
-        if (avoidance && avoidance->escape_steering)
+        if (!visually_moving(state, locomotion, avoidance))
             return presentation.animation("idle");
         const auto moving = presentation.animation("moving");
         return moving.empty() ? presentation.animation("idle") : moving;
@@ -61,9 +78,9 @@ float update_presentation_playback(
         snapshot.sequence != state.sequence ||
         snapshot.critical != state.critical ||
         snapshot.requested_animation != animation;
-    const bool visually_moving = state.state == aoe::UnitState::Moving &&
-        (!avoidance || !avoidance->escape_steering);
-    if (visually_moving) {
+    const bool moving_visually =
+        visually_moving(state, locomotion, avoidance);
+    if (moving_visually) {
         if (locomotion && locomotion->effective_max_speed > 0.f &&
             std::isfinite(locomotion->distance_travelled)) {
             const double distance = std::max(
@@ -316,7 +333,7 @@ void aoe2_gameplay_presentation_system(EcsWorld& world) {
         const auto* avoidance =
             reg.try_get<aoe::AoeLocalAvoidanceState>(entity);
         const std::string animation = desired_animation(
-            *definition, state, avoidance);
+            *definition, state, locomotion, avoidance);
         const bool frozen_idle_terminal =
             (state.state == aoe::UnitState::Dying &&
              definition->presentation.animation("death").empty()) ||

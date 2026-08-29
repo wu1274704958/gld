@@ -190,6 +190,15 @@ std::shared_ptr<AoeUnitDefinition> parse_definition(const json& source) {
             result->movement.rotation_speed_radians_per_second =
                 glm::radians(degrees);
         }
+        if (source.at("movement").contains("catch_up_speed_ratio")) {
+            const float ratio = finite_number(
+                source.at("movement").at("catch_up_speed_ratio"),
+                "movement.catch_up_speed_ratio");
+            if (ratio < 1.f)
+                throw std::runtime_error(
+                    "movement.catch_up_speed_ratio must be >= 1");
+            result->movement.catch_up_speed_ratio = ratio;
+        }
         const auto& lifecycle = source.at("lifecycle");
         result->lifecycle.death_duration_seconds = non_negative(
             lifecycle.at("death_duration_seconds"), "lifecycle.death_duration_seconds");
@@ -446,7 +455,8 @@ void clear_squad_member_formation_route(
         reg.remove<AoeMoveGoal, AoeNavigationPath>(entity);
     reg.remove<AoeSquadMoveSpeedLimit, FallbackFormationOwnedMovement,
                AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
-               AoeFormationMemberRouteProgress>(entity);
+               AoeFormationMemberRouteProgress,
+               AoeFormationFollow>(entity);
 }
 
 void detach_squad_member(entt::registry& reg, entt::entity entity) {
@@ -498,6 +508,21 @@ void stop_squad_member(entt::registry& reg, entt::entity entity,
     cancel_orders(reg, entity);
     if (remove_limit) reg.remove<AoeSquadMoveSpeedLimit>(entity);
     reset_member_action(reg, entity, tick);
+}
+
+bool formation_arrival_owned(const entt::registry& reg,
+                             entt::entity entity) {
+    const auto* route = reg.try_get<AoeFormationRouteOwner>(entity);
+    const auto* goal = reg.try_get<AoeFormationMoveGoalOwner>(entity);
+    if (!route || !goal || route->squad != goal->squad ||
+        route->squad_order_revision != goal->squad_order_revision ||
+        route->unit_instance_id != goal->unit_instance_id ||
+        !reg.valid(route->squad)) {
+        return false;
+    }
+
+    const auto* moving = reg.try_get<AoeFormationMovingState>(route->squad);
+    return moving && moving->order_revision == route->squad_order_revision;
 }
 
 void assign_engagement_approach(entt::registry& reg, entt::entity entity,
@@ -1238,6 +1263,7 @@ void squad_membership_cleanup_tick(EcsWorld& world) {
             reg.remove<AoeFormationRouteSplitState,
                        AoeFormationRoutePlan,
                        AoeFormationRouteTrajectory,
+                       AoeFormationFollowPlan,
                        AoeFormationMovingState,
                        AoeFormationNavCorridor>(squad);
         }
@@ -1935,6 +1961,10 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
     for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMovement,
                                       AoeMoveGoal, AoeNavigationPath,
                                       AoeActionState, AoeFacing>()) {
+        // Follow-owned movement is integrated below from its local route
+        // sample. Temporary column leaders retain their dormant natural path,
+        // but that path must not constrain or steer the active follow request.
+        if (reg.all_of<AoeFormationFollow>(entity)) continue;
         auto& locomotion = reg.get_or_emplace<AoeLocomotionState>(entity);
         auto& state = reg.get<AoeActionState>(entity);
         auto& path = reg.get<AoeNavigationPath>(entity);
@@ -1962,6 +1992,20 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
                 : reg.get<AoePosition>(goal.target.entity).value;
         }
         if (path.current >= path.waypoints.size()) {
+            // A Formation route remains a historical sampling source until
+            // CommandCompletion confirms that every follower has reached its
+            // final slot. Generic arrival must not tear it down when only the
+            // column leader has arrived.
+            if (formation_arrival_owned(reg, entity)) {
+                if (state.state != UnitState::Idle)
+                    reset_member_action(reg, entity, tick);
+                else {
+                    locomotion.velocity = {0.f, 0.f};
+                    locomotion.actual_speed = 0.f;
+                    locomotion.stalled_ticks = 0;
+                }
+                continue;
+            }
             arrived.push_back(entity);
             continue;
         }
@@ -1980,6 +2024,9 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             if (!final_waypoint) {
                 ++path.current;
                 state.state = UnitState::Moving;
+            } else if (formation_arrival_owned(reg, entity)) {
+                path.current = path.waypoints.size();
+                reset_member_action(reg, entity, tick);
             } else {
                 arrived.push_back(entity);
             }
@@ -1996,7 +2043,15 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
             ? std::clamp(decision->safe_fraction, 0.f, 1.f) : 1.f;
         velocity *= safety;
         float speed = glm::length(velocity);
-        const float max_speed = reg.get<AoeMovement>(entity).speed;
+        const auto& movement = reg.get<AoeMovement>(entity);
+        float max_speed = movement.speed;
+        // A path request above the base speed is a formation catch-up
+        // permission bounded by the unit's own configured ratio.
+        if (request && request->max_speed > movement.speed + Epsilon)
+            max_speed = std::min(
+                movement.speed *
+                    std::max(1.f, movement.catch_up_speed_ratio),
+                request->max_speed);
         if (speed > max_speed && speed > Epsilon) {
             velocity *= max_speed / speed;
             speed = max_speed;
@@ -2080,6 +2135,76 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         state.state = UnitState::Moving;
     }
 
+    // Formation followers intentionally have no NavigationPath or MoveGoal.
+    // MovingControl has already converted their route-distance sample into a
+    // speed/turn-limited PathMotionRequest, so this branch only performs the
+    // common final velocity safety and position integration.
+    for (const auto entity : reg.view<
+             AoeFormationFollow, AoePosition, AoeCollider, AoeMovement,
+             AoeActionState, AoeFacing, AoePathMotionRequest>()) {
+        auto& locomotion = reg.get_or_emplace<AoeLocomotionState>(entity);
+        auto& state = reg.get<AoeActionState>(entity);
+        if (state.state == UnitState::Attacking || is_terminal(state.state)) {
+            locomotion.velocity = {0.f, 0.f};
+            locomotion.stalled_ticks = 0;
+            continue;
+        }
+        const auto& request = reg.get<AoePathMotionRequest>(entity);
+        if (!request.valid || request.produced_tick != tick) {
+            locomotion.velocity = {0.f, 0.f};
+            locomotion.actual_speed = 0.f;
+            continue;
+        }
+        auto* decision = reg.try_get<AoeGlobalMotionDecision>(entity);
+        const bool valid_decision = decision && decision->valid &&
+                                    decision->produced_tick == tick;
+        glm::vec2 velocity = valid_decision
+            ? decision->velocity : request.velocity;
+        const float safety = valid_decision
+            ? std::clamp(decision->safe_fraction, 0.f, 1.f) : 1.f;
+        velocity *= safety;
+        float speed = glm::length(velocity);
+        const auto& movement = reg.get<AoeMovement>(entity);
+        // FormationSlot requests may intentionally exceed the base speed as a
+        // catch-up permission; keep the unit's own ratio as the hard ceiling.
+        const float movement_ceiling =
+            request.kind == AoeMovementIntentKind::FormationSlot
+                ? movement.speed *
+                      std::max(1.f, movement.catch_up_speed_ratio)
+                : movement.speed;
+        const float max_speed = std::min(
+            movement_ceiling, std::max(0.f, request.max_speed));
+        if (speed > max_speed && speed > Epsilon) {
+            velocity *= max_speed / speed;
+            speed = max_speed;
+        }
+
+        auto& position = reg.get<AoePosition>(entity);
+        const glm::vec2 delta = request.local_goal - position.value;
+        const float distance = glm::length(delta);
+        glm::vec2 displacement = velocity * dt;
+        if (distance > Epsilon && glm::length(displacement) > distance &&
+            glm::dot(glm::normalize(displacement), delta / distance) > .9f)
+            displacement = delta;
+        position.value += displacement;
+        locomotion.velocity = dt > 0.f
+            ? displacement / dt : glm::vec2{0.f};
+        locomotion.effective_max_speed = max_speed;
+        locomotion.actual_speed = glm::length(locomotion.velocity);
+        locomotion.distance_travelled += glm::length(displacement);
+        if (locomotion.actual_speed > navigation.steering_stalled_speed) {
+            locomotion.stalled_ticks = 0;
+            set_locomotion_facing(reg.get<AoeFacing>(entity), locomotion,
+                locomotion.velocity, navigation, diagnostics);
+        } else if (glm::length(request.velocity) >
+                   navigation.steering_stalled_speed) {
+            ++locomotion.stalled_ticks;
+        } else {
+            locomotion.stalled_ticks = 0;
+        }
+        state.state = UnitState::Moving;
+    }
+
     for (const auto entity : arrived) {
         if (!reg.valid(entity)) continue;
         if (const auto* goal = reg.try_get<AoeMoveGoal>(entity);
@@ -2100,7 +2225,7 @@ void movement_tick(EcsWorld& world, std::uint64_t tick) {
         }
     }
     for (const auto entity : reg.view<AoeLocomotionState>(
-             entt::exclude<AoeMoveGoal>)) {
+             entt::exclude<AoeMoveGoal, AoeFormationFollow>)) {
         auto& locomotion = reg.get<AoeLocomotionState>(entity);
         locomotion.velocity = {0.f, 0.f};
         locomotion.actual_speed = 0.f;
@@ -3263,7 +3388,8 @@ bool disband_aoe_gameplay_squad(EcsWorld& world, entt::entity squad) {
             reg.remove<AoeSquadMember>(member.entity);
             reg.remove<AoeSquadMoveSpeedLimit, AoeFormationRouteOwner,
                        AoeFormationMoveGoalOwner,
-                       AoeFormationMemberRouteProgress>(member.entity);
+                       AoeFormationMemberRouteProgress,
+                       AoeFormationFollow>(member.entity);
             reg.remove<AoeMoveGoal, AoeNavigationPath>(member.entity);
         }
     reg.destroy(squad);
@@ -3347,7 +3473,8 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
             definition->collision.radius_x, definition->collision.radius_y, definition->collision.height});
         reg.emplace_or_replace<AoeMovement>(entity, AoeMovement{
             definition->movement.speed,
-            definition->movement.rotation_speed_radians_per_second});
+            definition->movement.rotation_speed_radians_per_second,
+            definition->movement.catch_up_speed_ratio});
         reg.emplace_or_replace<AoeLocomotionState>(entity);
         reg.emplace_or_replace<AoeTeam>(entity, AoeTeam{request.options.team_id});
         const int direction_count = std::max(1, request.options.direction_count);
@@ -3367,6 +3494,7 @@ void spawn_aoe_gameplay_unit_system(EcsWorld& world) {
                    AoeUnitMovementIntentState,
                    AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
                    AoeFormationMemberRouteProgress,
+                   AoeFormationFollow,
                    AoeRecyclePending>(entity);
         completed.push_back(entity);
     }
@@ -3403,6 +3531,7 @@ void aoe_gameplay_recycle_system(EcsWorld& world) {
                    AoeSquadMoveSpeedLimit, FallbackFormationOwnedMovement,
                    AoeFormationRouteOwner, AoeFormationMoveGoalOwner,
                    AoeFormationMemberRouteProgress,
+                   AoeFormationFollow,
                    AoeMapStaticObstacle,
                    Transform>(entity);
         reg.remove<AoeRecyclePending>(entity);

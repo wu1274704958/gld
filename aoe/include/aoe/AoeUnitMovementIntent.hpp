@@ -42,6 +42,14 @@ glm::vec2 aoe_constrain_unit_velocity(
     float max_speed, float rotation_speed_radians_per_second, float fixed_dt,
     bool* turn_limited = nullptr);
 
+// Same rule, but reuses the caller's persistent intent state so the cosine
+// and sine turn cache carries across ticks instead of being rebuilt per call.
+glm::vec2 aoe_constrain_unit_velocity_cached(
+    AoeUnitMovementIntentState& turn, glm::vec2 previous_velocity,
+    glm::vec2 candidate_velocity, float max_speed,
+    float rotation_speed_radians_per_second, float fixed_dt,
+    bool* turn_limited = nullptr);
+
 // Common post-GlobalMotion constraint. Kept with the intent phase so custom
 // Local Avoidance and Global Motion plugins cannot bypass Unit speed/turning.
 void aoe_apply_final_unit_movement_constraints(

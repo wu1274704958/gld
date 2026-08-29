@@ -162,7 +162,11 @@ if(GLM_FOUND AND GLFW3_FOUND)
         aoe/src/AoeSquadEngagement.cpp
         aoe/src/AoeSquadEngagementFallback.cpp
         aoe/src/AoeFormation.cpp
+        aoe/src/AoeFormationFollow.cpp
+        aoe/src/AoeFormationWidthSchedule.cpp
         aoe/src/AoeFormationModular.cpp
+        aoe/src/AoeFormationMovingControl.cpp
+        aoe/src/AoeFormationRouteSampling.cpp
         aoe/src/AoeFormationFallback.cpp
         aoe/src/AoeSquadArrivalRematch.cpp
         aoe/src/AoeSquadArrivalRematchFallback.cpp
@@ -341,6 +345,15 @@ if(GLM_FOUND AND GLFW3_FOUND)
     CreateExample(DIR aoe_gameplay_squad_preview FILES main.cpp)
     target_link_libraries(aoe_gameplay_squad_preview
         gld_aoe2_gameplay_bridge gld_aoe_gpu_motion)
+    if(MSVC)
+        target_compile_options(aoe_gameplay_squad_preview PRIVATE /bigobj)
+    endif()
+
+    CreateExample(DIR aoe_formation_route_preview FILES main.cpp)
+    target_link_libraries(aoe_formation_route_preview gld_aoe_gameplay)
+    if(MSVC)
+        target_compile_options(aoe_formation_route_preview PRIVATE /bigobj)
+    endif()
 
     CreateExample(DIR aoe2x_pathfinding_preview FILES main.cpp)
     target_include_directories(aoe2x_pathfinding_preview PRIVATE

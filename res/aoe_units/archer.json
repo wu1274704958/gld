@@ -10,7 +10,7 @@
     { "class_id": 4, "amount": 0.0 }
   ],
   "collision": { "radius_x": 0.2, "radius_y": 0.2, "height": 2.0 },
-  "movement": { "speed": 0.96 },
+  "movement": { "speed": 0.96, "catch_up_speed_ratio": 1.15 },
   "target_acquisition": {
     "strategy_id": "nearest_enemy",
     "radius": 6.0,

@@ -9,6 +9,8 @@
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
 #include <aoe/AoeNavMesh.hpp>
+#include <aoe/AoeFormationFollow.hpp>
+#include <aoe/AoeFormationRouteDebug.hpp>
 #include <aoe/AoeFormationRoutePlan.hpp>
 
 namespace gld::ecs {
@@ -138,10 +140,12 @@ struct AoeFormationRouteSplitState {
 };
 
 struct AoeFormationRouteSplitSettings {
-    // Reserved for a later localized wide/narrow/wide layout schedule.  The
-    // first snake-route implementation selects one layout for the corridor.
     std::uint32_t compression_portal_window = 2;
     float portal_band_half_width = .1f;
+    float width_safety_distance = .25f;
+    // Route progress slows through high-ratio segments, so this bounds layout
+    // offset per Squad progress without allowing a unit to exceed its speed.
+    float maximum_layout_change_per_progress = 2.5f;
     float path_validation_epsilon = .001f;
     float maximum_center_step = .5f;
     float maximum_rotation_step_degrees = 10.f;
@@ -187,6 +191,12 @@ struct AoeFormationMovingState {
 struct AoeFormationMovingSettings {
     float allowed_progress_lead = .25f;
     float progress_epsilon = .0001f;
+    // Proportional spacing-error correction (world units per second of speed
+    // bias per world unit of gap error) and the dead zone where no bias is
+    // applied. Keeps a follow chain from collapsing or stretching during
+    // transients while the progress anchor governs the long-term speed.
+    float spacing_gain = 2.f;
+    float spacing_tolerance = .05f;
 };
 
 struct AoeFormationMovingDiagnostics {
@@ -281,6 +291,22 @@ struct AoeSynchronizedFormationMovingControlModule {
         EcsWorld&, AoeFormationSquadContext&);
 };
 
+// Completes a synchronized route only after every natural slot has arrived,
+// then atomically releases RouteSplit/Follow ownership for the whole squad.
+struct AoeRouteCommandCompletionModule {
+    using role = AoeFormationCommandCompletionRole;
+    static constexpr std::string_view name = "route_arrival";
+    static void install(App&) {}
+    static AoeFormationModuleResult run(
+        EcsWorld&, AoeFormationSquadContext&);
+};
+
+// The whole MovingControl stage for one squad as a standalone system: it
+// materializes RouteSplit's Follow/Detach timeline, maintains the shared
+// column progress/speed, and emits every follower's AoePathMotionRequest.
+AoeFormationModuleResult aoe_synchronized_follow_motion_system(
+    EcsWorld&, AoeFormationSquadContext&);
+
 #define GLD_AOE_DECLARE_PASS_FORMATION_MODULE(type_name, role_name) \
 struct type_name { \
     using role = role_name; \
@@ -367,7 +393,7 @@ using AoeLayoutRouteSplitMovingFormationPlugin = AoeFormationPlugin<
     AoeNavMeshRouteSplitModule,
     AoeSynchronizedFormationMovingControlModule,
     AoePassThroughAttackControlModule,
-    AoePassThroughCommandCompletionModule>;
+    AoeRouteCommandCompletionModule>;
 
 glm::vec2 aoe_formation_slot_world(
     const AoePosition&, const AoeSquadFormation&,

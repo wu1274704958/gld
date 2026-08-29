@@ -1,5 +1,7 @@
 #include <aoe/AoeGameplay.hpp>
 
+#include "../src/AoeFormationRouteSampling.hpp"
+
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -374,6 +376,30 @@ AoeMapDefinition squad_stress_map() {
     return result;
 }
 
+AoeMapDefinition squad_preview_route_map() {
+    AoeMapDefinition result;
+    result.id = "squad_preview_route_map";
+    result.origin = {-96.f, -56.f};
+    result.tile_size = 1.f;
+    result.width = 192;
+    result.height = 112;
+    result.heights.resize(193u * 113u, 0.f);
+    AoeStaticObstacleDesc left;
+    left.shape = AoeStaticObstacleShape::Aabb;
+    left.center = {-16.f, 0.f};
+    left.half_extents = {1.5f, 12.f};
+    result.static_obstacles.push_back(left);
+    AoeStaticObstacleDesc right = left;
+    right.center = {16.f, 0.f};
+    result.static_obstacles.push_back(right);
+    AoeStaticObstacleDesc south;
+    south.shape = AoeStaticObstacleShape::Circle;
+    south.center = {0.f, -28.f};
+    south.radius = 5.f;
+    result.static_obstacles.push_back(south);
+    return result;
+}
+
 AoeFormationRoutePose sample_route_plan_pose(
     const AoeFormationRoutePlan& plan, float distance) {
     assert(!plan.poses.empty());
@@ -412,16 +438,25 @@ AoeFormationRoutePose sample_route_plan_pose(
 void assert_snake_travel_moves_forward(
     const AoeFormationRoutePlan& plan, float minimum_ratio) {
     assert(plan.valid && plan.poses.size() >= 2);
-    for (const auto& slot : plan.travel_layout.slots) {
+    const auto& sampled_layout = plan.width_schedule.valid &&
+            !plan.width_schedule.layouts.empty()
+        ? plan.width_schedule.layouts.front() : plan.travel_layout;
+    for (std::size_t slot_index = 0;
+         slot_index < sampled_layout.slots.size(); ++slot_index) {
+        const auto& slot = sampled_layout.slots[slot_index];
         bool have_previous = false;
         glm::vec2 previous_center{0.f};
         glm::vec2 previous_point{0.f};
         for (const auto& pose : plan.poses) {
+            const glm::vec2 offset = plan.width_schedule.valid
+                ? sample_formation_width_schedule(plan.width_schedule,
+                      slot_index, pose.distance).local_offset
+                : slot.local_offset;
             const auto sampled = sample_route_plan_pose(
-                plan, pose.distance + slot.local_offset.y);
+                plan, pose.distance + offset.y);
             const glm::vec2 right{sampled.forward.y, -sampled.forward.x};
             const glm::vec2 point = sampled.center +
-                right * slot.local_offset.x;
+                right * offset.x;
             if (have_previous) {
                 const glm::vec2 center_delta = sampled.center - previous_center;
                 const float center_distance2 = glm::dot(
@@ -628,6 +663,181 @@ static_assert(std::same_as<
     AoePassThroughGlobalMotionPlugin>);
 
 int main() {
+    // Width scheduling is a standalone route-progress operation. Layouts are
+    // aligned once by stable unit identity, then sampled by slot index.
+    {
+        const AoeUnitTarget first{static_cast<entt::entity>(1), 11};
+        const AoeUnitTarget second{static_cast<entt::entity>(2), 22};
+        AoeFormationLayout natural;
+        natural.slots = {{first, {-1.f, 0.f}, 2},
+                         {second, {1.f, 0.f}, 1}};
+        natural.bounds = {{-1.25f, -.25f}, {1.25f, .25f}};
+        AoeFormationLayout narrow;
+        // Deliberately reverse candidate order; the built schedule must align
+        // this array to natural's stable order.
+        narrow.slots = {{second, {0.f, -1.f}, 1},
+                        {first, {0.f, 1.f}, 2}};
+        narrow.bounds = {{-.25f, -1.25f}, {.25f, 1.25f}};
+        const AoeFormationWidthScheduleSettings width_settings{
+            .25f, 1.f, .05f};
+        auto schedule = make_formation_width_schedule(natural, narrow,
+            {{6.f, 8.f, 1.f}}, 12.f, width_settings);
+        assert(schedule && schedule->valid && schedule->narrowed);
+        assert(schedule->layouts.size() == 2 &&
+               schedule->transitions.size() == 2);
+        assert(schedule->layouts[1].slots[0].unit.entity == first.entity &&
+               schedule->layouts[1].slots[1].unit.entity == second.entity);
+        const auto& shrink = schedule->transitions[0];
+        const auto& restore = schedule->transitions[1];
+        assert(shrink.slot_progress_windows.size() == 2 &&
+               restore.slot_progress_windows.size() == 2);
+        assert(shrink.slot_progress_windows[0].y <=
+               schedule->constraint_begin_progress + 1e-5f);
+        assert(restore.slot_progress_windows[1].x + 1e-5f >=
+               schedule->constraint_end_progress);
+        assert(glm::length(sample_formation_width_schedule(
+            *schedule, 0, shrink.begin_progress - .1f).local_offset -
+            natural.slots[0].local_offset) < 1e-5f);
+        assert(glm::length(sample_formation_width_schedule(
+            *schedule, 0, schedule->constraint_begin_progress).local_offset -
+            glm::vec2(0.f, 1.f)) < 1e-5f);
+        assert(glm::length(sample_formation_width_schedule(
+            *schedule, 0,
+            (shrink.slot_progress_windows[0].y +
+             restore.slot_progress_windows[0].x) * .5f).local_offset -
+            glm::vec2(0.f, 1.f)) < 1e-5f);
+        assert(glm::length(sample_formation_width_schedule(
+            *schedule, 0, restore.end_progress + .1f).local_offset -
+            natural.slots[0].local_offset) < 1e-5f);
+
+        auto postlude_restore = make_formation_width_schedule(natural, narrow,
+            {{6.f, 11.f, 1.f}}, 12.f, width_settings);
+        assert(postlude_restore &&
+               postlude_restore->transitions.back().end_progress > 12.f);
+        assert(sample_formation_width(*postlude_restore, 12.f) >
+                   narrow.bounds.width() + 1e-5f &&
+               sample_formation_width(*postlude_restore, 12.f) <
+                   natural.bounds.width() - 1e-5f);
+
+        auto no_constraint = make_formation_width_schedule(
+            natural, natural, {}, 12.f, width_settings);
+        assert(no_constraint && no_constraint->valid &&
+               !no_constraint->narrowed &&
+               no_constraint->transitions.empty());
+        auto clamped_start = make_formation_width_schedule(natural, narrow,
+            {{1.f, 3.f, 1.f}}, 12.f, width_settings);
+        assert(clamped_start && clamped_start->valid &&
+               std::abs(clamped_start->transitions.front().begin_progress) <
+                   1e-5f);
+
+        const std::vector<AoeFormationWidthRouteSample> route{
+            {0.f, {0.f, 0.f}, {1.f, 0.f}},
+            {5.f, {5.f, 0.f}, {1.f, 0.f}},
+            {6.f, {5.7f, .3f}, {0.f, 1.f}},
+            {10.f, {6.f, 4.f}, {0.f, 1.f}},
+        };
+        const auto projected = project_formation_width_route_progress(
+            route, {2.f, 1.f});
+        assert(projected && std::abs(*projected - 2.f) < 1e-5f);
+        AoeFormationWidthConstraint turning_constraint{5.5f, 5.6f, 1.f};
+        assert(expand_formation_width_constraint_over_turns(
+            route, turning_constraint));
+        assert(turning_constraint.begin_progress <= 5.f + 1e-5f &&
+               turning_constraint.end_progress >= 6.f - 1e-5f);
+
+        // Independent bottlenecks retain independent width stages and a
+        // short open run is conservatively kept at the narrower capacity.
+        AoeFormationLayout four_columns;
+        for (std::uint32_t column = 0; column < 4; ++column) {
+            const float x = static_cast<float>(column) - 1.5f;
+            four_columns.slots.push_back({
+                {static_cast<entt::entity>(20 + column), 200 + column},
+                {x, 0.f}, 0, column, 0});
+        }
+        four_columns.bounds = {{-1.75f, -.25f}, {1.75f, .25f}};
+        AoeFormationLayout two_lanes = four_columns;
+        two_lanes.bounds = {{-.75f, -.25f}, {.75f, .25f}};
+        for (std::size_t index = 0; index < two_lanes.slots.size(); ++index)
+            two_lanes.slots[index].local_offset.x = index < 2 ? -.5f : .5f;
+        AoeFormationLayout one_lane = four_columns;
+        one_lane.bounds = {{-.25f, -.25f}, {.25f, .25f}};
+        for (auto& slot : one_lane.slots) slot.local_offset.x = 0.f;
+        auto multiple = make_formation_width_schedule(four_columns,
+            {two_lanes, one_lane}, {{4.f, 6.f, 2.f},
+                                   {18.f, 20.f, .75f}},
+            30.f, {.25f, 10.f, .05f});
+        assert(multiple && multiple->valid &&
+               multiple->stages.size() == 2 &&
+               multiple->transitions.size() == 4 &&
+               multiple->stages[0].end_progress <
+                   multiple->stages[1].begin_progress &&
+               multiple->layouts[multiple->stages[0].layout].bounds.width() >
+                   multiple->layouts[multiple->stages[1].layout].bounds.width());
+        auto coalesced = make_formation_width_schedule(four_columns,
+            {two_lanes, one_lane}, {{4.f, 8.f, 2.f},
+                                   {8.1f, 12.f, .75f}},
+            20.f, {.25f, 1.f, .05f});
+        assert(coalesced && coalesced->valid &&
+               coalesced->stages.size() == 1 &&
+               coalesced->transitions.size() == 2 &&
+               coalesced->layouts[coalesced->stages.front().layout]
+                       .bounds.width() <= .75f + 1e-5f);
+    }
+
+    {
+        AoeNavigationPath path;
+        AoeFormationFollow follow;
+        assert(path.priority == 0 && follow.priority == 1);
+        path.priority = 3;
+        assert(path.priority > follow.priority);
+    }
+
+    // Formation following is built from generator-owned column metadata.
+    // Narrowing three columns to one lane temporarily appends both side
+    // leaders to preceding tails without adding routes to ordinary members.
+    {
+        AoeFormationLayout natural;
+        for (std::uint32_t row = 0; row < 2; ++row) {
+            for (std::uint32_t column = 0; column < 3; ++column) {
+                const auto entity = static_cast<entt::entity>(
+                    1 + row * 3 + column);
+                natural.slots.push_back({
+                    {entity, 100 + row * 3 + column},
+                    {static_cast<float>(column) - 1.f,
+                     1.f - static_cast<float>(row)},
+                    0, column, row});
+            }
+        }
+        natural.bounds = {{-1.25f, -.25f}, {1.25f, 1.25f}};
+        AoeFormationLayout narrow = natural;
+        narrow.bounds = {{-.25f, -2.25f}, {.25f, 1.25f}};
+        for (std::size_t index = 0; index < narrow.slots.size(); ++index) {
+            narrow.slots[index].local_offset =
+                {0.f, 1.f - static_cast<float>(index)};
+            narrow.slots[index].chain_index = 0;
+            narrow.slots[index].chain_order =
+                static_cast<std::uint32_t>(index);
+        }
+        auto plan = make_formation_follow_plan(natural, narrow,
+            static_cast<entt::entity>(99), 7, 3);
+        assert(plan && plan->valid && plan->chains.size() == 3);
+        const auto groups = make_formation_follow_groups(*plan, narrow);
+        const auto topology = make_formation_follow_topology(*plan);
+        assert(groups && groups->size() == 1 &&
+               groups->front().chains.size() == 3);
+        assert(topology && topology->valid &&
+               topology->bindings.size() == 3 &&
+               topology->attached_chains == 0);
+        const auto normal = make_formation_follow_assignments(*plan);
+        assert(normal.size() == 3);
+        for (const auto& assignment : normal) {
+            assert(!assignment.follow.temporary);
+            assert(assignment.follow.chain_order == 1);
+            assert(assignment.follow.target.entity != entt::null);
+            assert(assignment.follow.distance_from_chain_leader > 0.f);
+        }
+    }
+
     // Registry-backed adapters preserve runtime selection for callers that
     // explicitly opt into the compatibility path.
     {
@@ -751,6 +961,12 @@ int main() {
     assert(std::abs(parse(turning_definition)->movement
                         .rotation_speed_radians_per_second -
                     glm::half_pi<float>()) < 1e-5f);
+    // Catch-up ratio is optional, defaults to 1 (no overspeed), must be >= 1.
+    assert(parsed->movement.catch_up_speed_ratio == 1.f);
+    turning_definition["movement"]["catch_up_speed_ratio"] = 1.25f;
+    assert(parse(turning_definition)->movement.catch_up_speed_ratio == 1.25f);
+    turning_definition["movement"]["catch_up_speed_ratio"] = .9f;
+    assert(!parse(turning_definition));
     assert(parsed->tags == std::vector<std::string>({"scout", "cavalry"}));
     assert(parsed->lifecycle.recycle_after_death);
     assert(parsed->lifecycle.death_duration_seconds == 0.2f);
@@ -796,10 +1012,11 @@ int main() {
     intent_fixture.world.reg().emplace<AoeMoveGoal>(
         intent_unit, AoeMoveGoal{.destination = {1.f, 0.f}});
     intent_fixture.world.reg().emplace<AoeSquadMember>(intent_unit);
-    intent_fixture.world.reg().emplace<AoeNavigationPath>(intent_unit,
-        AoeNavigationPath{.waypoints = {{.1f, 0.f}, {1.f, 0.f}},
-                          .requested_goal = {1.f, 0.f},
-                          .request_sequence = 41});
+    AoeNavigationPath intent_navigation{{{.1f, 0.f}, {1.f, 0.f}}};
+    intent_navigation.requested_goal = {1.f, 0.f};
+    intent_navigation.request_sequence = 41;
+    intent_fixture.world.reg().emplace<AoeNavigationPath>(
+        intent_unit, std::move(intent_navigation));
     const AoeNavigationPath path_before = intent_fixture.world.reg()
         .get<AoeNavigationPath>(intent_unit);
     AoeDefaultUnitMovementIntentPlugin::fixed_tick(
@@ -1030,6 +1247,14 @@ int main() {
     assert(formation_slots[2].priority == 0);
     assert(formation_slots[3].unit.entity == entt::entity{1});
     assert(formation_slots[3].priority == -100);
+    assert(formation_slots[0].chain_index == 0 &&
+           formation_slots[0].chain_order == 0 &&
+           formation_slots[1].chain_index == 1 &&
+           formation_slots[1].chain_order == 0 &&
+           formation_slots[2].chain_index == 0 &&
+           formation_slots[2].chain_order == 1 &&
+           formation_slots[3].chain_index == 1 &&
+           formation_slots[3].chain_order == 1);
     assert(formation_slots[0].local_offset.y > formation_slots[2].local_offset.y);
     assert(std::abs(glm::length(formation_slots[1].local_offset -
                                 formation_slots[0].local_offset) - .9f) < 1e-5f);
@@ -1134,6 +1359,21 @@ int main() {
     assert(large_ten_columns &&
            std::abs(large_ten_columns->bounds.width() - 8.5f) < 1e-4f);
     assert(std::abs(large_ten_columns->bounds.height() - 224.5f) < 1e-3f);
+    const auto large_natural =
+        TestSquareFormation::generate(large_formation_context);
+    assert(large_natural);
+    const auto large_follow_plan = make_formation_follow_plan(
+        *large_natural, *large_ten_columns,
+        static_cast<entt::entity>(3000), 1, 1);
+    assert(large_follow_plan && large_follow_plan->valid &&
+           large_follow_plan->chains.size() == 50);
+    const auto large_follow_groups = make_formation_follow_groups(
+        *large_follow_plan, *large_ten_columns);
+    assert(
+           large_follow_groups && large_follow_groups->size() == 10);
+    const auto large_normal_followers =
+        make_formation_follow_assignments(*large_follow_plan);
+    assert(large_normal_followers.size() == 2450);
 
     // The modular formation composition runs in its declared order and a
     // module can stop processing the current squad without invoking later
@@ -1431,6 +1671,7 @@ int main() {
             AoeNavMeshSquadPathfinderPlugin>
         route_split_fixture;
     route_split_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
+    route_split_fixture.world.add_resource<AoeFormationRouteDebugCapture>();
     AoeSquadSpawnOptions route_split_options;
     route_split_options.composition = {{"test", 4, 1}};
     route_split_options.center = {-12.f, 0.f};
@@ -1454,7 +1695,16 @@ int main() {
         AoeFormationRouteSplitState>(route_split_squad);
     assert(split_corridor.valid);
     assert(split_state.status == AoeFormationRouteSplitStatus::Ready);
-    assert(split_state.units.size() == 4);
+    assert(split_state.units.size() == 2);
+    const auto& split_debug = route_split_fixture.world.reg().get<
+        AoeFormationRouteDebugSnapshot>(route_split_squad);
+    assert(split_debug.succeeded &&
+           split_debug.stage == AoeFormationRouteDebugStage::Completed);
+    assert(split_debug.member_routes.size() == split_state.units.size());
+    assert(std::all_of(split_debug.member_routes.begin(),
+        split_debug.member_routes.end(), [](const auto& route) {
+            return route.accepted && !route.waypoints.empty();
+        }));
     const auto& split_trajectory = route_split_fixture.world.reg().get<
         AoeFormationRouteTrajectory>(route_split_squad);
     const auto& split_plan = route_split_fixture.world.reg().get<
@@ -1473,7 +1723,7 @@ int main() {
     const auto& split_diagnostics = route_split_fixture.world.resource<
         AoeFormationRouteSplitDiagnostics>();
     assert(split_diagnostics.splits == 1);
-    assert(split_diagnostics.members_routed == 4);
+    assert(split_diagnostics.members_routed == 2);
     assert(split_diagnostics.members_failed == 0);
     assert(route_split_fixture.world.resource<AoeNavMeshResource>()
                .diagnostics().query_count == 1);
@@ -1482,6 +1732,22 @@ int main() {
     for (const auto& slot : route_split_fixture.world.reg().get<
              AoeSquadLayoutState>(route_split_squad).layout.slots) {
         const auto entity = slot.unit.entity;
+        if (slot.chain_order != 0) {
+            assert(!route_split_fixture.world.reg().all_of<
+                AoeNavigationPath, AoeFormationRouteOwner,
+                AoeFormationMemberRouteProgress>(entity));
+            const auto& follow = route_split_fixture.world.reg().get<
+                AoeFormationFollow>(entity);
+            assert(follow.squad == route_split_squad &&
+                   follow.chain_order == slot.chain_order &&
+                   follow.target.entity != entt::null);
+            const auto* request = route_split_fixture.world.reg().try_get<
+                AoePathMotionRequest>(entity);
+            assert(request && request->valid &&
+                   request->kind ==
+                       AoeMovementIntentKind::FormationSlot);
+            continue;
+        }
         const auto& path = route_split_fixture.world.reg().get<
             AoeNavigationPath>(entity);
         const auto& collider = route_split_fixture.world.reg().get<
@@ -1525,13 +1791,36 @@ int main() {
                 split_members[index].entity).value -
             split_initial_positions[index]) > 1e-5f;
     assert(split_member_moved);
-    route_split_fixture.advance_ticks(1);
+    std::vector<std::pair<entt::entity, glm::vec2>> follower_positions;
+    for (const auto& member : split_members)
+        if (route_split_fixture.world.reg().all_of<AoeFormationFollow>(
+                member.entity))
+            follower_positions.push_back({member.entity,
+                route_split_fixture.world.reg().get<AoePosition>(
+                    member.entity).value});
+    assert(follower_positions.size() == 2);
+    route_split_fixture.advance_ticks(4);
+    // Followers travel with the column: each one owns a live follow request
+    // and advances toward its progress-space slot instead of parking.
+    for (const auto& [entity, before] : follower_positions) {
+        const auto after = route_split_fixture.world.reg().get<AoePosition>(
+            entity).value;
+        assert(glm::length(after - before) > 1e-5f);
+    }
     assert(route_split_fixture.world.resource<AoeNavMeshResource>()
                .diagnostics().query_count == 1);
     assert(route_split_fixture.world.resource<
                AoeFormationRouteSplitDiagnostics>().splits == 1);
     assert(route_split_fixture.world.resource<
                AoeFormationRouteSplitDiagnostics>().cache_hits >= 1);
+    route_split_fixture.world.resource<AoeFormationRouteSplitSettings>()
+        .width_safety_distance += .01f;
+    route_split_fixture.advance_ticks(1);
+    assert(route_split_fixture.world.resource<
+               AoeFormationRouteSplitDiagnostics>().splits == 2);
+    assert(route_split_fixture.world.reg().get<
+               AoeFormationRouteSplitState>(route_split_squad).status ==
+           AoeFormationRouteSplitStatus::Ready);
     assert(request_aoe_squad_stop(
         route_split_fixture.world, route_split_squad));
     route_split_fixture.advance_ticks(1);
@@ -1545,6 +1834,7 @@ int main() {
             AoeMoveGoal, AoeFormationMoveGoalOwner>(member.entity));
         assert(!route_split_fixture.world.reg().any_of<
             AoeFormationMemberRouteProgress,
+            AoeFormationFollow,
             AoeSquadMoveSpeedLimit>(member.entity));
     }
     assert(!route_split_fixture.world.reg().any_of<
@@ -1552,8 +1842,8 @@ int main() {
             route_split_squad));
 
     // A corridor narrower than the natural 5x5 footprint selects one
-    // generator-owned travel layout for the complete route. The authoritative
-    // natural Squad layout remains unchanged and is restored by Postlude.
+    // generator-owned narrow variant, but applies it only around the local
+    // portal constraint. The authoritative natural Squad layout is unchanged.
     Fixture<AoePassThroughLocalAvoidancePlugin,
             AoePassThroughGlobalMotionPlugin,
             AoeLayoutRouteSplitMovingFormationPlugin,
@@ -1561,7 +1851,7 @@ int main() {
             AoePassThroughSquadArrivalRematchPlugin,
             AoeGridAStarUnitPathfinderPlugin,
             AoeNavMeshSquadPathfinderPlugin>
-        narrow_route_fixture;
+         narrow_route_fixture;
     narrow_route_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
     AoeSquadSpawnOptions narrow_route_options = route_split_options;
     narrow_route_options.composition = {{"test", 25, 1}};
@@ -1585,6 +1875,69 @@ int main() {
     assert(narrow_plan.selected_width <=
            narrow_plan.bottleneck_width + 1e-5f);
     assert(narrow_plan.travel_layout.slots.size() == 25);
+    assert(narrow_plan.width_schedule.valid &&
+           narrow_plan.width_schedule.narrowed &&
+           !narrow_plan.width_schedule.constraints.empty() &&
+           narrow_plan.width_schedule.stages.size() == 1 &&
+           narrow_plan.width_schedule.transitions.size() == 2);
+    const auto& narrow_split = narrow_route_fixture.world.reg().get<
+        AoeFormationRouteSplitState>(narrow_route_squad);
+    const auto& narrow_follow_plan = narrow_route_fixture.world.reg().get<
+        AoeFormationFollowPlan>(narrow_route_squad);
+    const auto& narrow_topology = narrow_route_fixture.world.reg().get<
+        AoeFormationFollowTopology>(narrow_route_squad);
+    assert(narrow_split.units.size() == 5 &&
+           narrow_follow_plan.chains.size() == 5 &&
+           narrow_topology.bindings.size() == 5 &&
+           narrow_topology.attached_chains == 0);
+    std::size_t narrow_followers = 0;
+    std::size_t temporary_leaders = 0;
+    std::size_t routed_leaders = 0;
+    std::size_t planned_follow_actions = 0;
+    std::size_t planned_detach_actions = 0;
+    for (const auto& member : narrow_route_fixture.world.reg().get<
+             AoeSquadMembers>(narrow_route_squad).active) {
+        if (narrow_route_fixture.world.reg().all_of<
+                AoeFormationRouteOwner>(member.entity)) {
+            ++routed_leaders;
+            const auto& actions = narrow_route_fixture.world.reg().get<
+                AoeUnitActionChain>(member.entity);
+            assert(actions.valid &&
+                   actions.order_revision == narrow_follow_plan.order_revision);
+            for (const auto& step : actions.steps) {
+                if (step.kind == AoeUnitActionStepKind::FormationFollow)
+                    ++planned_follow_actions;
+                if (step.kind ==
+                        AoeUnitActionStepKind::FormationDetachFollow)
+                    ++planned_detach_actions;
+            }
+        }
+        if (const auto* follow = narrow_route_fixture.world.reg().try_get<
+                AoeFormationFollow>(member.entity)) {
+            ++narrow_followers;
+            if (follow->temporary) ++temporary_leaders;
+            const auto* request = narrow_route_fixture.world.reg().try_get<
+                AoePathMotionRequest>(member.entity);
+            assert(request && request->valid &&
+                   request->kind ==
+                       AoeMovementIntentKind::FormationSlot);
+            if (!follow->temporary)
+                assert(!narrow_route_fixture.world.reg().all_of<
+                    AoeNavigationPath>(member.entity));
+        }
+    }
+    assert(routed_leaders == 5 && narrow_followers == 20 &&
+           temporary_leaders == 0 && planned_follow_actions == 2 &&
+           planned_detach_actions == planned_follow_actions);
+    const auto& narrow_shrink =
+        narrow_plan.width_schedule.transitions.front();
+    const auto& narrow_restore =
+        narrow_plan.width_schedule.transitions.back();
+    assert(narrow_shrink.slot_progress_windows.size() == 5 &&
+           narrow_restore.slot_progress_windows.size() == 5);
+    assert(std::abs(sample_formation_width(
+        narrow_plan.width_schedule, 0.f) -
+        narrow_plan.natural_width) < 1e-5f);
     const auto& narrow_layout_after = narrow_route_fixture.world.reg().get<
         AoeSquadLayoutState>(narrow_route_squad);
     assert(narrow_layout_after.revision == narrow_natural_revision);
@@ -1598,6 +1951,349 @@ int main() {
             narrow_layout_after.layout.slots[index].local_offset -
                narrow_natural_layout.slots[index].local_offset) < 1e-5f);
     }
+
+    // Drive the order through its narrow stage. Bindings change one natural
+    // chain at a time, keep every effective root-route distance unique and
+    // restore the original route owners without ever rolling progress back.
+    std::vector<float> previous_chain_progress(
+        narrow_topology.bindings.size(), 0.f);
+    std::vector<std::uint64_t> observed_follow_tokens;
+    bool observed_partial_topology = false;
+    bool observed_attached_progress = false;
+    bool observed_full_restore = false;
+    for (std::size_t tick = 0; tick < 400 && !observed_full_restore; ++tick) {
+        narrow_route_fixture.advance_ticks(1);
+        const auto& topology = narrow_route_fixture.world.reg().get<
+            AoeFormationFollowTopology>(narrow_route_squad);
+        assert(topology.valid &&
+               topology.bindings.size() == narrow_follow_plan.chains.size());
+        std::size_t attached = 0;
+        std::vector<std::vector<float>> distances(topology.bindings.size());
+        for (std::size_t chain_index = 0;
+             chain_index < topology.bindings.size(); ++chain_index) {
+            const auto& binding = topology.bindings[chain_index];
+            const auto& chain = narrow_follow_plan.chains[chain_index];
+            assert(binding.progress + 1e-5f >=
+                   previous_chain_progress[chain_index]);
+            if (binding.attached && binding.progress >
+                    previous_chain_progress[chain_index] + 1e-5f)
+                observed_attached_progress = true;
+            previous_chain_progress[chain_index] = binding.progress;
+            assert(binding.root_chain < topology.bindings.size());
+            const auto& root = topology.bindings[binding.root_chain];
+            if (binding.attached) {
+                ++attached;
+                assert(binding.root_chain != chain_index &&
+                       binding.active_follow_token != 0 &&
+                       binding.base_distance > 0.f &&
+                       binding.route_source.entity ==
+                           root.route_source.entity &&
+                       binding.route_source.instance_id ==
+                           root.route_source.instance_id);
+                const auto* leader_follow =
+                    narrow_route_fixture.world.reg().try_get<
+                        AoeFormationFollow>(chain.members.front().unit.entity);
+                assert(leader_follow && leader_follow->temporary &&
+                       leader_follow->follow_token ==
+                           binding.active_follow_token);
+                if (std::find(observed_follow_tokens.begin(),
+                        observed_follow_tokens.end(),
+                        binding.active_follow_token) ==
+                    observed_follow_tokens.end())
+                    observed_follow_tokens.push_back(
+                        binding.active_follow_token);
+            } else {
+                assert(binding.root_chain == chain_index &&
+                       binding.route_source.entity ==
+                           chain.members.front().unit.entity &&
+                       binding.route_source.instance_id ==
+                           chain.members.front().unit.instance_id &&
+                       binding.base_distance == 0.f &&
+                       binding.active_follow_token == 0);
+                const auto* leader_follow =
+                    narrow_route_fixture.world.reg().try_get<
+                        AoeFormationFollow>(chain.members.front().unit.entity);
+                assert(!leader_follow || !leader_follow->temporary);
+            }
+            for (const auto& member : chain.members)
+                distances[binding.root_chain].push_back(
+                    binding.base_distance + member.distance_from_leader);
+        }
+        assert(attached == topology.attached_chains);
+        if (attached > 0 && attached < topology.bindings.size())
+            observed_partial_topology = true;
+        for (auto& group_distances : distances) {
+            std::sort(group_distances.begin(), group_distances.end());
+            for (std::size_t index = 1;
+                 index < group_distances.size(); ++index)
+                assert(group_distances[index] - group_distances[index - 1] >
+                       1e-4f);
+        }
+        observed_full_restore =
+            observed_follow_tokens.size() == planned_follow_actions &&
+            attached == 0;
+    }
+    assert(observed_partial_topology && observed_attached_progress &&
+           observed_full_restore);
+
+    // The three large preview presets keep route ownership at column scale.
+    // They must all produce a valid narrowed plan on the real preview map;
+    // ordinary members remain natural-column followers.
+    using LargeRouteFixture = Fixture<
+        AoePassThroughLocalAvoidancePlugin,
+        AoePassThroughGlobalMotionPlugin,
+        AoeLayoutRouteSplitMovingFormationPlugin,
+        AoePassThroughSquadEngagementPlugin,
+        AoePassThroughSquadArrivalRematchPlugin,
+        AoeGridAStarUnitPathfinderPlugin,
+        AoeNavMeshSquadPathfinderPlugin>;
+    const auto assert_large_route = [](std::uint32_t unit_count) {
+        LargeRouteFixture fixture;
+        fixture.world.add_resource<AoeLogicMap>(squad_preview_route_map());
+        AoeSquadSpawnOptions options;
+        options.composition = {{"test", unit_count, 1}};
+        options.center = {-52.f, 0.f};
+        options.forward = {1.f, 0.f};
+        options.formation_spacing = .2f;
+        const auto squad = spawn_aoe_gameplay_squad(fixture.world, options);
+        spawn_aoe_gameplay_unit_system(fixture.world);
+        fixture.advance_ticks(1);
+        assert(request_aoe_squad_move(fixture.world, squad, {52.f, 0.f}));
+        fixture.advance_ticks(1);
+        assert(fixture.world.reg().all_of<
+            AoeFormationRoutePlan, AoeFormationFollowPlan>(squad));
+        const auto& route = fixture.world.reg().get<
+            AoeFormationRoutePlan>(squad);
+        const auto& follow = fixture.world.reg().get<
+            AoeFormationFollowPlan>(squad);
+        const std::size_t expected_columns = static_cast<std::size_t>(
+            std::ceil(std::sqrt(static_cast<double>(unit_count))));
+        assert(route.valid && route.narrowed &&
+               !route.width_schedule.stages.empty() &&
+               follow.chains.size() == expected_columns);
+        std::size_t routed = 0;
+        std::size_t action_chains = 0;
+        for (const auto& member : fixture.world.reg().get<
+                 AoeSquadMembers>(squad).active) {
+            routed += fixture.world.reg().all_of<AoeFormationRouteOwner>(
+                member.entity) ? 1u : 0u;
+            action_chains += fixture.world.reg().all_of<AoeUnitActionChain>(
+                member.entity) ? 1u : 0u;
+        }
+        assert(routed == expected_columns &&
+               action_chains == expected_columns);
+    };
+    assert_large_route(2500);
+    assert_large_route(5000);
+    assert_large_route(10000);
+
+    // Mixed-speed formation catch-up: 1.45-speed leaders are throttled to the
+    // 0.96-speed followers even though their 1.104 catch-up ceiling is below
+    // the leaders' native speed. Catch-up only closes transient spacing error.
+    using CatchUpFixture = Fixture<
+        AoePassThroughLocalAvoidancePlugin,
+        AoePassThroughGlobalMotionPlugin,
+        AoeLayoutRouteSplitMovingFormationPlugin,
+        AoePassThroughSquadEngagementPlugin,
+        AoePassThroughSquadArrivalRematchPlugin,
+        AoeGridAStarUnitPathfinderPlugin,
+        AoeNavMeshSquadPathfinderPlugin>;
+    CatchUpFixture catch_up_fixture;
+    catch_up_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    AoeSquadSpawnOptions catch_up_options;
+    catch_up_options.composition = {{"test", 4, 1}};
+    catch_up_options.center = {-12.f, 0.f};
+    catch_up_options.forward = {1.f, 0.f};
+    catch_up_options.formation_spacing = .4f;
+    const auto catch_up_squad = spawn_aoe_gameplay_squad(
+        catch_up_fixture.world, catch_up_options);
+    spawn_aoe_gameplay_unit_system(catch_up_fixture.world);
+    catch_up_fixture.advance_ticks(1);
+    assert(request_aoe_squad_move(
+        catch_up_fixture.world, catch_up_squad, {12.f, 0.f}));
+    for (const auto& slot : catch_up_fixture.world.reg().get<
+             AoeSquadLayoutState>(catch_up_squad).layout.slots) {
+        auto& movement = catch_up_fixture.world.reg().get<AoeMovement>(
+            slot.unit.entity);
+        movement.speed = slot.chain_order == 0 ? 1.45f : .96f;
+        movement.catch_up_speed_ratio = 1.15f;
+    }
+    catch_up_fixture.advance_ticks(1);
+    entt::entity displaced_follower{entt::null};
+    entt::entity steady_follower{entt::null};
+    for (const auto& slot : catch_up_fixture.world.reg().get<
+             AoeSquadLayoutState>(catch_up_squad).layout.slots) {
+        if (slot.chain_order == 0) {
+            const auto& limit = catch_up_fixture.world.reg().get<
+                AoeSquadMoveSpeedLimit>(slot.unit.entity);
+            assert(limit.value <= .96f + 1e-4f);
+            continue;
+        }
+        if (displaced_follower == entt::null)
+            displaced_follower = slot.unit.entity;
+        else if (steady_follower == entt::null)
+            steady_follower = slot.unit.entity;
+    }
+    assert(catch_up_fixture.world.reg().valid(displaced_follower) &&
+           catch_up_fixture.world.reg().valid(steady_follower));
+    assert(catch_up_fixture.world.reg().all_of<AoeMovement,
+        AoeLocomotionState>(displaced_follower));
+    // Pull the follower one unit backward so it trails its progress anchor.
+    catch_up_fixture.world.reg().get<AoePosition>(
+        displaced_follower).value.x -= 1.f;
+    const auto displaced_target = catch_up_fixture.world.reg().get<
+        AoeFormationFollow>(displaced_follower).target;
+    const float displaced_gap = glm::length(
+        catch_up_fixture.world.reg().get<AoePosition>(
+            displaced_target.entity).value -
+        catch_up_fixture.world.reg().get<AoePosition>(
+            displaced_follower).value);
+    catch_up_fixture.advance_ticks(1);
+    const auto& movement_component = catch_up_fixture.world.reg().get<
+        AoeMovement>(displaced_follower);
+    const float displaced_speed = glm::length(
+        catch_up_fixture.world.reg().get<AoeLocomotionState>(
+            displaced_follower).velocity);
+    assert(displaced_speed > movement_component.speed + 1e-4f);
+    assert(displaced_speed <=
+           movement_component.speed *
+               movement_component.catch_up_speed_ratio + 1e-4f);
+    const float steady_speed = glm::length(
+        catch_up_fixture.world.reg().get<AoeLocomotionState>(
+            steady_follower).velocity);
+    assert(steady_speed <= movement_component.speed + 1e-4f);
+    catch_up_fixture.advance_ticks(40);
+    const float recovered_gap = glm::length(
+        catch_up_fixture.world.reg().get<AoePosition>(
+            displaced_target.entity).value -
+        catch_up_fixture.world.reg().get<AoePosition>(
+            displaced_follower).value);
+    assert(recovered_gap + .1f < displaced_gap);
+
+    // A completed column-leader route stays alive as the follower's history
+    // source until every final natural slot arrives. CommandCompletion then
+    // releases the entire Formation execution graph in one tick.
+    CatchUpFixture completion_fixture;
+    completion_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    AoeSquadSpawnOptions completion_options;
+    completion_options.composition = {{"test", 4, 1}};
+    completion_options.center = {-4.f, 0.f};
+    completion_options.forward = {1.f, 0.f};
+    completion_options.formation_spacing = .4f;
+    const auto completion_squad = spawn_aoe_gameplay_squad(
+        completion_fixture.world, completion_options);
+    spawn_aoe_gameplay_unit_system(completion_fixture.world);
+    completion_fixture.advance_ticks(1);
+    const glm::vec2 completion_destination{4.f, 0.f};
+    assert(request_aoe_squad_move(completion_fixture.world,
+        completion_squad, completion_destination));
+    completion_fixture.advance_ticks(1);
+    const auto completion_revision = completion_fixture.world.reg().get<
+        AoeSquadOrder>(completion_squad).revision;
+    const auto completion_slots = completion_fixture.world.reg().get<
+        AoeSquadLayoutState>(completion_squad).layout.slots;
+    entt::entity completion_follower{entt::null};
+    for (const auto& slot : completion_slots)
+        if (slot.chain_order != 0) {
+            completion_follower = slot.unit.entity;
+            break;
+        }
+    assert(completion_follower != entt::null);
+
+    bool displaced_near_arrival = false;
+    bool observed_retained_route = false;
+    bool completed_formation_order = false;
+    for (std::size_t tick = 0; tick < 300; ++tick) {
+        if (!displaced_near_arrival) {
+            for (const auto& slot : completion_slots) {
+                if (slot.chain_order != 0) continue;
+                const auto* path = completion_fixture.world.reg().try_get<
+                    AoeNavigationPath>(slot.unit.entity);
+                if (!path || path->waypoints.empty() ||
+                    path->current >= path->waypoints.size())
+                    continue;
+                const float remaining = glm::length(
+                    path->waypoints.back() -
+                    completion_fixture.world.reg().get<AoePosition>(
+                        slot.unit.entity).value);
+                if (remaining < .35f) {
+                    completion_fixture.world.reg().get<AoePosition>(
+                        completion_follower).value.x -= 1.f;
+                    displaced_near_arrival = true;
+                    break;
+                }
+            }
+        }
+
+        completion_fixture.advance_ticks(1);
+        const auto& order = completion_fixture.world.reg().get<
+            AoeSquadOrder>(completion_squad);
+        if (order.type == AoeSquadOrderType::Idle) {
+            completed_formation_order = true;
+            break;
+        }
+        for (const auto& slot : completion_slots) {
+            if (slot.chain_order != 0) continue;
+            const auto* path = completion_fixture.world.reg().try_get<
+                AoeNavigationPath>(slot.unit.entity);
+            if (path && !path->waypoints.empty() &&
+                path->current >= path->waypoints.size()) {
+                observed_retained_route = true;
+                assert(completion_fixture.world.reg().all_of<
+                    AoeFormationRouteOwner,
+                    AoeFormationMoveGoalOwner>(slot.unit.entity));
+                assert(completion_fixture.world.reg().all_of<
+                    AoeFormationFollow>(completion_follower));
+            }
+        }
+    }
+    assert(displaced_near_arrival);
+    assert(observed_retained_route);
+    assert(completed_formation_order);
+    const auto& completed_order = completion_fixture.world.reg().get<
+        AoeSquadOrder>(completion_squad);
+    const auto& completed_state = completion_fixture.world.reg().get<
+        AoeSquadState>(completion_squad);
+    assert(completed_order.type == AoeSquadOrderType::Idle &&
+           completed_order.revision == completion_revision &&
+           completed_state.phase == AoeSquadPhase::Idle &&
+           completed_state.movement_speed == 0.f &&
+           glm::length(completion_fixture.world.reg().get<AoePosition>(
+               completion_squad).value - completion_destination) < 1e-5f);
+    assert(!completion_fixture.world.reg().any_of<
+        AoeFormationRouteSplitState, AoeFormationRoutePlan,
+        AoeFormationRouteTrajectory, AoeFormationFollowPlan,
+        AoeFormationFollowTopology, AoeFormationMovingState,
+        AoeFormationNavCorridor, AoeNavigationPath>(completion_squad));
+    const auto& completed_formation = completion_fixture.world.reg().get<
+        AoeSquadFormation>(completion_squad);
+    const auto& completed_center = completion_fixture.world.reg().get<
+        AoePosition>(completion_squad);
+    for (const auto& slot : completion_slots) {
+        const auto entity = slot.unit.entity;
+        assert(!completion_fixture.world.reg().any_of<
+            AoeFormationFollow, AoeFormationRouteOwner,
+            AoeFormationMoveGoalOwner, AoeFormationMemberRouteProgress,
+            AoeUnitActionChain, AoeNavigationPath,
+            AoeSquadMoveSpeedLimit>(entity));
+        const auto* request = completion_fixture.world.reg().try_get<
+            AoePathMotionRequest>(entity);
+        const auto* intent = completion_fixture.world.reg().try_get<
+            AoeUnitMovementIntentState>(entity);
+        assert((!request || !request->valid) && (!intent || !intent->valid));
+        const auto& locomotion = completion_fixture.world.reg().get<
+            AoeLocomotionState>(entity);
+        assert(locomotion.velocity == glm::vec2(0.f) &&
+               locomotion.actual_speed == 0.f &&
+               locomotion.effective_max_speed == 0.f &&
+               completion_fixture.world.reg().get<AoeActionState>(
+                   entity).state == UnitState::Idle);
+        assert(glm::length(completion_fixture.world.reg().get<AoePosition>(
+                   entity).value - aoe_formation_slot_world(
+                       completed_center, completed_formation, slot)) <=
+               .05f + 1e-4f);
+    }
+
     // Turn-aware RouteSplit keeps one immutable slot assignment while it
     // generates a shared, subdivided 90-degree moving turn. MovingControl
     // publishes per-member speed limits that map different turn radii back to
@@ -1670,18 +2366,34 @@ int main() {
                after.unit.instance_id == before.unit.instance_id &&
                after.priority == before.priority &&
                glm::length(after.local_offset - before.local_offset) < 1e-5f);
-        const auto& path = quarter_turn_fixture.world.reg().get<
-            AoeNavigationPath>(after.unit.entity);
-        const auto& progress = quarter_turn_fixture.world.reg().get<
-            AoeFormationMemberRouteProgress>(after.unit.entity);
-        assert(progress.waypoint_progress.size() == path.waypoints.size() &&
-               progress.segment_speed_ratio.size() == path.waypoints.size());
-        const float speed = quarter_turn_fixture.world.reg().get<
-            AoeSquadMoveSpeedLimit>(after.unit.entity).value;
-        minimum_turn_speed = std::min(minimum_turn_speed, speed);
-        maximum_turn_speed = std::max(maximum_turn_speed, speed);
+        if (after.chain_order == 0) {
+            const auto& path = quarter_turn_fixture.world.reg().get<
+                AoeNavigationPath>(after.unit.entity);
+            const auto& progress = quarter_turn_fixture.world.reg().get<
+                AoeFormationMemberRouteProgress>(after.unit.entity);
+            assert(progress.waypoint_progress.size() == path.waypoints.size() &&
+                   progress.segment_speed_ratio.size() == path.waypoints.size());
+            const float speed = quarter_turn_fixture.world.reg().get<
+                AoeSquadMoveSpeedLimit>(after.unit.entity).value;
+            assert(std::isfinite(speed) && speed >= 0.f &&
+                   speed <= quarter_turn_fixture.world.reg().get<
+                       AoeMovement>(after.unit.entity).speed + 1e-4f);
+            minimum_turn_speed = std::min(minimum_turn_speed, speed);
+            maximum_turn_speed = std::max(maximum_turn_speed, speed);
+        } else {
+            assert(quarter_turn_fixture.world.reg().all_of<
+                AoeFormationFollow>(after.unit.entity));
+            const auto* request = quarter_turn_fixture.world.reg().try_get<
+                AoePathMotionRequest>(after.unit.entity);
+            assert(request && request->valid &&
+                   request->kind ==
+                       AoeMovementIntentKind::FormationSlot);
+            assert(!quarter_turn_fixture.world.reg().all_of<
+                AoeNavigationPath>(after.unit.entity));
+        }
     }
-    assert(maximum_turn_speed - minimum_turn_speed > .05f);
+    assert(std::isfinite(minimum_turn_speed) && maximum_turn_speed > 0.f &&
+           maximum_turn_speed + 1e-5f >= minimum_turn_speed);
     quarter_turn_fixture.advance_ticks(8);
     const auto& synchronized_turn = quarter_turn_fixture.world.reg().get<
         AoeFormationMovingState>(quarter_turn_squad);
@@ -1689,6 +2401,85 @@ int main() {
         AoeFormationMovingSettings>();
     assert(synchronized_turn.maximum_lead <=
            moving_settings.allowed_progress_lead + .05f);
+
+    // Snake turning: every follower uses the tangent at its own historical
+    // route anchor. The head may already be around the corner while the rear
+    // still follows the old segment, so whole-column heading spread is not a
+    // valid rigid-body invariant.
+    {
+        float maximum_lateral_error = 0.f;
+        std::size_t directed_followers = 0;
+        std::vector<std::pair<entt::entity, glm::vec2>>
+            directions_before_tick;
+        for (const auto& slot : quarter_turn_fixture.world.reg().get<
+                 AoeSquadLayoutState>(quarter_turn_squad).layout.slots) {
+            if (slot.chain_order == 0) continue;
+            const auto* request = quarter_turn_fixture.world.reg().try_get<
+                AoePathMotionRequest>(slot.unit.entity);
+            if (!request || !request->valid) continue;
+            const auto& position = quarter_turn_fixture.world.reg().get<
+                AoePosition>(slot.unit.entity).value;
+            const auto& follow = quarter_turn_fixture.world.reg().get<
+                AoeFormationFollow>(slot.unit.entity);
+            const auto& topology = quarter_turn_fixture.world.reg().get<
+                AoeFormationFollowTopology>(quarter_turn_squad);
+            const auto& binding = topology.bindings[follow.natural_chain];
+            const auto& source_metadata = quarter_turn_fixture.world.reg().get<
+                AoeFormationMemberRouteProgress>(binding.route_source.entity);
+            const auto& source_path = quarter_turn_fixture.world.reg().get<
+                AoeNavigationPath>(binding.route_source.entity);
+            const float source_progress =
+                topology.bindings[binding.root_chain].progress;
+            const auto sample = formation_detail::sample_member_route(
+                source_metadata, source_path,
+                source_progress - binding.base_distance -
+                    follow.distance_from_chain_leader);
+            assert(sample.valid);
+            const glm::vec2 error = request->local_goal - position;
+            const glm::vec2 right{sample.forward.y, -sample.forward.x};
+            const float lateral_error = std::abs(glm::dot(error, right));
+            maximum_lateral_error = std::max(
+                maximum_lateral_error, lateral_error);
+            if (quarter_turn_fixture.world.reg().all_of<AoeDirection>(
+                    slot.unit.entity)) {
+                ++directed_followers;
+                directions_before_tick.emplace_back(slot.unit.entity,
+                    quarter_turn_fixture.world.reg().get<AoeDirection>(
+                        slot.unit.entity).value);
+            }
+            assert(glm::dot(request->velocity, sample.forward) >= -1e-5f);
+            if (glm::length(request->velocity) > .05f) {
+                const auto& direction = quarter_turn_fixture.world.reg().get<
+                    AoeDirection>(slot.unit.entity).value;
+                assert(glm::dot(glm::normalize(request->velocity), direction) >
+                       .999f);
+            }
+        }
+        assert(directed_followers > 0);
+        assert(maximum_lateral_error < 1.5f);
+
+        // The route tangent may advance to the next snake segment, but the
+        // emitted member direction still obeys its configured angular speed.
+        quarter_turn_fixture.advance_ticks(1);
+        const float fixed_dt = static_cast<float>(
+            quarter_turn_fixture.world.resource<AoeGameplaySettings>()
+                .fixed_dt);
+        for (const auto& [entity, previous] : directions_before_tick) {
+            const auto* request = quarter_turn_fixture.world.reg().try_get<
+                AoePathMotionRequest>(entity);
+            if (!request || !request->valid ||
+                glm::length(request->velocity) <= .05f)
+                continue;
+            const auto& movement = quarter_turn_fixture.world.reg().get<
+                AoeMovement>(entity);
+            const glm::vec2 current = glm::normalize(request->velocity);
+            const float angle = std::acos(std::clamp(
+                glm::dot(glm::normalize(previous), current), -1.f, 1.f));
+            assert(angle <=
+                movement.rotation_speed_radians_per_second * fixed_dt +
+                    1e-4f);
+        }
+    }
 
     // Reissuing an order replaces all ownership revisions. Removing a member
     // dirties the layout, rebuilds the shared routes, and strips the dead
@@ -1703,12 +2494,17 @@ int main() {
     assert(replacement_revision > previous_order_revision);
     for (const auto& member : quarter_turn_fixture.world.reg().get<
              AoeSquadMembers>(quarter_turn_squad).active) {
-        assert(quarter_turn_fixture.world.reg().get<
-                   AoeFormationRouteOwner>(member.entity)
-                   .squad_order_revision == replacement_revision);
-        assert(quarter_turn_fixture.world.reg().get<
-                   AoeFormationMemberRouteProgress>(member.entity)
-                   .squad_order_revision == replacement_revision);
+        if (const auto* owner = quarter_turn_fixture.world.reg().try_get<
+                AoeFormationRouteOwner>(member.entity)) {
+            assert(owner->squad_order_revision == replacement_revision);
+            assert(quarter_turn_fixture.world.reg().get<
+                       AoeFormationMemberRouteProgress>(member.entity)
+                       .squad_order_revision == replacement_revision);
+        } else {
+            assert(quarter_turn_fixture.world.reg().get<
+                       AoeFormationFollow>(member.entity)
+                       .order_revision == replacement_revision);
+        }
     }
     const auto removed_turn_member = quarter_turn_fixture.world.reg().get<
         AoeSquadMembers>(quarter_turn_squad).active.front().entity;
@@ -1823,6 +2619,7 @@ int main() {
     // collision checks. A stale corridor crossing a new wall must fail closed.
     TurnFixture unsafe_turn_fixture;
     unsafe_turn_fixture.world.add_resource<AoeLogicMap>(centered_flat_map());
+    unsafe_turn_fixture.world.add_resource<AoeFormationRouteDebugCapture>();
     const auto unsafe_turn_squad = spawn_aoe_gameplay_squad(
         unsafe_turn_fixture.world, turn_options);
     spawn_aoe_gameplay_unit_system(unsafe_turn_fixture.world);
@@ -1839,6 +2636,10 @@ int main() {
     assert(unsafe_turn_fixture.world.reg().get<
                AoeFormationRouteSplitState>(unsafe_turn_squad).status ==
            AoeFormationRouteSplitStatus::Failed);
+    const auto& unsafe_debug = unsafe_turn_fixture.world.reg().get<
+        AoeFormationRouteDebugSnapshot>(unsafe_turn_squad);
+    assert(!unsafe_debug.succeeded &&
+           unsafe_debug.stage != AoeFormationRouteDebugStage::None);
     for (const auto& member : unsafe_turn_fixture.world.reg().get<
              AoeSquadMembers>(unsafe_turn_squad).active)
         assert(!unsafe_turn_fixture.world.reg().all_of<AoeMoveGoal>(

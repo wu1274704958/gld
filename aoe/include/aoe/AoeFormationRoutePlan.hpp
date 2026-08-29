@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 
 #include <aoe/AoeFormationLayout.hpp>
+#include <aoe/AoeFormationWidthSchedule.hpp>
 
 namespace gld::ecs::aoe {
 
@@ -31,6 +32,7 @@ struct AoeFormationRoutePlan {
     // Caller-owned width-constrained variant.  The Squad's natural layout is
     // never overwritten by route planning.
     AoeFormationLayout travel_layout;
+    AoeFormationWidthSchedule width_schedule;
     std::vector<AoeFormationRoutePose> poses;
 
     float natural_width = 0.f;

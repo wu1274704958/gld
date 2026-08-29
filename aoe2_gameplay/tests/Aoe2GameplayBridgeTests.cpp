@@ -91,6 +91,7 @@ int main() {
     action.state = UnitState::Moving;
     action.sequence = 4;
     action.state_started_tick = 13;
+    world.reg().get<AoeLocomotionState>(gameplay).actual_speed = 1.f;
     aoe2_gameplay_presentation_system(world);
     const auto& moving_start = world.reg().get<Aoe2SpawnRequest>(first_child).options;
     assert(moving_start.animation == "walkA");
@@ -222,28 +223,38 @@ int main() {
     assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
                     .options.playback_time, 0.1f));
 
-    // Moving playback consumes authoritative travelled distance relative to
-    // the effective gameplay speed cap. A zero cap freezes even if an external
-    // correction changes distance; reaching a 0.5 squad cap advances at 1x.
+    // A gameplay unit whose authoritative actual speed is zero presents idle
+    // and advances that idle loop on the fixed clock instead of freezing a
+    // walk frame. Resuming motion returns to distance-driven walk playback.
     action.state = UnitState::Moving;
     action.sequence = 13;
     action.state_started_tick = 25;
-    world.reg().get<AoeLocomotionState>(gameplay).effective_max_speed = 0.f;
+    auto& stopped_locomotion =
+        world.reg().get<AoeLocomotionState>(gameplay);
+    stopped_locomotion.effective_max_speed = 0.f;
+    stopped_locomotion.actual_speed = 0.f;
     aoe2_gameplay_presentation_system(world);
-    const float blocked_cursor = world.reg().get<Aoe2SpawnRequest>(second_child)
+    const float idle_cursor = world.reg().get<Aoe2SpawnRequest>(second_child)
         .options.playback_time;
+    assert(world.reg().get<Aoe2SpawnRequest>(second_child)
+               .options.animation == "idleA");
     world.resource<AoeGameplayClock>().tick = 26;
     world.reg().get<AoeLocomotionState>(gameplay).distance_travelled += .05;
     aoe2_gameplay_presentation_system(world);
+    assert(world.reg().get<Aoe2SpawnRequest>(second_child)
+               .options.animation == "idleA");
     assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
-                    .options.playback_time, blocked_cursor));
+                    .options.playback_time, idle_cursor + .1f));
     auto& limited_locomotion = world.reg().get<AoeLocomotionState>(gameplay);
     limited_locomotion.effective_max_speed = .5f;
+    limited_locomotion.actual_speed = .5f;
     limited_locomotion.distance_travelled += .05;
     world.resource<AoeGameplayClock>().tick = 27;
     aoe2_gameplay_presentation_system(world);
+    assert(world.reg().get<Aoe2SpawnRequest>(second_child)
+               .options.animation == "walkA");
     assert(near(world.reg().get<Aoe2SpawnRequest>(second_child)
-                    .options.playback_time, blocked_cursor + .1f));
+                    .options.playback_time, idle_cursor + .2f));
     action.state = UnitState::Disappearing;
     action.sequence = 14;
     action.state_started_tick = 27;

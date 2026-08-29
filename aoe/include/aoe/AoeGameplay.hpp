@@ -26,6 +26,7 @@
 #include <aoe/AoeFormationLayout.hpp>
 #include <aoe/AoeGameplayComponents.hpp>
 #include <aoe/AoeMap.hpp>
+#include <aoe/AoeUnitAction.hpp>
 
 namespace gld::ecs::aoe {
 
@@ -60,6 +61,7 @@ struct AttackDefinition {
 struct MovementDefinition {
     float speed = 1.f;
     float rotation_speed_radians_per_second = 6.28318530718f;
+    float catch_up_speed_ratio = 1.f;
 };
 struct TargetAcquisitionDefinition {
     AoeTargetAcquisitionType strategy =
@@ -159,6 +161,9 @@ struct AoePositionHistory { glm::vec2 previous{0.f}; };
 struct AoeMovement {
     float speed = 1.f;
     float rotation_speed_radians_per_second = 6.28318530718f;
+    // Formation spacing/catch-up may temporarily exceed `speed` by this
+    // ratio (>= 1). 1 disables overspeed entirely for the unit.
+    float catch_up_speed_ratio = 1.f;
 };
 
 enum class AoeMovementIntentKind {
@@ -272,22 +277,6 @@ struct AoeEngagementApproach {
     float desired_gap = 0.f;
     std::uint64_t assignment_sequence = 0;
     std::uint32_t unreachable_ticks = 0;
-};
-struct AoeNavigationPath {
-    std::vector<glm::vec2> waypoints;
-    std::size_t current = 0;
-    glm::vec2 requested_goal{0.f};
-    std::uint64_t map_revision = 0;
-    std::uint64_t request_sequence = 0;
-    std::uint64_t last_repath_tick = 0;
-    std::uint32_t blocked_ticks = 0;
-    bool no_path = false;
-    bool include_dynamic_obstacles = false;
-    bool dynamic_repath_requested = false;
-    // A failed optional dynamic replan must not invalidate a still-usable
-    // static route. This flag is diagnostic and is cleared by the next
-    // successful plan.
-    bool dynamic_repath_failed = false;
 };
 struct AoeMapStaticObstacle {
     AoeStaticObstacleShape shape = AoeStaticObstacleShape::Aabb;

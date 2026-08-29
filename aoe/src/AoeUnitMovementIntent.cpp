@@ -54,9 +54,19 @@ glm::vec2 constrain_velocity_cached(
 }
 
 float effective_max_speed(const entt::registry& reg, entt::entity entity) {
-    float result = reg.get<AoeMovement>(entity).speed;
-    if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity))
-        result = std::min(result, limit->value);
+    const auto& movement = reg.get<AoeMovement>(entity);
+    float result = movement.speed;
+    if (const auto* limit = reg.try_get<AoeSquadMoveSpeedLimit>(entity)) {
+        // A limit above the base speed is an explicit formation catch-up
+        // permission; the unit may run up to the limit but never past its
+        // own configured catch-up ratio.
+        if (limit->value > movement.speed + Epsilon)
+            result = std::min(movement.speed *
+                                  std::max(1.f, movement.catch_up_speed_ratio),
+                              limit->value);
+        else
+            result = std::min(result, limit->value);
+    }
     return std::max(0.f, result);
 }
 
@@ -87,6 +97,17 @@ glm::vec2 aoe_constrain_unit_velocity(
                                      max_speed, turn, turn_limited);
 }
 
+glm::vec2 aoe_constrain_unit_velocity_cached(
+    AoeUnitMovementIntentState& turn, glm::vec2 previous_velocity,
+    glm::vec2 candidate_velocity, float max_speed,
+    float rotation_speed_radians_per_second, float fixed_dt,
+    bool* turn_limited) {
+    refresh_turn_cache(
+        turn, rotation_speed_radians_per_second, fixed_dt);
+    return constrain_velocity_cached(previous_velocity, candidate_velocity,
+                                     max_speed, turn, turn_limited);
+}
+
 void AoeDefaultUnitMovementIntentPlugin::install(App&) {}
 
 void AoeDefaultUnitMovementIntentPlugin::fixed_tick(
@@ -96,13 +117,21 @@ void AoeDefaultUnitMovementIntentPlugin::fixed_tick(
         world.resource<AoeGameplaySettings>().fixed_dt);
 
     for (const auto entity : reg.view<AoePathMotionRequest>())
-        reg.get<AoePathMotionRequest>(entity).valid = false;
+        if (!reg.all_of<AoeFormationFollow>(entity))
+            reg.get<AoePathMotionRequest>(entity).valid = false;
     for (const auto entity : reg.view<AoeUnitMovementIntentState>())
-        reg.get<AoeUnitMovementIntentState>(entity).valid = false;
+        if (!reg.all_of<AoeFormationFollow>(entity))
+            reg.get<AoeUnitMovementIntentState>(entity).valid = false;
 
     for (const auto entity : reg.view<AoePosition, AoeCollider, AoeMovement,
                                       AoeMoveGoal, AoeNavigationPath,
                                       AoeActionState>()) {
+        // Formation MovingControl owns the request while a natural follower
+        // or temporarily appended column leader follows another route.
+        if (const auto* follow = reg.try_get<AoeFormationFollow>(entity);
+            follow && follow->priority >
+                reg.get<AoeNavigationPath>(entity).priority)
+            continue;
         const auto& action = reg.get<AoeActionState>(entity);
         const auto& path = reg.get<AoeNavigationPath>(entity);
         if (action.state == UnitState::Attacking ||
@@ -196,8 +225,15 @@ void aoe_apply_final_unit_movement_constraints(
         const auto& movement = reg.get<AoeMovement>(entity);
         float max_speed = movement.speed;
         if (const auto* request = reg.try_get<AoePathMotionRequest>(entity);
-            request && request->valid && request->produced_tick == tick)
-            max_speed = std::min(max_speed, request->max_speed);
+            request && request->valid && request->produced_tick == tick) {
+            // A request above the base speed is a formation catch-up
+            // permission bounded by the unit's own configured ratio.
+            max_speed = request->max_speed > movement.speed + Epsilon
+                ? std::min(movement.speed *
+                               std::max(1.f, movement.catch_up_speed_ratio),
+                           request->max_speed)
+                : std::min(max_speed, request->max_speed);
+        }
         glm::vec2 previous{0.f};
         if (const auto* locomotion = reg.try_get<AoeLocomotionState>(entity))
             previous = locomotion->velocity;

@@ -55,6 +55,10 @@ struct AoeFormationSlot {
     AoeUnitTarget unit{};
     glm::vec2 local_offset{0.f};
     std::int64_t priority = 0;
+    // Stable front-to-rear column-chain metadata. A layout generator owns
+    // this topology because only it knows how its slots form columns.
+    std::uint32_t chain_index = 0;
+    std::uint32_t chain_order = 0;
 };
 
 // Local-space axis-aligned footprint of a generated formation. Bounds include
@@ -165,7 +169,9 @@ private:
                 const auto& ranked_member = ranked[index];
                 const glm::vec2 offset{x, y};
                 result.slots.push_back({ranked_member.member->unit, offset,
-                                        ranked_member.priority});
+                    ranked_member.priority,
+                    static_cast<std::uint32_t>(column),
+                    static_cast<std::uint32_t>(row)});
                 const glm::vec2 low =
                     offset - ranked_member.member->collision_radius;
                 const glm::vec2 high =

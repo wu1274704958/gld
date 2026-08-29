@@ -1332,6 +1332,67 @@ void append_squad(std::ostringstream& out, EcsWorld& world,
             << " progress pre=" << route_plan->prelude_progress
             << " travel=" << route_plan->travel_progress
             << " post=" << route_plan->postlude_progress << '\n';
+        const auto& width = route_plan->width_schedule;
+        if (width.valid && width.narrowed &&
+            width.transitions.size() >= 2) {
+            const auto* moving =
+                reg.try_get<AoeFormationMovingState>(squad);
+            const float travel_now = std::clamp(
+                (moving ? moving->shared_progress : 0.f) -
+                    route_plan->prelude_progress,
+                0.f, route_plan->travel_progress);
+            out << "    width constraint=["
+                << width.constraint_begin_progress << ','
+                << width.constraint_end_progress << "] shrink=["
+                << width.transitions.front().begin_progress << ','
+                << width.transitions.front().end_progress << "] restore=["
+                << width.transitions.back().begin_progress << ','
+                << width.transitions.back().end_progress << "] current="
+                << sample_formation_width(width, travel_now)
+                << " postlude-restore="
+                << (width.transitions.back().end_progress >
+                        route_plan->travel_progress
+                    ? "yes" : "no") << '\n';
+            out << "    width-stages=" << width.stages.size();
+            for (std::size_t index = 0;
+                 index < std::min<std::size_t>(width.stages.size(), 4);
+                 ++index) {
+                const auto& stage = width.stages[index];
+                out << " #" << index << "[" << stage.begin_progress
+                    << ',' << stage.end_progress << "] lanes-layout="
+                    << stage.layout;
+            }
+            if (width.stages.size() > 4) out << " ...";
+            out << '\n';
+            std::size_t path_actions = 0;
+            std::size_t follow_actions = 0;
+            std::size_t detach_actions = 0;
+            if (const auto* follow_plan =
+                    reg.try_get<AoeFormationFollowPlan>(squad)) {
+                for (const auto& natural_chain : follow_plan->chains) {
+                    const auto leader =
+                        natural_chain.members.front().unit.entity;
+                    const auto* actions =
+                        reg.try_get<AoeUnitActionChain>(leader);
+                    if (!actions || actions->current >= actions->steps.size())
+                        continue;
+                    switch (actions->steps[actions->current].kind) {
+                    case AoeUnitActionStepKind::NavigationPath:
+                        ++path_actions;
+                        break;
+                    case AoeUnitActionStepKind::FormationFollow:
+                        ++follow_actions;
+                        break;
+                    case AoeUnitActionStepKind::FormationDetachFollow:
+                        ++detach_actions;
+                        break;
+                    }
+                }
+            }
+            out << "    column-actions path=" << path_actions
+                << " follow=" << follow_actions
+                << " detach=" << detach_actions << '\n';
+        }
     }
     const std::size_t error_limit = std::min<std::size_t>(spawn.errors.size(), 3);
     for (std::size_t i = 0; i < error_limit; ++i)
