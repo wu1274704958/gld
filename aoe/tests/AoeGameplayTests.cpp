@@ -824,10 +824,10 @@ int main() {
         const auto groups = make_formation_follow_groups(*plan, narrow);
         const auto topology = make_formation_follow_topology(*plan);
         assert(groups && groups->size() == 1 &&
-               groups->front().chains.size() == 3);
+               groups->front().segments.size() == 3);
         assert(topology && topology->valid &&
                topology->bindings.size() == 3 &&
-               topology->attached_chains == 0);
+               topology->attached_segments == 0);
         const auto normal = make_formation_follow_assignments(*plan);
         assert(normal.size() == 3);
         for (const auto& assignment : normal) {
@@ -1371,6 +1371,80 @@ int main() {
         *large_follow_plan, *large_ten_columns);
     assert(
            large_follow_groups && large_follow_groups->size() == 10);
+    const auto assert_balanced_follow_groups = [](
+            std::size_t unit_count, std::size_t lane_count) {
+        AoeFormationContext context;
+        context.spacing = .5f;
+        context.members.reserve(unit_count);
+        for (std::size_t index = 0; index < unit_count; ++index) {
+            context.members.push_back({
+                {static_cast<entt::entity>(index + 1), index + 1},
+                static_cast<std::uint32_t>(index), {}, {.2f, .2f}});
+        }
+        const auto natural = TestSquareFormation::generate(context);
+        assert(natural);
+        const float cell = .9f;
+        const float maximum_width =
+            static_cast<float>(lane_count - 1) * cell + .4f;
+        const auto narrow = TestSquareFormation::generate_for_width(
+            context, maximum_width);
+        assert(narrow);
+        const auto plan = make_formation_follow_plan(*natural, *narrow,
+            static_cast<entt::entity>(unit_count + 100), 3, 4);
+        assert(plan && plan->valid);
+        const auto groups = make_formation_follow_groups(*plan, *narrow);
+        assert(groups && groups->size() == lane_count);
+        std::vector<std::vector<bool>> covered;
+        covered.reserve(plan->chains.size());
+        for (const auto& chain : plan->chains)
+            covered.emplace_back(chain.members.size(), false);
+        std::size_t minimum_length = unit_count;
+        std::size_t maximum_length = 0;
+        std::size_t total = 0;
+        for (const auto& group : *groups) {
+            assert(!group.segments.empty() &&
+                   group.segments.front().natural_chain ==
+                       group.root_chain &&
+                   group.segments.front().first_member == 0);
+            if (lane_count == plan->chains.size()) {
+                assert(group.segments.size() == 1 &&
+                       group.segments.front().member_count ==
+                           plan->chains[group.root_chain].members.size());
+            }
+            std::size_t lane_length = 0;
+            for (const auto& segment : group.segments) {
+                assert(segment.natural_chain < plan->chains.size() &&
+                       segment.member_count > 0 &&
+                       segment.first_member + segment.member_count <=
+                           covered[segment.natural_chain].size());
+                lane_length += segment.member_count;
+                for (std::size_t member = segment.first_member;
+                     member < segment.first_member + segment.member_count;
+                     ++member) {
+                    assert(!covered[segment.natural_chain][member]);
+                    covered[segment.natural_chain][member] = true;
+                }
+            }
+            minimum_length = std::min(minimum_length, lane_length);
+            maximum_length = std::max(maximum_length, lane_length);
+            total += lane_length;
+        }
+        assert(total == unit_count &&
+               maximum_length - minimum_length <= 1 &&
+               minimum_length == unit_count / lane_count &&
+               maximum_length ==
+                   (unit_count + lane_count - 1) / lane_count);
+        for (const auto& chain : covered)
+            assert(std::all_of(chain.begin(), chain.end(),
+                               [](bool value) { return value; }));
+    };
+    assert_balanced_follow_groups(5, 1);
+    assert_balanced_follow_groups(5, 2);
+    assert_balanced_follow_groups(7, 2);
+    assert_balanced_follow_groups(17, 4);
+    assert_balanced_follow_groups(17, 5);
+    assert_balanced_follow_groups(2500, 48);
+    assert_balanced_follow_groups(2500, 10);
     const auto large_normal_followers =
         make_formation_follow_assignments(*large_follow_plan);
     assert(large_normal_followers.size() == 2450);
@@ -1714,6 +1788,7 @@ int main() {
     assert(split_plan.poses.size() >= 2);
     assert(std::abs(split_plan.natural_width -
                     split_plan.selected_width) < 1e-5f);
+    assert(std::abs(split_plan.prelude_progress) < 1e-5f);
     assert(std::abs(split_plan.prelude_progress +
                     split_plan.travel_progress +
                     split_plan.postlude_progress -
@@ -1728,6 +1803,9 @@ int main() {
     assert(route_split_fixture.world.resource<AoeNavMeshResource>()
                .diagnostics().query_count == 1);
     std::vector<glm::vec2> split_goals;
+    std::size_t bootstrap_followers = 0;
+    const auto& split_members = route_split_fixture.world.reg().get<
+        AoeSquadMembers>(route_split_squad).active;
     const auto& split_map = route_split_fixture.world.resource<AoeLogicMap>();
     for (const auto& slot : route_split_fixture.world.reg().get<
              AoeSquadLayoutState>(route_split_squad).layout.slots) {
@@ -1746,6 +1824,25 @@ int main() {
             assert(request && request->valid &&
                    request->kind ==
                        AoeMovementIntentKind::FormationSlot);
+            const auto& topology = route_split_fixture.world.reg().get<
+                AoeFormationFollowTopology>(route_split_squad);
+            const auto& binding = topology.bindings[follow.natural_chain];
+            assert(!binding.attached &&
+                   binding.root_chain == follow.natural_chain);
+            if (binding.progress + 1e-5f <
+                    follow.distance_from_chain_leader) {
+                ++bootstrap_followers;
+                const auto& source_progress = route_split_fixture.world.reg().get<
+                    AoeFormationMemberRouteProgress>(
+                        binding.route_source.entity);
+                const glm::vec2 initial_forward = glm::normalize(
+                    split_trajectory.frames.front().forward);
+                const glm::vec2 expected_goal = source_progress.origin +
+                    initial_forward * (binding.progress -
+                        follow.distance_from_chain_leader);
+                assert(glm::length(request->local_goal - expected_goal) <
+                    1e-4f);
+            }
             continue;
         }
         const auto& path = route_split_fixture.world.reg().get<
@@ -1757,7 +1854,17 @@ int main() {
             AoeFormationRouteOwner>(entity));
         const auto& route_progress = route_split_fixture.world.reg().get<
             AoeFormationMemberRouteProgress>(entity);
+        const auto initial = std::find_if(split_members.begin(),
+            split_members.end(), [&](const auto& member) {
+                return member.entity == entity;
+            });
+        assert(initial != split_members.end());
+        const auto initial_index = static_cast<std::size_t>(
+            std::distance(split_members.begin(), initial));
         assert(route_progress.squad == route_split_squad &&
+               std::abs(route_progress.origin_progress) < 1e-5f &&
+               glm::length(route_progress.origin -
+                   split_initial_positions[initial_index]) < 1e-5f &&
                route_progress.waypoint_progress.size() ==
                    path.waypoints.size() &&
                route_progress.segment_speed_ratio.size() ==
@@ -1777,14 +1884,13 @@ int main() {
         }
         split_goals.push_back(path.requested_goal);
     }
+    assert(bootstrap_followers > 0);
     bool distinct_split_goals = false;
     for (std::size_t index = 1; index < split_goals.size(); ++index)
         distinct_split_goals = distinct_split_goals ||
             glm::length(split_goals[index] - split_goals.front()) > .1f;
     assert(distinct_split_goals);
     bool split_member_moved = false;
-    const auto& split_members = route_split_fixture.world.reg().get<
-        AoeSquadMembers>(route_split_squad).active;
     for (std::size_t index = 0; index < split_members.size(); ++index)
         split_member_moved = split_member_moved || glm::length(
             route_split_fixture.world.reg().get<AoePosition>(
@@ -1851,7 +1957,7 @@ int main() {
             AoePassThroughSquadArrivalRematchPlugin,
             AoeGridAStarUnitPathfinderPlugin,
             AoeNavMeshSquadPathfinderPlugin>
-         narrow_route_fixture;
+    narrow_route_fixture;
     narrow_route_fixture.world.add_resource<AoeLogicMap>(squad_stress_map());
     AoeSquadSpawnOptions narrow_route_options = route_split_options;
     narrow_route_options.composition = {{"test", 25, 1}};
@@ -1889,7 +1995,7 @@ int main() {
     assert(narrow_split.units.size() == 5 &&
            narrow_follow_plan.chains.size() == 5 &&
            narrow_topology.bindings.size() == 5 &&
-           narrow_topology.attached_chains == 0);
+           narrow_topology.attached_segments == 0);
     std::size_t narrow_followers = 0;
     std::size_t temporary_leaders = 0;
     std::size_t routed_leaders = 0;
@@ -1898,8 +2004,10 @@ int main() {
     for (const auto& member : narrow_route_fixture.world.reg().get<
              AoeSquadMembers>(narrow_route_squad).active) {
         if (narrow_route_fixture.world.reg().all_of<
-                AoeFormationRouteOwner>(member.entity)) {
+                AoeFormationRouteOwner>(member.entity))
             ++routed_leaders;
+        if (narrow_route_fixture.world.reg().all_of<
+                AoeUnitActionChain>(member.entity)) {
             const auto& actions = narrow_route_fixture.world.reg().get<
                 AoeUnitActionChain>(member.entity);
             assert(actions.valid &&
@@ -1927,7 +2035,7 @@ int main() {
         }
     }
     assert(routed_leaders == 5 && narrow_followers == 20 &&
-           temporary_leaders == 0 && planned_follow_actions == 2 &&
+           temporary_leaders == 0 && planned_follow_actions > 0 &&
            planned_detach_actions == planned_follow_actions);
     const auto& narrow_shrink =
         narrow_plan.width_schedule.transitions.front();
@@ -1967,7 +2075,7 @@ int main() {
             AoeFormationFollowTopology>(narrow_route_squad);
         assert(topology.valid &&
                topology.bindings.size() == narrow_follow_plan.chains.size());
-        std::size_t attached = 0;
+        const std::size_t attached = topology.active_segments.size();
         std::vector<std::vector<float>> distances(topology.bindings.size());
         for (std::size_t chain_index = 0;
              chain_index < topology.bindings.size(); ++chain_index) {
@@ -1979,10 +2087,9 @@ int main() {
                     previous_chain_progress[chain_index] + 1e-5f)
                 observed_attached_progress = true;
             previous_chain_progress[chain_index] = binding.progress;
-            assert(binding.root_chain < topology.bindings.size());
-            const auto& root = topology.bindings[binding.root_chain];
             if (binding.attached) {
-                ++attached;
+                assert(binding.root_chain < topology.bindings.size());
+                const auto& root = topology.bindings[binding.root_chain];
                 assert(binding.root_chain != chain_index &&
                        binding.active_follow_token != 0 &&
                        binding.base_distance > 0.f &&
@@ -2015,12 +2122,54 @@ int main() {
                         AoeFormationFollow>(chain.members.front().unit.entity);
                 assert(!leader_follow || !leader_follow->temporary);
             }
-            for (const auto& member : chain.members)
-                distances[binding.root_chain].push_back(
-                    binding.base_distance + member.distance_from_leader);
         }
-        assert(attached == topology.attached_chains);
-        if (attached > 0 && attached < topology.bindings.size())
+        for (const auto& segment : topology.active_segments) {
+            assert(segment.follow_token != 0 &&
+                   segment.natural_chain < narrow_follow_plan.chains.size() &&
+                   segment.root_chain < topology.bindings.size() &&
+                   segment.member_count > 0);
+            const auto& chain =
+                narrow_follow_plan.chains[segment.natural_chain];
+            assert(segment.first_member + segment.member_count <=
+                   chain.members.size());
+            const auto* head_follow =
+                narrow_route_fixture.world.reg().try_get<
+                    AoeFormationFollow>(
+                        chain.members[segment.first_member].unit.entity);
+            assert(head_follow && head_follow->temporary &&
+                   head_follow->follow_token == segment.follow_token);
+            if (std::find(observed_follow_tokens.begin(),
+                    observed_follow_tokens.end(), segment.follow_token) ==
+                observed_follow_tokens.end())
+                observed_follow_tokens.push_back(segment.follow_token);
+        }
+        for (std::size_t chain_index = 0;
+             chain_index < narrow_follow_plan.chains.size(); ++chain_index) {
+            const auto& chain = narrow_follow_plan.chains[chain_index];
+            for (std::size_t member_index = 0;
+                 member_index < chain.members.size(); ++member_index) {
+                const auto active = std::find_if(
+                    topology.active_segments.begin(),
+                    topology.active_segments.end(), [&](const auto& segment) {
+                        return segment.natural_chain == chain_index &&
+                            member_index >= segment.first_member &&
+                            member_index < segment.first_member +
+                                segment.member_count;
+                    });
+                if (active == topology.active_segments.end()) {
+                    distances[chain_index].push_back(
+                        chain.members[member_index].distance_from_leader);
+                } else {
+                    distances[active->root_chain].push_back(
+                        active->base_distance +
+                        chain.members[member_index].distance_from_leader -
+                        chain.members[active->first_member]
+                            .distance_from_leader);
+                }
+            }
+        }
+        assert(attached == topology.attached_segments);
+        if (attached > 0 && attached < planned_follow_actions)
             observed_partial_topology = true;
         for (auto& group_distances : distances) {
             std::sort(group_distances.begin(), group_distances.end());
@@ -2069,19 +2218,49 @@ int main() {
         const std::size_t expected_columns = static_cast<std::size_t>(
             std::ceil(std::sqrt(static_cast<double>(unit_count))));
         assert(route.valid && route.narrowed &&
+               std::abs(route.prelude_progress) < 1e-5f &&
                !route.width_schedule.stages.empty() &&
                follow.chains.size() == expected_columns);
+        const auto& split_settings = fixture.world.resource<
+            AoeFormationRouteSplitSettings>();
+        const std::size_t maximum_postlude_steps =
+            route.postlude_progress > 1e-5f
+            ? static_cast<std::size_t>(std::ceil(route.postlude_progress /
+                  std::max(.01f, split_settings.maximum_reformation_step)))
+            : 0u;
+        const std::size_t maximum_waypoints_per_route =
+            route.poses.size() +
+            route.width_schedule.transitions.size() * 2u + 1u +
+            maximum_postlude_steps;
+        const float maximum_initial_step =
+            split_settings.maximum_center_step *
+            (2.f + split_settings.maximum_layout_change_per_progress) + .01f;
         std::size_t routed = 0;
         std::size_t action_chains = 0;
         for (const auto& member : fixture.world.reg().get<
                  AoeSquadMembers>(squad).active) {
             routed += fixture.world.reg().all_of<AoeFormationRouteOwner>(
                 member.entity) ? 1u : 0u;
+            if (fixture.world.reg().all_of<AoeFormationRouteOwner>(
+                    member.entity)) {
+                const auto& path = fixture.world.reg().get<AoeNavigationPath>(
+                    member.entity);
+                const auto& progress = fixture.world.reg().get<
+                    AoeFormationMemberRouteProgress>(member.entity);
+                assert(!path.waypoints.empty() &&
+                       path.waypoints.size() <= maximum_waypoints_per_route &&
+                       glm::length(path.waypoints.front() - progress.origin) <=
+                           maximum_initial_step &&
+                       std::abs(progress.origin_progress) < 1e-5f);
+            }
             action_chains += fixture.world.reg().all_of<AoeUnitActionChain>(
                 member.entity) ? 1u : 0u;
         }
+        // Every natural column still owns one route. Segment heads may also
+        // carry action chains while their tails are redistributed across the
+        // passable lanes.
         assert(routed == expected_columns &&
-               action_chains == expected_columns);
+               action_chains >= expected_columns);
     };
     assert_large_route(2500);
     assert_large_route(5000);
@@ -2430,11 +2609,19 @@ int main() {
                 AoeNavigationPath>(binding.route_source.entity);
             const float source_progress =
                 topology.bindings[binding.root_chain].progress;
-            const auto sample = formation_detail::sample_member_route(
+            const float route_distance = binding.base_distance +
+                follow.distance_from_chain_leader;
+            auto sample = formation_detail::sample_member_route(
                 source_metadata, source_path,
-                source_progress - binding.base_distance -
-                    follow.distance_from_chain_leader);
+                source_progress - route_distance);
             assert(sample.valid);
+            if (!follow.temporary && source_progress + 1e-5f <
+                    route_distance) {
+                sample.forward = glm::normalize(
+                    quarter_turn_trajectory.frames.front().forward);
+                sample.position = source_metadata.origin + sample.forward *
+                    (source_progress - route_distance);
+            }
             const glm::vec2 error = request->local_goal - position;
             const glm::vec2 right{sample.forward.y, -sample.forward.x};
             const float lateral_error = std::abs(glm::dot(error, right));

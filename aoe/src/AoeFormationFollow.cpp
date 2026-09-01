@@ -42,51 +42,167 @@ std::optional<std::vector<glm::vec2>> chain_leader_offsets(
         [](glm::vec2 left, glm::vec2 right) {
             return left.x < right.x;
         });
+    result.erase(std::unique(result.begin(), result.end(),
+        [](glm::vec2 left, glm::vec2 right) {
+            return std::abs(left.x - right.x) <= Epsilon;
+        }), result.end());
     return result;
 }
 
-std::vector<std::vector<std::size_t>> assign_chains_to_lanes(
-    const std::vector<glm::vec2>& chain_offsets,
+std::optional<std::vector<AoeFormationFollowGroup>> make_balanced_groups(
+    const std::vector<AoeFormationFollowChain>& chains,
     const std::vector<glm::vec2>& lane_offsets) {
-    std::vector<std::vector<std::size_t>> result(lane_offsets.size());
-    if (lane_offsets.empty() || chain_offsets.size() < lane_offsets.size())
-        return {};
-    std::vector<bool> assigned(chain_offsets.size(), false);
+    const std::size_t chain_count = chains.size();
+    const std::size_t lane_count = lane_offsets.size();
+    if (!chain_count || !lane_count || lane_count > chain_count)
+        return std::nullopt;
 
-    // Reserve one nearest natural column for every generated lane first.
-    // Independent nearest-neighbour assignment can leave holes whenever the
-    // natural and narrowed layouts have different parity (for example 50 to
-    // 25 columns). Remaining columns then use the ordinary nearest lane.
-    for (std::size_t lane = 0; lane < lane_offsets.size(); ++lane) {
-        std::size_t best = chain_offsets.size();
-        float best_distance = std::numeric_limits<float>::infinity();
-        for (std::size_t chain = 0; chain < chain_offsets.size(); ++chain) {
-            if (assigned[chain]) continue;
-            const float distance = std::abs(
-                chain_offsets[chain].x - lane_offsets[lane].x);
-            if (distance < best_distance) {
-                best_distance = distance;
-                best = chain;
+    // An unchanged lane count is not a narrowing transition. Preserve the
+    // natural topology exactly instead of needlessly slicing or rebalancing
+    // columns whose lengths can differ by one.
+    if (lane_count == chain_count) {
+        std::vector<AoeFormationFollowGroup> result(lane_count);
+        for (std::size_t lane = 0; lane < lane_count; ++lane) {
+            if (chains[lane].members.empty()) return std::nullopt;
+            result[lane].root_chain = lane;
+            result[lane].lane_offset = lane_offsets[lane];
+            result[lane].lane_offset.y =
+                chains[lane].natural_leader_offset.y;
+            result[lane].segments.push_back(
+                {lane, 0, chains[lane].members.size()});
+        }
+        return result;
+    }
+
+    // Select one distinct root per lane with an order-preserving minimum-cost
+    // match. Preserving order prevents lane crossings; the dynamic program
+    // makes parity and irregular spacing deterministic instead of depending
+    // on which lane happened to reserve its root first.
+    const float infinity = std::numeric_limits<float>::infinity();
+    std::vector<std::vector<float>> cost(
+        lane_count, std::vector<float>(chain_count, infinity));
+    std::vector<std::vector<std::size_t>> parent(
+        lane_count, std::vector<std::size_t>(chain_count, chain_count));
+    for (std::size_t chain = 0;
+         chain + lane_count <= chain_count; ++chain) {
+        cost[0][chain] = std::abs(
+            chains[chain].natural_leader_offset.x - lane_offsets[0].x);
+    }
+    for (std::size_t lane = 1; lane < lane_count; ++lane) {
+        const std::size_t maximum_chain = chain_count - (lane_count - lane);
+        for (std::size_t chain = lane; chain <= maximum_chain; ++chain) {
+            float best = infinity;
+            std::size_t best_parent = chain_count;
+            for (std::size_t previous = lane - 1;
+                 previous < chain; ++previous) {
+                if (!std::isfinite(cost[lane - 1][previous])) continue;
+                const float candidate = cost[lane - 1][previous];
+                if (candidate < best - Epsilon ||
+                    (std::abs(candidate - best) <= Epsilon &&
+                     previous < best_parent)) {
+                    best = candidate;
+                    best_parent = previous;
+                }
+            }
+            if (best_parent == chain_count) continue;
+            cost[lane][chain] = best + std::abs(
+                chains[chain].natural_leader_offset.x -
+                lane_offsets[lane].x);
+            parent[lane][chain] = best_parent;
+        }
+    }
+    std::size_t last_root = chain_count;
+    float best_total = infinity;
+    for (std::size_t chain = lane_count - 1; chain < chain_count; ++chain) {
+        if (cost[lane_count - 1][chain] < best_total - Epsilon ||
+            (std::abs(cost[lane_count - 1][chain] - best_total) <= Epsilon &&
+             chain < last_root)) {
+            best_total = cost[lane_count - 1][chain];
+            last_root = chain;
+        }
+    }
+    if (last_root == chain_count) return std::nullopt;
+    std::vector<std::size_t> roots(lane_count);
+    for (std::size_t lane = lane_count; lane-- > 0;) {
+        roots[lane] = last_root;
+        if (lane) last_root = parent[lane][last_root];
+    }
+
+    std::size_t member_count = 0;
+    for (const auto& chain : chains) {
+        if (chain.members.empty()) return std::nullopt;
+        member_count += chain.members.size();
+    }
+    std::vector<std::size_t> target_lengths(
+        lane_count, member_count / lane_count);
+    const std::size_t remainder = member_count % lane_count;
+    std::vector<std::size_t> centered_lanes(lane_count);
+    for (std::size_t lane = 0; lane < lane_count; ++lane)
+        centered_lanes[lane] = lane;
+    std::stable_sort(centered_lanes.begin(), centered_lanes.end(),
+        [&](std::size_t left, std::size_t right) {
+            const float left_distance = std::abs(lane_offsets[left].x);
+            const float right_distance = std::abs(lane_offsets[right].x);
+            return left_distance != right_distance
+                ? left_distance < right_distance
+                : lane_offsets[left].x < lane_offsets[right].x;
+        });
+    for (std::size_t index = 0; index < remainder; ++index)
+        ++target_lengths[centered_lanes[index]];
+
+    std::vector<AoeFormationFollowGroup> result(lane_count);
+    std::vector<bool> is_root(chain_count, false);
+    std::vector<std::size_t> root_prefix(chain_count, 0);
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        const std::size_t root = roots[lane];
+        is_root[root] = true;
+        root_prefix[root] = std::min(
+            chains[root].members.size(), target_lengths[lane]);
+        if (!root_prefix[root]) return std::nullopt;
+        result[lane].root_chain = root;
+        result[lane].lane_offset = lane_offsets[lane];
+        result[lane].lane_offset.y =
+            chains[root].natural_leader_offset.y;
+        result[lane].segments.push_back(
+            {root, 0, root_prefix[root]});
+    }
+
+    struct Supply {
+        std::size_t natural_chain = 0;
+        std::size_t first_member = 0;
+        std::size_t member_count = 0;
+    };
+    std::vector<Supply> supplies;
+    for (std::size_t chain = 0; chain < chain_count; ++chain) {
+        const std::size_t first = is_root[chain] ? root_prefix[chain] : 0;
+        if (first < chains[chain].members.size())
+            supplies.push_back(
+                {chain, first, chains[chain].members.size() - first});
+    }
+
+    std::size_t supply_index = 0;
+    std::size_t supply_cursor = 0;
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        std::size_t remaining = target_lengths[lane] -
+            result[lane].segments.front().member_count;
+        while (remaining) {
+            if (supply_index >= supplies.size()) return std::nullopt;
+            const auto& supply = supplies[supply_index];
+            const std::size_t available =
+                supply.member_count - supply_cursor;
+            const std::size_t take = std::min(remaining, available);
+            result[lane].segments.push_back({supply.natural_chain,
+                supply.first_member + supply_cursor, take});
+            remaining -= take;
+            supply_cursor += take;
+            if (supply_cursor == supply.member_count) {
+                ++supply_index;
+                supply_cursor = 0;
             }
         }
-        if (best == chain_offsets.size()) return {};
-        assigned[best] = true;
-        result[lane].push_back(best);
     }
-    for (std::size_t chain = 0; chain < chain_offsets.size(); ++chain) {
-        if (assigned[chain]) continue;
-        std::size_t best = 0;
-        float best_distance = std::numeric_limits<float>::infinity();
-        for (std::size_t lane = 0; lane < lane_offsets.size(); ++lane) {
-            const float distance = std::abs(
-                chain_offsets[chain].x - lane_offsets[lane].x);
-            if (distance < best_distance) {
-                best_distance = distance;
-                best = lane;
-            }
-        }
-        result[best].push_back(chain);
-    }
+    if (supply_index != supplies.size() || supply_cursor != 0)
+        return std::nullopt;
     return result;
 }
 } // namespace
@@ -171,65 +287,14 @@ std::optional<AoeFormationFollowPlan> make_formation_follow_plan(
 
     auto lane_offsets = chain_leader_offsets(narrow_layout);
     if (!lane_offsets || lane_offsets->empty()) return std::nullopt;
-    const std::size_t natural_count = result.chains.size();
-    const std::size_t lane_count = std::min(
-        natural_count, lane_offsets->size());
-    result.groups.resize(lane_count);
-    for (std::size_t lane = 0; lane < lane_count; ++lane)
-        result.groups[lane].lane_offset = (*lane_offsets)[lane];
-
-    std::vector<glm::vec2> natural_offsets;
-    natural_offsets.reserve(result.chains.size());
-    for (const auto& chain : result.chains)
-        natural_offsets.push_back(chain.natural_leader_offset);
-    const auto assignments = assign_chains_to_lanes(
-        natural_offsets, *lane_offsets);
-    if (assignments.size() != lane_count) return std::nullopt;
-    for (std::size_t lane = 0; lane < lane_count; ++lane) {
-        result.groups[lane].chains = assignments[lane];
-        for (const std::size_t chain : assignments[lane])
-            result.chains[chain].narrow_leader_offset =
-                result.groups[lane].lane_offset;
-    }
-    for (auto& group : result.groups) {
-        if (group.chains.empty()) return std::nullopt;
-        const auto root = *std::min_element(
-            group.chains.begin(), group.chains.end(),
-            [&](std::size_t left, std::size_t right) {
-                const float left_distance = std::abs(
-                    result.chains[left].natural_leader_offset.x -
-                    group.lane_offset.x);
-                const float right_distance = std::abs(
-                    result.chains[right].natural_leader_offset.x -
-                    group.lane_offset.x);
-                return left_distance != right_distance
-                    ? left_distance < right_distance : left < right;
-            });
-        group.root_chain = root;
-        // Width compression changes lane ownership, not the route-progress
-        // origin of the column heads. The extra rows of a narrow generated
-        // layout are represented by temporary head-to-tail follows; copying
-        // that layout's front-row Y here would incorrectly teleport every
-        // retained head far ahead on long (large-unit) columns.
-        group.lane_offset.y =
-            result.chains[root].natural_leader_offset.y;
-        for (const std::size_t chain : group.chains)
-            result.chains[chain].narrow_leader_offset = group.lane_offset;
-        std::stable_sort(group.chains.begin(), group.chains.end(),
-            [&](std::size_t left, std::size_t right) {
-                if (left == right) return false;
-                if (left == root) return true;
-                if (right == root) return false;
-                const float root_x =
-                    result.chains[root].natural_leader_offset.x;
-                const float left_distance = std::abs(
-                    result.chains[left].natural_leader_offset.x - root_x);
-                const float right_distance = std::abs(
-                    result.chains[right].natural_leader_offset.x - root_x);
-                return left_distance != right_distance
-                    ? left_distance < right_distance : left < right;
-            });
-    }
+    auto groups = make_balanced_groups(result.chains, *lane_offsets);
+    if (!groups) return std::nullopt;
+    result.groups = std::move(*groups);
+    for (const auto& group : result.groups)
+        for (const auto& segment : group.segments)
+            if (segment.first_member == 0)
+                result.chains[segment.natural_chain].narrow_leader_offset =
+                    group.lane_offset;
     result.valid = true;
     return result;
 }
@@ -288,67 +353,9 @@ make_formation_follow_groups(
     const AoeFormationFollowPlan& plan,
     const AoeFormationLayout& lane_leader_layout) {
     if (!plan.valid || plan.chains.empty()) return std::nullopt;
-    std::vector<glm::vec2> lane_offsets;
-    lane_offsets.reserve(lane_leader_layout.slots.size());
-    for (const auto& slot : lane_leader_layout.slots) {
-        if (slot.unit.entity == entt::null || !finite(slot.local_offset))
-            return std::nullopt;
-        const auto found = std::find_if(lane_offsets.begin(),
-            lane_offsets.end(), [&](glm::vec2 value) {
-                return std::abs(value.x - slot.local_offset.x) <= Epsilon;
-            });
-        if (found == lane_offsets.end())
-            lane_offsets.push_back(slot.local_offset);
-    }
-    std::stable_sort(lane_offsets.begin(), lane_offsets.end(),
-        [](glm::vec2 left, glm::vec2 right) { return left.x < right.x; });
-    if (lane_offsets.empty()) return std::nullopt;
-    const std::size_t lane_count = std::min(
-        plan.chains.size(), lane_offsets.size());
-    std::vector<AoeFormationFollowGroup> groups(lane_count);
-    for (std::size_t lane = 0; lane < lane_count; ++lane)
-        groups[lane].lane_offset = lane_offsets[lane];
-
-    std::vector<glm::vec2> natural_offsets;
-    natural_offsets.reserve(plan.chains.size());
-    for (const auto& chain : plan.chains)
-        natural_offsets.push_back(chain.natural_leader_offset);
-    const auto assignments = assign_chains_to_lanes(
-        natural_offsets, lane_offsets);
-    if (assignments.size() != lane_count) return std::nullopt;
-    for (std::size_t lane = 0; lane < lane_count; ++lane)
-        groups[lane].chains = assignments[lane];
-    for (auto& group : groups) {
-        if (group.chains.empty()) return std::nullopt;
-        const auto root = *std::min_element(group.chains.begin(),
-            group.chains.end(), [&](std::size_t left, std::size_t right) {
-                const float left_distance = std::abs(
-                    plan.chains[left].natural_leader_offset.x -
-                    group.lane_offset.x);
-                const float right_distance = std::abs(
-                    plan.chains[right].natural_leader_offset.x -
-                    group.lane_offset.x);
-                return left_distance != right_distance
-                    ? left_distance < right_distance : left < right;
-            });
-        group.root_chain = root;
-        group.lane_offset.y =
-            plan.chains[root].natural_leader_offset.y;
-        std::stable_sort(group.chains.begin(), group.chains.end(),
-            [&](std::size_t left, std::size_t right) {
-                if (left == right) return false;
-                if (left == root) return true;
-                if (right == root) return false;
-                const float root_x = plan.chains[root].natural_leader_offset.x;
-                const float left_distance = std::abs(
-                    plan.chains[left].natural_leader_offset.x - root_x);
-                const float right_distance = std::abs(
-                    plan.chains[right].natural_leader_offset.x - root_x);
-                return left_distance != right_distance
-                    ? left_distance < right_distance : left < right;
-            });
-    }
-    return groups;
+    const auto lane_offsets = chain_leader_offsets(lane_leader_layout);
+    if (!lane_offsets || lane_offsets->empty()) return std::nullopt;
+    return make_balanced_groups(plan.chains, *lane_offsets);
 }
 
 } // namespace gld::ecs::aoe

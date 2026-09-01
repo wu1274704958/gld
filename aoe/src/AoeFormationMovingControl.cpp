@@ -125,139 +125,234 @@ AoeFormationModuleResult aoe_synchronized_follow_motion_system(
         return true;
     };
 
-    for (std::size_t index = 0; index < topology->bindings.size(); ++index) {
-        auto& binding = topology->bindings[index];
-        if (binding.attached) continue;
-        if (binding.root_chain != index ||
-            binding.route_source.entity != route_sources[index].unit.entity ||
-            binding.route_source.instance_id !=
-                route_sources[index].unit.instance_id)
-            return fail();
-        const float measured = formation_detail::member_route_progress(
-            *route_sources[index].metadata, route_sources[index].path,
-            reg.get<AoePosition>(route_sources[index].unit.entity).value,
-            trajectory->total_progress);
-        if (!advance_binding(binding, measured)) return fail();
-    }
-    const auto update_attached_progress = [&]() {
+    const auto find_active_segment = [&](std::uint64_t token) {
+        return std::find_if(topology->active_segments.begin(),
+            topology->active_segments.end(), [&](const auto& segment) {
+                return segment.follow_token == token;
+            });
+    };
+    const auto update_chain_progress = [&]() {
+        std::vector<int> leader_segment_for_chain(
+            topology->bindings.size(), -1);
+        for (std::size_t index = 0;
+             index < topology->active_segments.size(); ++index) {
+            const auto& segment = topology->active_segments[index];
+            if (segment.first_member != 0) continue;
+            if (segment.natural_chain >= leader_segment_for_chain.size() ||
+                leader_segment_for_chain[segment.natural_chain] >= 0)
+                return false;
+            leader_segment_for_chain[segment.natural_chain] =
+                static_cast<int>(index);
+        }
+        // Retained roots and not-yet-attached columns measure their own path.
         for (std::size_t index = 0; index < topology->bindings.size(); ++index) {
             auto& binding = topology->bindings[index];
-            if (!binding.attached) continue;
-            if (binding.root_chain >= topology->bindings.size() ||
-                binding.root_chain == index ||
-                !std::isfinite(binding.base_distance) ||
-                binding.base_distance < 0.f)
-                return false;
-            const auto& root = topology->bindings[binding.root_chain];
-            if (root.attached || root.root_chain != binding.root_chain ||
-                binding.route_source.entity != root.route_source.entity ||
+            if (leader_segment_for_chain[index] >= 0) continue;
+            if (binding.root_chain != index || binding.attached ||
+                binding.route_source.entity != route_sources[index].unit.entity ||
                 binding.route_source.instance_id !=
+                    route_sources[index].unit.instance_id)
+                return false;
+            const float measured = formation_detail::member_route_progress(
+                *route_sources[index].metadata, route_sources[index].path,
+                reg.get<AoePosition>(route_sources[index].unit.entity).value,
+                trajectory->total_progress);
+            if (!advance_binding(binding, measured)) return false;
+        }
+        // An overflow column's leader is itself a segment head. Its physical
+        // progress follows the retained lane root while its dormant natural
+        // route stays available for restoration.
+        for (const auto& segment : topology->active_segments) {
+            if (segment.first_member != 0) continue;
+            if (segment.natural_chain >= topology->bindings.size() ||
+                segment.root_chain >= topology->bindings.size() ||
+                segment.natural_chain == segment.root_chain ||
+                !std::isfinite(segment.base_distance) ||
+                segment.base_distance < 0.f)
+                return false;
+            auto& binding = topology->bindings[segment.natural_chain];
+            const auto& root = topology->bindings[segment.root_chain];
+            if (!binding.attached ||
+                binding.root_chain != segment.root_chain ||
+                binding.active_follow_token != segment.follow_token ||
+                binding.route_source.entity != segment.route_source.entity ||
+                binding.route_source.instance_id !=
+                    segment.route_source.instance_id ||
+                std::abs(binding.base_distance - segment.base_distance) >
+                    Epsilon ||
+                root.attached || root.root_chain != segment.root_chain ||
+                segment.route_source.entity != root.route_source.entity ||
+                segment.route_source.instance_id !=
                     root.route_source.instance_id)
                 return false;
             if (!advance_binding(binding,
-                    root.progress - binding.base_distance))
+                    root.progress - segment.base_distance))
                 return false;
         }
         return true;
     };
-    if (!update_attached_progress()) return fail();
+    if (!update_chain_progress()) return fail();
 
-    for (std::size_t index = 0; index < follow_plan->chains.size(); ++index) {
-        const auto& chain = follow_plan->chains[index];
-        const auto leader = chain.members.front().unit;
-        auto& binding = topology->bindings[index];
-        auto* actions = reg.try_get<AoeUnitActionChain>(leader.entity);
-        auto* path = route_sources[index].path;
-        const auto* metadata = route_sources[index].metadata;
-        if (!actions || !actions->valid ||
-            actions->squad != context.squad ||
-            actions->order_revision != context.order.revision ||
-            actions->unit_instance_id != leader.instance_id)
-            return fail();
-
-        std::size_t immediate_guard = actions->steps.size() + 1;
-        while (actions->current < actions->steps.size() && immediate_guard--) {
-            const auto& step = actions->steps[actions->current];
-            switch (step.kind) {
-            case AoeUnitActionStepKind::NavigationPath:
-                if (binding.progress + Epsilon < step.end_progress)
+    // Segment heads, not only natural leaders, can own action timelines.
+    for (std::size_t chain_index = 0;
+         chain_index < follow_plan->chains.size(); ++chain_index) {
+        const auto& chain = follow_plan->chains[chain_index];
+        for (std::size_t member_index = 0;
+             member_index < chain.members.size(); ++member_index) {
+            const auto& member = chain.members[member_index];
+            auto* actions = reg.try_get<AoeUnitActionChain>(member.unit.entity);
+            if (!actions) continue;
+            if (!actions->valid || actions->squad != context.squad ||
+                actions->order_revision != context.order.revision ||
+                actions->unit_instance_id != member.unit.instance_id ||
+                actions->natural_chain != chain_index ||
+                actions->member_index != member_index)
+                return fail();
+            auto& chain_binding = topology->bindings[chain_index];
+            std::size_t immediate_guard = actions->steps.size() + 1;
+            while (actions->current < actions->steps.size() &&
+                   immediate_guard--) {
+                const auto& step = actions->steps[actions->current];
+                if (chain_binding.progress + Epsilon < step.begin_progress) {
                     immediate_guard = 0;
-                else
-                    ++actions->current;
-                break;
-            case AoeUnitActionStepKind::FormationFollow: {
-                const auto& attach = step.attach;
-                if (!step.follow_token ||
-                    attach.root_chain >= topology->bindings.size() ||
-                    attach.root_chain == index ||
-                    !std::isfinite(attach.base_distance) ||
-                    attach.base_distance < 0.f ||
-                    !std::isfinite(attach.following_distance) ||
-                    attach.following_distance < 0.f)
-                    return fail();
-                const auto& root = topology->bindings[attach.root_chain];
-                if (root.attached || root.root_chain != attach.root_chain ||
-                    attach.route_source.entity != root.route_source.entity ||
-                    attach.route_source.instance_id !=
-                        root.route_source.instance_id)
-                    return fail();
-                if (binding.attached &&
-                    binding.active_follow_token != step.follow_token)
-                    return fail();
-                if (!binding.attached) {
-                    binding.root_chain = attach.root_chain;
-                    binding.route_source = attach.route_source;
-                    binding.preceding_tail = attach.preceding_tail;
-                    binding.base_distance = attach.base_distance;
-                    binding.active_follow_token = step.follow_token;
-                    binding.attached = true;
+                    continue;
                 }
-                reg.emplace_or_replace<AoeFormationFollow>(leader.entity,
-                    AoeFormationFollow{context.squad,
-                        context.order.revision, attach.preceding_tail, 0.f,
-                        attach.following_distance,
-                        static_cast<std::uint32_t>(index), 0, true,
-                        step.follow_token});
-                actions->active_follow_token = step.follow_token;
-                if (binding.progress + Epsilon < step.end_progress)
-                    immediate_guard = 0;
-                else
+                switch (step.kind) {
+                case AoeUnitActionStepKind::NavigationPath:
+                    if (chain_binding.progress + Epsilon < step.end_progress)
+                        immediate_guard = 0;
+                    else
+                        ++actions->current;
+                    break;
+                case AoeUnitActionStepKind::FormationFollow: {
+                    const auto& attach = step.attach;
+                    if (!step.follow_token ||
+                        attach.natural_chain != chain_index ||
+                        attach.first_member != member_index ||
+                        !attach.member_count ||
+                        attach.member_count > chain.members.size() - member_index ||
+                        attach.root_chain >= topology->bindings.size() ||
+                        attach.root_chain == chain_index ||
+                        !std::isfinite(attach.base_distance) ||
+                        attach.base_distance < 0.f ||
+                        !std::isfinite(attach.following_distance) ||
+                        attach.following_distance < 0.f)
+                        return fail();
+                    const auto& root = topology->bindings[attach.root_chain];
+                    if (root.attached || root.root_chain != attach.root_chain ||
+                        attach.route_source.entity != root.route_source.entity ||
+                        attach.route_source.instance_id !=
+                            root.route_source.instance_id)
+                        return fail();
+                    auto active = find_active_segment(step.follow_token);
+                    if (actions->active_follow_token &&
+                        actions->active_follow_token != step.follow_token)
+                        return fail();
+                    if (active == topology->active_segments.end()) {
+                        topology->active_segments.push_back({
+                            step.follow_token, attach.natural_chain,
+                            attach.first_member, attach.member_count,
+                            attach.root_chain, attach.route_source,
+                            attach.preceding_tail, attach.base_distance,
+                            attach.following_distance});
+                        if (member_index == 0) {
+                            chain_binding.root_chain = attach.root_chain;
+                            chain_binding.route_source = attach.route_source;
+                            chain_binding.preceding_tail = attach.preceding_tail;
+                            chain_binding.base_distance = attach.base_distance;
+                            chain_binding.active_follow_token = step.follow_token;
+                            chain_binding.attached = true;
+                        }
+                    } else if (
+                        active->natural_chain != attach.natural_chain ||
+                        active->first_member != attach.first_member ||
+                        active->member_count != attach.member_count ||
+                        active->root_chain != attach.root_chain ||
+                        active->route_source.entity !=
+                            attach.route_source.entity ||
+                        active->route_source.instance_id !=
+                            attach.route_source.instance_id ||
+                        active->preceding_tail.entity !=
+                            attach.preceding_tail.entity ||
+                        active->preceding_tail.instance_id !=
+                            attach.preceding_tail.instance_id ||
+                        std::abs(active->base_distance -
+                            attach.base_distance) > Epsilon ||
+                        std::abs(active->following_distance -
+                            attach.following_distance) > Epsilon) {
+                        return fail();
+                    }
+                    reg.emplace_or_replace<AoeFormationFollow>(member.unit.entity,
+                        AoeFormationFollow{context.squad,
+                            context.order.revision, attach.preceding_tail,
+                            member.distance_from_leader,
+                            attach.following_distance,
+                            static_cast<std::uint32_t>(chain_index),
+                            static_cast<std::uint32_t>(member_index), true,
+                            step.follow_token});
+                    actions->active_follow_token = step.follow_token;
+                    if (chain_binding.progress + Epsilon < step.end_progress)
+                        immediate_guard = 0;
+                    else
+                        ++actions->current;
+                    break;
+                }
+                case AoeUnitActionStepKind::FormationDetachFollow: {
+                    if (!step.follow_token ||
+                        actions->active_follow_token != step.follow_token)
+                        return fail();
+                    auto active = find_active_segment(step.follow_token);
+                    if (active == topology->active_segments.end() ||
+                        active->natural_chain != chain_index ||
+                        active->first_member != member_index)
+                        return fail();
+                    const auto* follow = reg.try_get<AoeFormationFollow>(
+                        member.unit.entity);
+                    if (!follow || !follow->temporary ||
+                        follow->follow_token != step.follow_token ||
+                        follow->squad != context.squad ||
+                        follow->order_revision != context.order.revision)
+                        return fail();
+                    if (member_index == 0) {
+                        reg.remove<AoeFormationFollow>(member.unit.entity);
+                        formation_detail::advance_path_to_progress(
+                            *route_sources[chain_index].path,
+                            *route_sources[chain_index].metadata,
+                            std::max(step.end_progress,
+                                     chain_binding.progress));
+                        const float progress = chain_binding.progress;
+                        const std::uint64_t last_tick =
+                            chain_binding.last_progress_tick;
+                        chain_binding = AoeFormationFollowChainBinding{
+                            static_cast<std::uint32_t>(chain_index),
+                            static_cast<std::uint32_t>(chain_index),
+                            route_sources[chain_index].unit, {}, 0.f,
+                            progress, 0, last_tick, false};
+                    } else {
+                        const auto& previous = chain.members[member_index - 1];
+                        reg.emplace_or_replace<AoeFormationFollow>(
+                            member.unit.entity,
+                            AoeFormationFollow{context.squad,
+                                context.order.revision, previous.unit,
+                                member.distance_from_leader,
+                                member.distance_from_leader -
+                                    previous.distance_from_leader,
+                                static_cast<std::uint32_t>(chain_index),
+                                static_cast<std::uint32_t>(member_index),
+                                false, 0});
+                    }
+                    topology->active_segments.erase(active);
+                    actions->active_follow_token = 0;
                     ++actions->current;
-                break;
-            }
-            case AoeUnitActionStepKind::FormationDetachFollow: {
-                if (!step.follow_token || !binding.attached ||
-                    binding.active_follow_token != step.follow_token ||
-                    actions->active_follow_token != step.follow_token)
-                    return fail();
-                const auto* follow = reg.try_get<AoeFormationFollow>(
-                    leader.entity);
-                if (!follow || !follow->temporary ||
-                    follow->follow_token != step.follow_token ||
-                    follow->squad != context.squad ||
-                    follow->order_revision != context.order.revision)
-                    return fail();
-                reg.remove<AoeFormationFollow>(leader.entity);
-                formation_detail::advance_path_to_progress(
-                    *path, *metadata,
-                    std::max(step.end_progress, binding.progress));
-                const float progress = binding.progress;
-                const std::uint64_t last_tick = binding.last_progress_tick;
-                binding = AoeFormationFollowChainBinding{
-                    static_cast<std::uint32_t>(index),
-                    static_cast<std::uint32_t>(index), leader, {}, 0.f,
-                    progress, 0, last_tick, false};
-                actions->active_follow_token = 0;
-                ++actions->current;
-                break;
-            }
+                    break;
+                }
+                }
             }
         }
     }
-    if (!update_attached_progress()) return fail();
-    topology->attached_chains = static_cast<std::uint32_t>(std::count_if(
-        topology->bindings.begin(), topology->bindings.end(),
-        [](const auto& binding) { return binding.attached; }));
+    if (!update_chain_progress()) return fail();
+    topology->attached_segments = static_cast<std::uint32_t>(
+        topology->active_segments.size());
 
     struct MemberRuntime {
         AoeUnitTarget unit{};
@@ -273,24 +368,56 @@ AoeFormationModuleResult aoe_synchronized_follow_motion_system(
     std::vector<float> root_speed_ratio(follow_plan->chains.size(), 0.f);
     std::vector<bool> group_present(follow_plan->chains.size(), false);
     std::uint64_t followers_seen = 0;
+    std::vector<std::vector<int>> active_segment_for_member;
+    active_segment_for_member.reserve(follow_plan->chains.size());
+    for (const auto& chain : follow_plan->chains)
+        active_segment_for_member.emplace_back(chain.members.size(), -1);
+    for (std::size_t segment_index = 0;
+         segment_index < topology->active_segments.size(); ++segment_index) {
+        const auto& segment = topology->active_segments[segment_index];
+        if (segment.natural_chain >= follow_plan->chains.size() ||
+            !segment.member_count ||
+            segment.first_member >= active_segment_for_member[
+                segment.natural_chain].size() ||
+            segment.member_count > active_segment_for_member[
+                segment.natural_chain].size() - segment.first_member)
+            return fail();
+        for (std::size_t member_index = segment.first_member;
+             member_index < segment.first_member + segment.member_count;
+             ++member_index) {
+            auto& owner = active_segment_for_member[
+                segment.natural_chain][member_index];
+            if (owner >= 0) return fail();
+            owner = static_cast<int>(segment_index);
+        }
+    }
 
     for (std::size_t chain_index = 0;
          chain_index < follow_plan->chains.size(); ++chain_index) {
         const auto& chain = follow_plan->chains[chain_index];
-        const auto& binding = topology->bindings[chain_index];
-        if (binding.root_chain >= route_sources.size()) return fail();
-        const std::size_t root_index = binding.root_chain;
-        const auto& root = topology->bindings[root_index];
-        const auto& source = route_sources[root_index];
-        if (!source.valid || root.attached || root.root_chain != root_index ||
-            source.unit.entity != binding.route_source.entity ||
-            source.unit.instance_id != binding.route_source.instance_id)
-            return fail();
-        group_present[root_index] = true;
 
         for (std::size_t member_index = 0;
              member_index < chain.members.size(); ++member_index) {
             const auto& member = chain.members[member_index];
+            const int active_index =
+                active_segment_for_member[chain_index][member_index];
+            const auto* active = active_index >= 0
+                ? &topology->active_segments[
+                    static_cast<std::size_t>(active_index)] : nullptr;
+            const std::size_t root_index = active
+                ? active->root_chain : chain_index;
+            if (root_index >= route_sources.size()) return fail();
+            const auto& root = topology->bindings[root_index];
+            const auto& source = route_sources[root_index];
+            if (!source.valid || root.attached ||
+                root.root_chain != root_index ||
+                source.unit.entity != root.route_source.entity ||
+                source.unit.instance_id != root.route_source.instance_id ||
+                (active && (active->route_source.entity !=
+                    source.unit.entity || active->route_source.instance_id !=
+                    source.unit.instance_id)))
+                return fail();
+            group_present[root_index] = true;
             if (!detail::aoe_gameplay_squad_member_valid(reg, member.unit))
                 continue;
             if (!formation_member_active(reg, member.unit.entity)) {
@@ -303,7 +430,9 @@ AoeFormationModuleResult aoe_synchronized_follow_motion_system(
 
             const auto* follow_component =
                 reg.try_get<AoeFormationFollow>(member.unit.entity);
-            const bool should_follow = member_index != 0 || binding.attached;
+            const bool segment_head = active &&
+                member_index == active->first_member;
+            const bool should_follow = member_index != 0 || active;
             if (should_follow) {
                 if (!follow_component ||
                     follow_component->squad != context.squad ||
@@ -311,11 +440,11 @@ AoeFormationModuleResult aoe_synchronized_follow_motion_system(
                     follow_component->natural_chain != chain_index ||
                     std::abs(follow_component->distance_from_chain_leader -
                         member.distance_from_leader) > Epsilon ||
-                    (member_index == 0 &&
+                    (segment_head &&
                         (!follow_component->temporary ||
                          follow_component->follow_token !=
-                            binding.active_follow_token)) ||
-                    (member_index != 0 && follow_component->temporary))
+                            active->follow_token)) ||
+                    (!segment_head && follow_component->temporary))
                     return fail();
                 if (const auto* path = reg.try_get<AoeNavigationPath>(
                         member.unit.entity);
@@ -325,18 +454,38 @@ AoeFormationModuleResult aoe_synchronized_follow_motion_system(
                 return fail();
             }
 
-            const float distance = binding.base_distance +
-                member.distance_from_leader;
+            const float distance = active
+                ? active->base_distance + member.distance_from_leader -
+                    chain.members[active->first_member].distance_from_leader
+                : member.distance_from_leader;
             auto sample = formation_detail::sample_member_route(
                 *source.metadata, *source.path, root.progress - distance);
             if (!sample.valid || !std::isfinite(sample.speed_ratio) ||
                 sample.speed_ratio <= Epsilon)
                 return fail();
+            // Before a natural follower's historical route anchor reaches
+            // the leader origin, do not use sample_member_route's first-segment
+            // backward extrapolation. Attached segments remain on their shared
+            // root route: projecting their effective distance onto this
+            // initial-forward bootstrap can create an unvalidated straight
+            // target across static obstacles.
+            if (!active && member_index != 0 &&
+                root.progress + Epsilon < distance) {
+                const auto& start_frame = trajectory->frames.front();
+                const float forward_length2 = glm::dot(start_frame.forward,
+                    start_frame.forward);
+                if (!std::isfinite(forward_length2) ||
+                    forward_length2 <= Epsilon * Epsilon)
+                    return fail();
+                sample.forward = glm::normalize(start_frame.forward);
+                sample.position = source.metadata->origin + sample.forward *
+                    (root.progress - distance);
+            }
             const auto& movement = reg.get<AoeMovement>(member.unit.entity);
             sustainable_speed[root_index] = std::min(
                 sustainable_speed[root_index],
                 movement.speed / sample.speed_ratio);
-            if (chain_index == root_index && member_index == 0)
+            if (chain_index == root_index && member_index == 0 && !active)
                 root_speed_ratio[root_index] = sample.speed_ratio;
 
             MemberRuntime runtime;

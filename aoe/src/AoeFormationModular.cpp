@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 
 namespace gld::ecs::aoe {
 using formation_detail::advance_path_to_progress;
@@ -539,6 +540,11 @@ void clear_owned_routes(entt::registry& reg, entt::entity squad,
         for (const auto& chain : follow_plan->chains) {
             for (const auto& member : chain.members) {
                 if (!reg.valid(member.unit.entity)) continue;
+                if (const auto* actions = reg.try_get<AoeUnitActionChain>(
+                        member.unit.entity);
+                    actions && actions->squad == squad &&
+                    actions->order_revision == follow_plan->order_revision)
+                    reg.remove<AoeUnitActionChain>(member.unit.entity);
                 const auto* follow =
                     reg.try_get<AoeFormationFollow>(member.unit.entity);
                 if (!follow || follow->squad != squad ||
@@ -1366,7 +1372,7 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
     // layout changes deterministic even when center pose steps are coarse.
     std::vector<float> travel_samples;
     travel_samples.reserve(
-        poses.size() + width_schedule->transitions.size() * 2);
+        poses.size() + width_schedule->transitions.size() * 2 + 1);
     for (const auto& pose : poses) travel_samples.push_back(pose.distance);
     for (const auto& transition : width_schedule->transitions) {
         if (transition.begin_progress > Epsilon &&
@@ -1376,12 +1382,50 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
             transition.end_progress < travel_progress - Epsilon)
             travel_samples.push_back(transition.end_progress);
     }
+    float maximum_start_phase = 0.f;
+    for (const auto& slot : width_schedule->layouts.front().slots)
+        maximum_start_phase = std::max(
+            maximum_start_phase, std::abs(slot.local_offset.y));
+    const float startup_span = std::min(travel_progress,
+        std::max(settings.maximum_center_step, maximum_start_phase));
+    if (startup_span > Epsilon &&
+        startup_span < travel_progress - Epsilon)
+        travel_samples.push_back(startup_span);
     std::sort(travel_samples.begin(), travel_samples.end());
     travel_samples.erase(std::unique(travel_samples.begin(),
         travel_samples.end(), [](float left, float right) {
             return std::abs(left - right) <= Epsilon;
         }), travel_samples.end());
 
+    const auto startup_blend = [&](float progress) {
+        if (startup_span <= Epsilon) return 1.f;
+        const float t = std::clamp(progress / startup_span, 0.f, 1.f);
+        return t * t * (3.f - 2.f * t);
+    };
+    // Column heads start in the rigid formation frame, while the steady-state
+    // route treats longitudinal offset as progress along the swept center
+    // curve. Consume that offset as a smooth phase while the center moves.
+    // This keeps progress zero at the actual slot and reuses the normal travel
+    // samples instead of generating O(column_count * formation_depth)
+    // stationary-prelude waypoints.
+    struct MemberRouteSample {
+        glm::vec2 point{0.f};
+        glm::vec2 phase_center{0.f};
+    };
+    const auto sample_start_aligned_member_route = [&](
+            std::size_t slot_index, float progress, glm::vec2 start_error) {
+        const glm::vec2 offset = sample_formation_width_schedule(
+            *width_schedule, slot_index, progress).local_offset;
+        const float blend = startup_blend(progress);
+        const float phase_y = offset.y * blend;
+        const auto pose = sample_pose_curve(poses, progress + phase_y);
+        const glm::vec2 right{pose.forward.y, -pose.forward.x};
+        return MemberRouteSample{
+            pose.center + right * offset.x +
+                pose.forward * (offset.y - phase_y) +
+                start_error * (1.f - blend),
+            pose.center};
+    };
     // A Detour portal marks a polygon boundary, not necessarily the first
     // point where a wide member envelope touches the obstacle corner. Use the
     // static map to move only the affected slot's wave window earlier/later.
@@ -1405,6 +1449,16 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
             const auto& unit =
                 width_schedule->layouts.front().slots[slot_index].unit;
             const auto& collider = reg.get<AoeCollider>(unit.entity);
+            const glm::vec2 start_offset = sample_formation_width_schedule(
+                *width_schedule, slot_index, 0.f).local_offset;
+            const auto& start_pose = poses.front();
+            const glm::vec2 start_right{
+                start_pose.forward.y, -start_pose.forward.x};
+            const glm::vec2 ideal_start = start_pose.center +
+                start_right * start_offset.x +
+                start_pose.forward * start_offset.y;
+            const glm::vec2 start_error =
+                reg.get<AoePosition>(unit.entity).value - ideal_start;
             bool safe = false;
             for (std::uint32_t attempt = 0;
                  attempt < MaximumWindowRepairs && !safe; ++attempt) {
@@ -1413,19 +1467,22 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
                 float previous_progress = 0.f;
                 bool have_previous = false;
                 for (const float progress : travel_samples) {
-                    const glm::vec2 offset =
-                        sample_formation_width_schedule(
-                            *width_schedule, slot_index,
-                            progress).local_offset;
-                    const auto pose = sample_pose_curve(
-                        poses, progress + offset.y);
-                    const glm::vec2 right{
-                        pose.forward.y, -pose.forward.x};
-                    const glm::vec2 point = pose.center + right * offset.x;
+                    const glm::vec2 point = sample_start_aligned_member_route(
+                        slot_index, progress, start_error).point;
                     if (!have_previous) {
                         previous_point = point;
                         previous_progress = progress;
                         have_previous = true;
+                        continue;
+                    }
+                    // The old stationary prelude was intentionally outside
+                    // static transition repair. Preserve that escape policy
+                    // while the same reformation is folded into moving route
+                    // progress; after startup_span this is the regular swept
+                    // route and is validated normally.
+                    if (progress <= startup_span + Epsilon) {
+                        previous_point = point;
+                        previous_progress = progress;
                         continue;
                     }
                     if (logic_map->static_safe_fraction(previous_point, point,
@@ -1490,13 +1547,13 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         std::size_t slot_index = 0;
         AoeUnitTarget unit{};
         glm::vec2 actual_start{0.f};
-        glm::vec2 snake_start{0.f};
+        glm::vec2 start_error{0.f};
         glm::vec2 snake_end{0.f};
         glm::vec2 natural_end{0.f};
     };
     std::vector<MemberEndpoints> endpoints;
     endpoints.reserve(width_schedule->layouts.front().slots.size());
-    float prelude_progress = 0.f;
+    constexpr float prelude_progress = 0.f;
     float postlude_progress = 0.f;
     const glm::vec2 final_center = corridor.goal_on_mesh;
     const glm::vec2 final_forward = poses.back().forward;
@@ -1512,12 +1569,8 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
             *width_schedule, slot_index, 0.f).local_offset;
         const glm::vec2 end_offset = sample_formation_width_schedule(
             *width_schedule, slot_index, travel_progress).local_offset;
-        const auto start_pose = sample_pose_curve(
-            poses, start_offset.y);
         const auto end_pose = sample_pose_curve(
             poses, travel_progress + end_offset.y);
-        const glm::vec2 start_right{
-            start_pose.forward.y, -start_pose.forward.x};
         const glm::vec2 end_right{
             end_pose.forward.y, -end_pose.forward.x};
         MemberEndpoints member;
@@ -1525,33 +1578,59 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         member.unit = natural_slot.unit;
         member.actual_start =
             reg.get<AoePosition>(natural_slot.unit.entity).value;
-        member.snake_start = start_pose.center +
-            start_right * start_offset.x;
+        const auto& start_pose = poses.front();
+        const glm::vec2 start_right{
+            start_pose.forward.y, -start_pose.forward.x};
+        const glm::vec2 ideal_start = start_pose.center +
+            start_right * start_offset.x +
+            start_pose.forward * start_offset.y;
+        member.start_error = member.actual_start - ideal_start;
         member.snake_end = end_pose.center +
             end_right * end_offset.x;
         member.natural_end = final_center +
             final_right * natural_slot.local_offset.x +
             final_forward * natural_slot.local_offset.y;
-        prelude_progress = std::max(prelude_progress,
-            glm::length(member.snake_start - member.actual_start));
         postlude_progress = std::max(postlude_progress,
             glm::length(member.natural_end - member.snake_end));
         endpoints.push_back(member);
     }
 
-    const float total_progress =
-        prelude_progress + travel_progress + postlude_progress;
-    std::vector<AoeUnitActionChain> leader_action_chains(
-        follow_plan->chains.size());
+    const float total_progress = travel_progress + postlude_progress;
+    struct PlannedActionChain {
+        AoeUnitTarget unit{};
+        AoeUnitActionChain actions;
+    };
+    std::vector<PlannedActionChain> planned_action_chains;
+    std::unordered_map<entt::entity, std::size_t> action_chain_by_entity;
+    const auto action_chain_for = [&](std::size_t natural_chain,
+                                      std::size_t member_index)
+            -> AoeUnitActionChain& {
+        const auto& member =
+            follow_plan->chains[natural_chain].members[member_index];
+        const auto [found, inserted] = action_chain_by_entity.emplace(
+            member.unit.entity, planned_action_chains.size());
+        if (inserted) {
+            PlannedActionChain planned;
+            planned.unit = member.unit;
+            planned.actions.squad = context.squad;
+            planned.actions.order_revision = context.order.revision;
+            planned.actions.unit_instance_id = member.unit.instance_id;
+            planned.actions.natural_chain =
+                static_cast<std::uint32_t>(natural_chain);
+            planned.actions.member_index =
+                static_cast<std::uint32_t>(member_index);
+            planned.actions.valid = true;
+            planned_action_chains.push_back(std::move(planned));
+        }
+        return planned_action_chains[found->second].actions;
+    };
     std::vector<float> action_cursor(follow_plan->chains.size(), 0.f);
     for (std::size_t index = 0; index < follow_plan->chains.size(); ++index) {
-        auto& chain = leader_action_chains[index];
-        chain.squad = context.squad;
-        chain.order_revision = context.order.revision;
-        chain.unit_instance_id =
-            follow_plan->chains[index].members.front().unit.instance_id;
-        chain.valid = true;
+        (void)action_chain_for(index, 0);
     }
+    std::vector<bool> route_required_as_root(
+        follow_plan->chains.size(), false);
+    std::uint64_t next_segment_token = 1;
     for (std::size_t stage_index = 0;
          stage_index < width_schedule->stages.size(); ++stage_index) {
         const auto& width_stage = width_schedule->stages[stage_index];
@@ -1575,11 +1654,26 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         if (!groups) return fail();
 
         for (const auto& group : *groups) {
+            if (group.root_chain >= follow_plan->chains.size() ||
+                group.segments.empty())
+                return fail();
+            route_required_as_root[group.root_chain] = true;
             float base_distance = 0.f;
             AoeUnitTarget previous_tail{};
-            for (std::size_t order = 0; order < group.chains.size(); ++order) {
-                const std::size_t chain_index = group.chains[order];
+            for (std::size_t order = 0;
+                 order < group.segments.size(); ++order) {
+                const auto& segment = group.segments[order];
+                const std::size_t chain_index = segment.natural_chain;
+                if (chain_index >= follow_plan->chains.size()) return fail();
                 const auto& natural_chain = follow_plan->chains[chain_index];
+                if (!segment.member_count ||
+                    segment.first_member >= natural_chain.members.size() ||
+                    segment.member_count > natural_chain.members.size() -
+                        segment.first_member)
+                    return fail();
+                if (order == 0 && (chain_index != group.root_chain ||
+                    segment.first_member != 0))
+                    return fail();
                 if (order) base_distance += follow_plan->inter_chain_gap;
                 if (order) {
                     const glm::vec2 shrink_window =
@@ -1588,22 +1682,27 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
                         restore.slot_progress_windows[chain_index];
                     const float attach_progress = shrink_window.x <= Epsilon
                         ? 0.f
-                        : std::clamp(prelude_progress + shrink_window.x,
-                            0.f, total_progress);
+                        : std::clamp(
+                            shrink_window.x, 0.f, total_progress);
                     const float detach_progress = std::clamp(
-                        prelude_progress + restore_window.x, attach_progress,
+                        restore_window.x, attach_progress,
                         total_progress);
-                    auto& actions = leader_action_chains[chain_index];
-                    if (attach_progress > action_cursor[chain_index] + Epsilon)
+                    auto& actions = action_chain_for(
+                        chain_index, segment.first_member);
+                    if (segment.first_member == 0 &&
+                        attach_progress > action_cursor[chain_index] + Epsilon)
                         actions.steps.push_back({
                             AoeUnitActionStepKind::NavigationPath,
                             action_cursor[chain_index], attach_progress});
                     const std::uint64_t token =
                         (static_cast<std::uint64_t>(stage_index + 1) << 32u) |
-                        static_cast<std::uint64_t>(chain_index + 1);
+                        next_segment_token++;
                     const auto route_source = follow_plan->chains[
                         group.root_chain].members.front().unit;
                     AoeFormationFollowAttach attach{
+                        static_cast<std::uint32_t>(chain_index),
+                        static_cast<std::uint32_t>(segment.first_member),
+                        static_cast<std::uint32_t>(segment.member_count),
                         static_cast<std::uint32_t>(group.root_chain),
                         route_source, previous_tail, base_distance,
                         follow_plan->inter_chain_gap};
@@ -1614,16 +1713,21 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
                     actions.steps.push_back({
                         AoeUnitActionStepKind::FormationDetachFollow,
                         detach_progress, detach_progress, token});
-                    action_cursor[chain_index] = detach_progress;
+                    if (segment.first_member == 0)
+                        action_cursor[chain_index] = detach_progress;
                 }
+                const std::size_t last_member = segment.first_member +
+                    segment.member_count - 1;
                 base_distance +=
-                    natural_chain.members.back().distance_from_leader;
-                previous_tail = natural_chain.members.back().unit;
+                    natural_chain.members[last_member].distance_from_leader -
+                    natural_chain.members[segment.first_member]
+                        .distance_from_leader;
+                previous_tail = natural_chain.members[last_member].unit;
             }
         }
     }
-    for (std::size_t index = 0; index < leader_action_chains.size(); ++index) {
-        auto& actions = leader_action_chains[index];
+    for (std::size_t index = 0; index < follow_plan->chains.size(); ++index) {
+        auto& actions = action_chain_for(index, 0);
         if (action_cursor[index] < total_progress - Epsilon)
             actions.steps.push_back({AoeUnitActionStepKind::NavigationPath,
                 action_cursor[index], total_progress});
@@ -1640,13 +1744,9 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         movement_frames.push_back({progress, center, forward});
     };
     append_movement_frame(0.f, context.center.value, poses.front().forward);
-    if (prelude_progress > Epsilon)
-        append_movement_frame(prelude_progress,
-            context.center.value, poses.front().forward);
     for (const float progress : travel_samples) {
         const auto pose = sample_pose_curve(poses, progress);
-        append_movement_frame(prelude_progress + progress,
-            pose.center, pose.forward);
+        append_movement_frame(progress, pose.center, pose.forward);
     }
     if (postlude_progress > Epsilon)
         append_movement_frame(total_progress,
@@ -1667,17 +1767,19 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
     std::uint64_t failed_members = 0;
     const float reformation_step = std::max(
         .01f, settings.maximum_reformation_step);
-    const std::uint32_t prelude_steps = prelude_progress > Epsilon
-        ? std::max(1u, static_cast<std::uint32_t>(
-            std::ceil(prelude_progress / reformation_step))) : 0u;
     const std::uint32_t postlude_steps = postlude_progress > Epsilon
         ? std::max(1u, static_cast<std::uint32_t>(
             std::ceil(postlude_progress / reformation_step))) : 0u;
 
-    const auto navigation_interval_active = [&leader_action_chains](
-            std::size_t chain_index, float begin, float end) {
-        if (chain_index >= leader_action_chains.size()) return false;
-        for (const auto& step : leader_action_chains[chain_index].steps) {
+    const auto navigation_interval_active = [&](std::size_t chain_index,
+                                                float begin, float end) {
+        if (chain_index >= follow_plan->chains.size()) return false;
+        const auto entity =
+            follow_plan->chains[chain_index].members.front().unit.entity;
+        const auto found = action_chain_by_entity.find(entity);
+        if (found == action_chain_by_entity.end()) return false;
+        const auto& actions = planned_action_chains[found->second].actions;
+        for (const auto& step : actions.steps) {
             if (step.kind != AoeUnitActionStepKind::NavigationPath) continue;
             if (std::min(end, step.end_progress) >
                 std::max(begin, step.begin_progress) + Epsilon)
@@ -1692,7 +1794,7 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         route.unit = member.unit;
         route.origin = member.actual_start;
         route.waypoints.reserve(
-            prelude_steps + travel_samples.size() + postlude_steps);
+            travel_samples.size() + postlude_steps);
         route.waypoint_progress.reserve(route.waypoints.capacity());
         glm::vec2 previous = route.origin;
         glm::vec2 previous_travel_point{0.f};
@@ -1710,25 +1812,16 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
             previous = point;
         };
 
-        for (std::uint32_t step = 1; step <= prelude_steps; ++step) {
-            const float alpha = static_cast<float>(step) /
-                static_cast<float>(prelude_steps);
-            append_waypoint(glm::mix(
-                member.actual_start, member.snake_start, alpha),
-                prelude_progress * alpha);
-        }
-        for (const float progress : travel_samples) {
-            const glm::vec2 offset = sample_formation_width_schedule(
-                *width_schedule, member.slot_index, progress).local_offset;
-            const auto member_pose = sample_pose_curve(poses,
-                progress + offset.y);
-            const glm::vec2 right{
-                member_pose.forward.y, -member_pose.forward.x};
-            const glm::vec2 point = member_pose.center +
-                right * offset.x;
-            if (have_previous_travel_point) {
+        for (std::size_t sample_index = 0;
+             sample_index < travel_samples.size(); ++sample_index) {
+            const float progress = travel_samples[sample_index];
+            const auto sample = sample_start_aligned_member_route(
+                member.slot_index, progress, member.start_error);
+            const glm::vec2 point = sample.point;
+            if (have_previous_travel_point &&
+                travel_samples[sample_index - 1] + Epsilon >= startup_span) {
                 const glm::vec2 center_delta =
-                    member_pose.center - previous_travel_center;
+                    sample.phase_center - previous_travel_center;
                 const float center_distance2 = glm::dot(
                     center_delta, center_delta);
                 if (center_distance2 > Epsilon * Epsilon) {
@@ -1741,18 +1834,16 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
                 }
             }
             previous_travel_point = point;
-            previous_travel_center = member_pose.center;
+            previous_travel_center = sample.phase_center;
             have_previous_travel_point = true;
-            append_waypoint(point,
-                prelude_progress + progress);
+            append_waypoint(point, progress);
         }
         for (std::uint32_t step = 1; step <= postlude_steps; ++step) {
             const float alpha = static_cast<float>(step) /
                 static_cast<float>(postlude_steps);
             append_waypoint(glm::mix(
                 member.snake_end, member.natural_end, alpha),
-                prelude_progress + travel_progress +
-                    postlude_progress * alpha);
+                travel_progress + postlude_progress * alpha);
         }
 
         route.speed_ratio.reserve(route.waypoints.size());
@@ -1770,18 +1861,15 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
         }
         route.goal = member.natural_end;
         const auto& collider = reg.get<AoeCollider>(route.unit.entity);
-        const bool retained_root = std::any_of(
-            follow_plan->groups.begin(), follow_plan->groups.end(),
-            [&](const AoeFormationFollowGroup& group) {
-                return group.root_chain == member.slot_index;
-            });
+        const bool retained_root =
+            route_required_as_root[member.slot_index];
         bool static_safe = !route.waypoints.empty();
         previous = route.origin;
         previous_progress = route.origin_progress;
         for (std::size_t index = 0;
              static_safe && index < route.waypoints.size(); ++index) {
             const float next_progress = route.waypoint_progress[index];
-            if (previous_progress + Epsilon >= prelude_progress &&
+            if (previous_progress + Epsilon >= startup_span &&
                 navigation_interval_active(member.slot_index,
                     previous_progress, next_progress) &&
                 logic_map && logic_map->valid() &&
@@ -1867,12 +1955,9 @@ AoeFormationModuleResult AoeNavMeshRouteSplitModule::run(
             context.tick, context.squad, route.unit.instance_id);
         state.units.push_back({route.unit.entity, route.unit.instance_id});
     }
-    for (std::size_t index = 0; index < installed_follow_plan.chains.size();
-         ++index) {
-        const auto leader =
-            installed_follow_plan.chains[index].members.front().unit;
+    for (auto& planned : planned_action_chains) {
         reg.emplace_or_replace<AoeUnitActionChain>(
-            leader.entity, std::move(leader_action_chains[index]));
+            planned.unit.entity, std::move(planned.actions));
     }
     state.status = AoeFormationRouteSplitStatus::Ready;
     diagnostics.members_routed += pending.size();
@@ -1954,7 +2039,8 @@ AoeFormationModuleResult AoeRouteCommandCompletionModule::run(
         topology->order_revision != context.order.revision ||
         moving->order_revision != context.order.revision ||
         !trajectory->valid || !follow_plan->valid || !topology->valid ||
-        topology->attached_chains != 0 ||
+        topology->attached_segments != 0 ||
+        !topology->active_segments.empty() ||
         topology->bindings.size() != follow_plan->chains.size())
         return AoeFormationModuleResult::Continue;
 
@@ -1970,18 +2056,19 @@ AoeFormationModuleResult AoeRouteCommandCompletionModule::run(
             binding.progress + settings.progress_epsilon <
                 trajectory->total_progress)
             return AoeFormationModuleResult::Continue;
-        const auto leader = chain.members.front().unit;
-        if (!detail::aoe_gameplay_squad_member_valid(reg, leader))
-            continue;
-        const auto* actions =
-            reg.try_get<AoeUnitActionChain>(leader.entity);
-        if (!actions || !actions->valid ||
-            actions->squad != context.squad ||
-            actions->order_revision != context.order.revision ||
-            actions->unit_instance_id != leader.instance_id ||
-            actions->current != actions->steps.size() ||
-            actions->active_follow_token != 0)
-            return AoeFormationModuleResult::Continue;
+        for (const auto& member : chain.members) {
+            if (!detail::aoe_gameplay_squad_member_valid(reg, member.unit))
+                continue;
+            const auto* actions = reg.try_get<AoeUnitActionChain>(
+                member.unit.entity);
+            if (!actions) continue;
+            if (!actions->valid || actions->squad != context.squad ||
+                actions->order_revision != context.order.revision ||
+                actions->unit_instance_id != member.unit.instance_id ||
+                actions->current != actions->steps.size() ||
+                actions->active_follow_token != 0)
+                return AoeFormationModuleResult::Continue;
+        }
     }
 
     for (const auto& slot : context.layout.layout.slots) {

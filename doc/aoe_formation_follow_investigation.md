@@ -1,7 +1,7 @@
 # AOE Formation 跟随与窄路缩宽调查记录
 
 更新时间：2026-08-29
-状态：P0 跟随逻辑已实现并加入回归测试；Preview 诊断与大规模动态性能复核仍待完成
+状态：P0 跟随逻辑与通用缩宽均分已实现并加入回归测试；Preview 诊断与大规模动态性能复核仍待完成
 
 ## 1. 当前开发上下文
 
@@ -83,13 +83,14 @@ Formation 已拆成模板组合的独立模块：
 - `AoeNavigationPath` 默认优先级为 0。
 - `AoeFormationFollow` 默认优先级为 1。
 
-RouteSplit 会给列队首生成 `AoeUnitActionChain`，其中可以包含：
+RouteSplit 会给自然列队首以及发生切分的 segment head 生成
+`AoeUnitActionChain`，其中可以包含：
 
 - `NavigationPath`
 - `FormationFollow`
 - `FormationDetachFollow`
 
-MovingControl 是这些 Formation 路线 action 的执行位置：根据路线进度激活临时 Follow，并在计划的 detach 边界移除临时 Follow。
+MovingControl 是这些 Formation 路线 action 的执行位置：根据路线进度激活临时 Follow，并在计划的 detach 边界移除临时 Follow。非队首 segment head 在 detach 后恢复为自然列内对前一成员的 Follow。
 
 该设计必须支持：
 
@@ -246,14 +247,17 @@ apply_follow_topology(reg, installed_follow_plan, false);
 
 ### 5.4 实现必须遵守的运行时约束
 
-- 必须区分自然 chain 的物理 route progress 和当前连通 group 的 root progress。Attach 后，chain 的物理 progress 为 `root_progress - base_distance`；Squad 的 lead/slowest 只比较当前各 group 的 root，不能把有意排在 root 后方的 attached chain 当成独立落后 lane。
+- 必须区分自然 chain 队首的物理 route progress 和当前连通 group 的 root progress。包含自然队首的 segment Attach 后，该 chain 队首的物理 progress 为 `root_progress - base_distance`；只切分 chain tail 时仍以自然队首自身路线维护 chain progress。Squad 的 lead/slowest 只比较当前各 group 的 root，不能把有意排在 root 后方的 attached segment 当成独立落后 lane。
 - MovingControl 每 tick 的顺序固定为：更新单调 progress、消费全部 attach/detach 边界、得到稳定 topology、聚合 group speed、发布 route owner/follower motion request。边界 tick 不能混用新 topology 和旧速度组。
-- 每条自然 chain 的 topology binding 是 `route_source/root_chain/base_distance/preceding_tail/token` 的唯一权威。普通成员只保存自然 chain 内的局部距离，不能再缓存一份可能与 binding 分叉的 route source 和累计距离。
-- Attach/Detach 以 chain 为原子单位并且必须幂等。Attach token 重放不得重复累计距离；Detach 只能移除匹配 token 的临时关系，旧 stage 的 token 不能破坏新 stage。
+- 每条自然 chain 保留自身物理 progress；当前缩宽映射以 active segment binding 的 `natural_chain/first_member/member_count/root_chain/base_distance/preceding_tail/token` 为唯一权威。成员只保存自然 chain 内的局部距离，不能再缓存一份可能与 binding 分叉的 route source 和累计距离。
+- Attach/Detach 以自然 chain 中的连续 segment 为原子单位并且必须幂等。Attach token 重放不得重复累计距离；Detach 只能移除匹配 token 的临时关系，旧 stage 的 token 不能破坏新 stage。同一自然 chain 可在一个 stage 被切成多个互不重叠的 segment。
+- `N` 个成员缩到 `K` 条可通行 lane 时，每条 lane 的目标人数只能是 `floor(N/K)` 或 `ceil(N/K)`；每个成员必须且只能出现一次，lane 最大长度差不得超过 1。余数优先分配给靠中心的 lane，以保持外形稳定。
+- 每条 lane 先选择一个顺序不交叉、横向移动成本最小的自然 root chain；root 保留满足目标容量的前缀，非 root chain 及 root 超出容量的尾部按连续 segment 填充所有 lane 的剩余容量。算法不得写死 4 档或任意预设人数/列数。
+- lane 数等于自然 chain 数时必须保持原拓扑，不做无意义的切分或重排。lane 提取必须按 `chain_index` 取队首后再按横坐标去重，兼容末行不满和多个自然队首映射到同一窄 lane。
 - route progress 必须单调不回退。完整路线投影只允许用于初始化、断言或低频异常恢复；普通 tick 不得为每个 follower 或 chain 扫描完整 waypoint 列表。
 - group 的可持续 progress speed 为所有有效成员 `movement.speed / route_speed_ratio` 的最小值。`catch_up_speed_ratio` 只允许修正瞬态误差，不能抬高基准速度。
 - active binding、route source 或 route sample 无效时必须 fail closed，并清除本 tick 的 Formation motion request，不能静默沿用上一 tick 的速度或目标。
-- 普通 tick 复杂度保持 `O(unit count + chain count)`；边界 tick 只更新受影响的 chain binding，不全量重建 Squad 的 Follow 组件。
+- 普通 tick 复杂度保持 `O(unit count + chain count + active segment count)`；边界 tick 只更新受影响的 segment binding，不全量重建 Squad 的 Follow 组件。容量均分与 root 匹配只在 RouteSplit 规划阶段执行。
 
 ## 6. 接下来要做的待办
 
@@ -268,25 +272,36 @@ apply_follow_topology(reg, installed_follow_plan, false);
 
 ### P0：用显式的部分合并拓扑替代单一 `merged` 布尔状态
 
-- [x] 为每条自然 chain 保存当前 route source、root chain、base distance、前驱 tail 和 active follow token。
-- [x] Attach action 必须原子地切换整条自然列，而不只是切换列队首。
-- [x] 切换后，该列所有成员都采样相同 root route，并使用累计后的 `base_distance + distance_from_leader`。
-- [x] Detach action 必须把整列恢复为自然 route source 和自然距离。
+- [x] 为每条自然 chain 保存物理 progress，并为每个 active segment 保存 route source、root chain、base distance、前驱 tail 和 active follow token。
+- [x] Attach action 必须原子地切换一个连续 segment，而不只是切换其 head。
+- [x] 切换后，该 segment 所有成员都采样相同 root route，并使用累计后的 `base_distance + member-local distance`。
+- [x] Detach action 必须把 segment head 和内部成员恢复为自然 chain 拓扑。
 - [x] 每个 width stage/group 独立维护 attach/detach 状态，以支持同一路线多个窄路。
-- [x] 不应在每 tick 全量重建所有 `AoeFormationFollow`；只在 action 边界更新受影响 chain，或者通过间接 topology state 让成员读取当前映射。
+- [x] 不应在每 tick 全量重建所有 `AoeFormationFollow`；只在 action 边界更新受影响 segment，成员通过间接 topology state 读取当前映射。
 
 建议状态关系：
 
 ```text
 自然 chain
-  -> 当前 topology binding
-       - route_source_chain
-       - root unit
+  -> 单调物理 progress
+  -> 0..N 个互不重叠的 active segment binding
+       - first member / member count
+       - root chain / root unit
        - preceding tail
        - accumulated base distance
        - active token/stage
-  -> chain 内成员使用 binding + 自身 distance_from_leader
+  -> segment 内成员使用 binding + segment 内局部距离
+  -> 未覆盖成员保持自然 chain 拓扑
 ```
+
+### P0：缩宽后把成员均分到全部可通行 lane
+
+- [x] 按所有可通行 lane 计算 `floor(N/K)` / `ceil(N/K)` 容量，最大长度差不超过 1。
+- [x] 余数采用中心优先的确定性分配，root 采用保持左右顺序的最小横移匹配。
+- [x] 支持切分非 root chain，并支持切分超过目标容量的 root tail。
+- [x] 保证 segment 连续、成员无遗漏且不重复；不依赖 4 档、50×50 或固定 lane 数。
+- [x] 不缩宽时保持自然 chain 一一对应，不创建额外 segment action。
+- [x] 覆盖 5→1、5→2、7→2、17→4、2500→48、2500→10 等非整除和大规模用例。
 
 ### P0：消除 Follow 路线源进度冻结
 
@@ -327,15 +342,15 @@ apply_follow_topology(reg, installed_follow_plan, false);
 
 1. 先增加混合速度和部分合并拓扑的最小失败测试。
 2. 把 `shared_speed` 改为按当前连通 Follow group 统计最低可持续进度速度。
-3. 引入每条 chain 的显式 topology binding。
-4. Attach/Detach action 改为切换整条 chain binding。
-5. 把 follower 路线采样改为读取当前 binding，并使用累计 base distance。
+3. 引入自然 chain progress 和 active segment 的显式 topology binding。
+4. Attach/Detach action 改为切换连续 segment binding。
+5. 把 follower 路线采样改为读取当前 segment binding，并使用累计 base distance。
 6. 独立维护 route source 的单调 progress，确保 Follow 期间不会因 `path.current` 冻结。
 7. 通过小规模双窄路测试后，再验证 Squad Preview 4、5、6 档。
 8. 正确性稳定后再做数据布局和 ECS 访问性能优化。
 
 ## 8. 当前调查边界
 
-最初结论来自当时工作区代码、4 档配置、单位定义和剪贴板截图。2026-08-29 已按第 5.4 节约束完成 P0 实现；尚未勾选的 P1/P2 项仍是本轮实现边界之外的后续工作。
+最初结论来自当时工作区代码、4 档配置、单位定义和剪贴板截图。2026-08-29 已按第 5.4 节约束完成 P0 跟随与通用缩宽均分实现；尚未勾选的 P1/P2 项仍是本轮实现边界之外的后续工作。
 
 仓库中的 `aoe_gameplay_squad_profile.log` 时间早于本次截图，记录的是旧版本中 RouteSplit 失败的状态，不能用它证明本次“运动后卡住”的实时状态。后续实现时应重新运行 Preview 并采集新的 telemetry。
