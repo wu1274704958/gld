@@ -364,9 +364,9 @@ std::shared_ptr<void> Aoe2UnitAppearanceLoader::load_cpu(
             appearance->dat_metadata = parse_dat_metadata(manifest.at("dat"));
         const auto player_color_format = manifest.at("export_settings")
             .at("player_color").at("format").get<std::string>();
-        if (player_color_format != "r8_subcolor_alpha_binary")
+        if (player_color_format != "rgba8_bc4_decoded")
             throw std::runtime_error("unsupported player-color format: " + player_color_format);
-        appearance->player_color_format = PlayerColorFormat::R8SubcolorAlphaBinary;
+        appearance->player_color_format = PlayerColorFormat::Rgba8Bc4Decoded;
         if (manifest.contains("missing_animations"))
             appearance->missing_animations = manifest.at("missing_animations").get<std::vector<std::string>>();
 

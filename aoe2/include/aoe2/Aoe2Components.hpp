@@ -48,7 +48,7 @@ struct Aoe2UnitRender {
     int direction_slot_count = 0;
     int direction = 0;
     int player_color = 1;
-    int player_color_debug = 0; // 0 normal, 1 mask coverage, 2 subcolor indices
+    int player_color_debug = 0; // 0 normal, 1 Player Color R weight
     float playback_time = 0.f;
     float playback_speed = 1.f;
     Aoe2PlaybackMode playback_mode = Aoe2PlaybackMode::Internal;

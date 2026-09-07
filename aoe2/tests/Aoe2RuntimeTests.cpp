@@ -66,7 +66,7 @@ nlohmann::json test_animation_config() {
 nlohmann::json test_manifest(int schema) {
     nlohmann::json manifest = {
         {"schema_version", schema}, {"kind", "aoe2de_unit"}, {"id", "u_test"},
-        {"export_settings", {{"player_color", {{"format", "r8_subcolor_alpha_binary"}}}}},
+        {"export_settings", {{"player_color", {{"format", "rgba8_bc4_decoded"}}}}},
         {"animations", {{"idleA", {{"status", "exported"},
                                      {"config", "graphics/idleA.json"}}}}}
     };
@@ -110,6 +110,10 @@ int main() {
     const auto schema2 = load_test_manifest(test_manifest(2));
     assert(schema2 && schema2->schema_version == 2);
     assert(!schema2->dat_metadata);
+	auto legacy_player_color = test_manifest(2);
+	legacy_player_color["export_settings"]["player_color"]["format"] =
+		"r8_palette_index_plus_one";
+	assert(!load_test_manifest(std::move(legacy_player_color)));
     auto graphic_manifest = test_manifest(2);
     graphic_manifest["kind"] = "aoe2de_graphics";
     graphic_manifest["id"] = "p_test";

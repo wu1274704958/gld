@@ -166,15 +166,12 @@ struct Aoe2RenderResources {
     Handle<Program> sprite_shader;
     Handle<Program> player_color_shader;
     Handle<Program> shadow_shader;
-    std::shared_ptr<Texture<TexType::D2>> palette_texture;
-    std::uint64_t palette_revision = 1;
     unsigned int sprite_sampler_program = 0;
     unsigned int player_sampler_program = 0;
     unsigned int shadow_sampler_program = 0;
     int sprite_diffuse_sampler = -1;
     int player_diffuse_sampler = -1;
     int player_mask_sampler = -1;
-    int player_palette_sampler = -1;
     int shadow_diffuse_sampler = -1;
     unsigned int quad_vbo = 0;
     unsigned int quad_ebo = 0;

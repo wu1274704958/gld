@@ -147,60 +147,6 @@ if(GLM_FOUND AND GLFW3_FOUND)
     target_include_directories(gld_aoe2 PUBLIC ${CMAKE_SOURCE_DIR}/aoe2/include)
     target_link_libraries(gld_aoe2 PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
 
-    add_library(gld_aoe_map STATIC aoe/src/AoeMap.cpp)
-    target_include_directories(gld_aoe_map PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
-    target_link_libraries(gld_aoe_map PUBLIC nlohmann_json::nlohmann_json EnTT::EnTT)
-
-    add_library(gld_aoe_navmesh STATIC aoe/src/AoeNavMesh.cpp)
-    target_include_directories(gld_aoe_navmesh PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
-    target_link_libraries(gld_aoe_navmesh PUBLIC gld_aoe_map EnTT::EnTT
-        PRIVATE Recast Detour)
-
-    add_library(gld_aoe_gameplay STATIC
-        aoe/src/AoeGameplay.cpp
-        aoe/src/AoeCombat.cpp
-        aoe/src/AoeSquadEngagement.cpp
-        aoe/src/AoeSquadEngagementFallback.cpp
-        aoe/src/AoeFormation.cpp
-        aoe/src/AoeFormationFollow.cpp
-        aoe/src/AoeFormationWidthSchedule.cpp
-        aoe/src/AoeFormationModular.cpp
-        aoe/src/AoeFormationMovingControl.cpp
-        aoe/src/AoeFormationRouteSampling.cpp
-        aoe/src/AoeFormationFallback.cpp
-        aoe/src/AoeSquadArrivalRematch.cpp
-        aoe/src/AoeSquadArrivalRematchFallback.cpp
-        aoe/src/AoeUnitMovementIntent.cpp
-        aoe/src/AoeGlobalMotion.cpp
-        aoe/src/AoeGlobalMotionFallback.cpp
-        aoe/src/AoeLocalAvoidance.cpp
-        aoe/src/AoeLocalAvoidanceFallback.cpp)
-    target_include_directories(gld_aoe_gameplay PUBLIC ${CMAKE_SOURCE_DIR}/aoe/include)
-    target_link_libraries(gld_aoe_gameplay PUBLIC gld_aoe_navmesh nlohmann_json::nlohmann_json EnTT::EnTT)
-    if(MSVC)
-        target_compile_options(gld_aoe_gameplay PRIVATE /bigobj)
-    endif()
-
-    add_library(gld_aoe2x_pathfinding STATIC
-        aoe2x/src/Aoe2xPathfinding.cpp
-        aoe2x/src/Aoe2xFormation.cpp)
-    target_include_directories(gld_aoe2x_pathfinding PUBLIC
-        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-    target_link_libraries(gld_aoe2x_pathfinding PUBLIC gld_aoe_map EnTT::EnTT)
-
-    # OpenGL 4.3 image-based global motion planner. Keeping this target
-    # separate preserves renderer-free/headless gld_aoe_gameplay tests.
-    add_library(gld_aoe_gpu_motion STATIC
-        aoe_gpu_motion/src/AoeGpuMotion.cpp)
-    target_include_directories(gld_aoe_gpu_motion PUBLIC
-        ${CMAKE_SOURCE_DIR}/aoe_gpu_motion/include)
-    target_link_libraries(gld_aoe_gpu_motion PUBLIC gld_aoe_gameplay)
-
-    add_library(gld_aoe2_gameplay_bridge STATIC
-        aoe2_gameplay/src/Aoe2GameplayBridge.cpp)
-    target_include_directories(gld_aoe2_gameplay_bridge PUBLIC
-        ${CMAKE_SOURCE_DIR}/aoe2_gameplay/include)
-    target_link_libraries(gld_aoe2_gameplay_bridge PUBLIC gld_aoe_gameplay gld_aoe2)
     if(BUILD_TESTING)
         add_executable(ecs_world_tests aoe2/tests/EcsWorldTests.cpp)
         target_link_libraries(ecs_world_tests PRIVATE EnTT::EnTT)
@@ -219,51 +165,6 @@ if(GLM_FOUND AND GLFW3_FOUND)
             src/EcsGizmoGeometry.cpp)
         target_link_libraries(gizmo_tests PRIVATE EnTT::EnTT)
         add_test(NAME gizmo_tests COMMAND gizmo_tests)
-        add_executable(aoe_gameplay_tests aoe/tests/AoeGameplayTests.cpp)
-        target_link_libraries(aoe_gameplay_tests PRIVATE gld_aoe_gameplay)
-        if(MSVC)
-            target_compile_options(aoe_gameplay_tests PRIVATE /bigobj)
-        endif()
-        add_test(NAME aoe_gameplay_tests COMMAND aoe_gameplay_tests)
-        add_executable(aoe_map_tests aoe/tests/AoeMapTests.cpp)
-        target_link_libraries(aoe_map_tests PRIVATE gld_aoe_gameplay)
-        add_test(NAME aoe_map_tests COMMAND aoe_map_tests)
-        add_executable(aoe_navmesh_tests aoe/tests/AoeNavMeshTests.cpp)
-        target_link_libraries(aoe_navmesh_tests PRIVATE gld_aoe_navmesh)
-        add_test(NAME aoe_navmesh_tests COMMAND aoe_navmesh_tests)
-        add_executable(aoe2x_gameplay_system_tests
-            aoe2x/tests/Aoe2xGameplaySystemTests.cpp)
-        target_include_directories(aoe2x_gameplay_system_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-        target_link_libraries(aoe2x_gameplay_system_tests PRIVATE EnTT::EnTT)
-        add_test(NAME aoe2x_gameplay_system_tests
-            COMMAND aoe2x_gameplay_system_tests)
-        add_executable(aoe2x_gameplay_system_profile_tests
-            aoe2x/tests/Aoe2xGameplaySystemTests.cpp)
-        target_compile_definitions(aoe2x_gameplay_system_profile_tests PRIVATE
-            GLD_ENABLE_PERFORMANCE_MONITORING=1)
-        target_include_directories(aoe2x_gameplay_system_profile_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-        target_link_libraries(aoe2x_gameplay_system_profile_tests PRIVATE EnTT::EnTT)
-        add_test(NAME aoe2x_gameplay_system_profile_tests
-            COMMAND aoe2x_gameplay_system_profile_tests)
-        add_executable(aoe2x_pathfinding_tests aoe2x/tests/Aoe2xPathfindingTests.cpp)
-        target_include_directories(aoe2x_pathfinding_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-        target_link_libraries(aoe2x_pathfinding_tests PRIVATE gld_aoe2x_pathfinding)
-        add_test(NAME aoe2x_pathfinding_tests COMMAND aoe2x_pathfinding_tests)
-        add_executable(aoe2x_formation_tests aoe2x/tests/Aoe2xFormationTests.cpp)
-        target_include_directories(aoe2x_formation_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-        target_link_libraries(aoe2x_formation_tests PRIVATE gld_aoe2x_pathfinding)
-        add_test(NAME aoe2x_formation_tests COMMAND aoe2x_formation_tests)
-        add_executable(aoe_map_benchmark example/aoe_map_benchmark/main.cpp)
-        target_link_libraries(aoe_map_benchmark PRIVATE gld_aoe_gameplay)
-        add_executable(aoe2_gameplay_bridge_tests
-            aoe2_gameplay/tests/Aoe2GameplayBridgeTests.cpp)
-        target_link_libraries(aoe2_gameplay_bridge_tests PRIVATE
-            gld_aoe2_gameplay_bridge)
-        add_test(NAME aoe2_gameplay_bridge_tests COMMAND aoe2_gameplay_bridge_tests)
     endif()
 
     message(${ALL_SOURCE_FILES})
@@ -337,37 +238,6 @@ if(GLM_FOUND AND GLFW3_FOUND)
 
     CreateExample(DIR aoe2_unit_benchmark FILES main.cpp)
     target_link_libraries(aoe2_unit_benchmark gld_aoe2)
-
-    CreateExample(DIR aoe_gameplay_unit_preview FILES main.cpp)
-    target_link_libraries(aoe_gameplay_unit_preview gld_aoe_gpu_motion)
-    target_link_libraries(aoe_gameplay_unit_preview gld_aoe2_gameplay_bridge)
-
-    CreateExample(DIR aoe_gameplay_squad_preview FILES main.cpp)
-    target_link_libraries(aoe_gameplay_squad_preview
-        gld_aoe2_gameplay_bridge gld_aoe_gpu_motion)
-    if(MSVC)
-        target_compile_options(aoe_gameplay_squad_preview PRIVATE /bigobj)
-    endif()
-
-    CreateExample(DIR aoe_formation_route_preview FILES main.cpp)
-    target_link_libraries(aoe_formation_route_preview gld_aoe_gameplay)
-    if(MSVC)
-        target_compile_options(aoe_formation_route_preview PRIVATE /bigobj)
-    endif()
-
-    CreateExample(DIR aoe2x_pathfinding_preview FILES main.cpp)
-    target_include_directories(aoe2x_pathfinding_preview PRIVATE
-        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-    target_compile_definitions(aoe2x_pathfinding_preview PRIVATE
-        GLD_ENABLE_PERFORMANCE_MONITORING=1)
-    target_link_libraries(aoe2x_pathfinding_preview gld_aoe2x_pathfinding)
-
-    CreateExample(DIR aoe2x_formation_preview FILES main.cpp)
-    target_include_directories(aoe2x_formation_preview PRIVATE
-        ${CMAKE_SOURCE_DIR}/aoe/include ${CMAKE_SOURCE_DIR}/aoe2x/include)
-    target_compile_definitions(aoe2x_formation_preview PRIVATE
-        GLD_ENABLE_PERFORMANCE_MONITORING=1)
-    target_link_libraries(aoe2x_formation_preview gld_aoe2x_pathfinding)
 
     CreateExample(DIR music_player FILES main.cpp GetFileName.cpp MusicPlayer.cpp Pumper.cpp SupportFile.cpp MMFile.cpp 
         lrc/lrc_loader.cpp lrc/lrc_analyse.cpp lrc/lrc_view.cpp)

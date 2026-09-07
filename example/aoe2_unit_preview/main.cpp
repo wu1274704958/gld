@@ -212,7 +212,7 @@ void preview_input_system(EcsWorld& world) {
     }
     if (keyboard->just_now_pressed(GLFW_KEY_R)) update_existing(world, *state, true);
     if (keyboard->just_now_pressed(GLFW_KEY_M)) {
-        state->mask_debug = (state->mask_debug + 1) % 3;
+        state->mask_debug = (state->mask_debug + 1) % 2;
         update_existing(world, *state, false);
     }
     if (keyboard->just_now_pressed(GLFW_KEY_F5)) {
@@ -249,7 +249,7 @@ void preview_diagnostics_system(EcsWorld& world) {
     for (auto entity : world.reg().view<Aoe2BatchComponent>()) {
         const auto& batch = world.reg().get<Aoe2BatchComponent>(entity);
         instances += batch.world_instances.size();
-        has_player_batch = has_player_batch || batch.key.texture_count == 3;
+        has_player_batch = has_player_batch || batch.key.texture_count == 2;
     }
     if (rendered == 16 && instances >= 16 && has_player_batch) {
         if (!state.ready_reported) {
@@ -328,7 +328,7 @@ void preview_diagnostics_system(EcsWorld& world) {
             };
             add_layer(animation.main, 4u);         // RGBA8
             add_layer(animation.shadow, 1u);       // R8, source R
-            add_layer(animation.player_color, 2u); // RG8, source R+A
+            add_layer(animation.player_color, 1u); // R8, source R
         }
     }
 

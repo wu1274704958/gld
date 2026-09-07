@@ -76,8 +76,8 @@ void request_animation_residency(AssetServer& server, Aoe2UnitAppearance& appear
             TextureChannelMapping::Red);
     if (animation->player_color.usable())
         animation->player_color.texture = server.load_texture(animation->player_color.image_path,
-            Channels::RG, false, false, false, nearest, nearest, clamp, clamp,
-            TextureChannelMapping::RedAlpha);
+            Channels::Gray, false, false, false, nearest, nearest, clamp, clamp,
+            TextureChannelMapping::Red);
     animation->residency = AnimationResidencyState::Loading;
     animation->residency_error.clear();
     ++animation->residency_revision;
@@ -139,7 +139,7 @@ void set_aoe2_player_color(EcsWorld& world, entt::entity entity,
     auto* unit = world.reg().try_get<Aoe2UnitRender>(entity);
     if (!unit) return;
     const int resolved_player = std::clamp(player_color, 1, 8);
-    const int resolved_debug = std::clamp(debug_mode, 0, 2);
+    const int resolved_debug = std::clamp(debug_mode, 0, 1);
     if (unit->player_color == resolved_player &&
         unit->player_color_debug == resolved_debug) return;
     unit->player_color = resolved_player;
@@ -282,7 +282,7 @@ void spawn_aoe2_unit_system(EcsWorld& world) {
         render.direction_slot_count = request.options.direction_slot_count;
         render.direction = request.options.direction;
         render.player_color = std::clamp(request.options.player_color, 1, 8);
-        render.player_color_debug = std::clamp(request.options.player_color_debug, 0, 2);
+        render.player_color_debug = std::clamp(request.options.player_color_debug, 0, 1);
         render.playback_speed = request.options.playback_speed;
         render.playback_mode = request.options.playback_mode;
         render.playback_time = std::max(0.f, request.options.playback_time);

@@ -25,7 +25,6 @@ struct DesiredBatch {
     std::array<int, MaxBatchTextures> sampler_locations{-1, -1, -1, -1};
     const Layer* diffuse_layer = nullptr;
     const Layer* player_layer = nullptr;
-    const std::shared_ptr<Texture<TexType::D2>>* palette_texture = nullptr;
     int order = 0;
 };
 
@@ -54,7 +53,6 @@ void refresh_sampler_locations(Aoe2RenderResources& resources, Program& sprite,
         resources.player_sampler_program = player_id;
         resources.player_diffuse_sampler = sampler(player, "diffuseTex");
         resources.player_mask_sampler = sampler(player, "playerColorMask");
-        resources.player_palette_sampler = sampler(player, "playerPalette");
     }
     const auto shadow_id = static_cast<unsigned int>(shadow);
     if (resources.shadow_sampler_program != shadow_id) {
@@ -91,7 +89,7 @@ Aoe2VisualInstance visual_instance(const Aoe2UnitRender& render,
     result.tint_rgba8 = pack_rgba8(color);
     result.player_debug_flags =
         static_cast<std::uint32_t>(glm::clamp(render.player_color, 1, 8)) |
-        (static_cast<std::uint32_t>(glm::clamp(render.player_color_debug, 0, 2)) << 4u) |
+        (static_cast<std::uint32_t>(glm::clamp(render.player_color_debug, 0, 1)) << 4u) |
         (shadow ? (1u << 8u) : 0u);
     return result;
 }
@@ -244,8 +242,6 @@ std::uint32_t ensure_group(entt::registry& reg, Aoe2BatchIndex& index,
         batch.texture_refs[0] = desired.diffuse_layer->texture.shared();
     if (desired.player_layer)
         batch.texture_refs[1] = desired.player_layer->texture.shared();
-    if (desired.palette_texture)
-        batch.texture_refs[2] = *desired.palette_texture;
     index.key_to_group.emplace(desired.key, group_id);
     GLD_PERF_MONITOR(++performance.group_creates);
     return group_id;
@@ -324,10 +320,10 @@ void build_desired_batches(const Aoe2UnitRender& render, std::uint32_t layers,
     auto* main_texture = animation->main.texture.get();
     if (!main_texture) return;
     const bool use_player = animation->player_color.usable() &&
-        appearance->player_color_format == PlayerColorFormat::R8SubcolorAlphaBinary;
+        appearance->player_color_format == PlayerColorFormat::Rgba8Bc4Decoded;
     if (use_player && !animation->player_color.texture.get()) return;
     main.valid = true;
-    main.key.texture_count = use_player ? 3 : 1;
+    main.key.texture_count = use_player ? 2 : 1;
     main.key.textures[0] = main_texture->get_id();
     main.key.shader = static_cast<unsigned int>(use_player ? player_program : sprite_program);
     main.key.layers = layers;
@@ -337,11 +333,8 @@ void build_desired_batches(const Aoe2UnitRender& render, std::uint32_t layers,
         ? resources.player_diffuse_sampler : resources.sprite_diffuse_sampler;
     if (use_player) {
         main.key.textures[1] = animation->player_color.texture.get()->get_id();
-        main.key.textures[2] = resources.palette_texture->get_id();
         main.player_layer = &animation->player_color;
-        main.palette_texture = &resources.palette_texture;
         main.sampler_locations[1] = resources.player_mask_sampler;
-        main.sampler_locations[2] = resources.player_palette_sampler;
     }
     main.order = 1;
 }
@@ -482,7 +475,7 @@ void aoe2_batch_system(EcsWorld& world) {
     Program* sprite_program = resources.sprite_shader.get();
     Program* player_program = resources.player_color_shader.get();
     Program* shadow_program = resources.shadow_shader.get();
-    if (!sprite_program || !player_program || !shadow_program || !resources.palette_texture) {
+    if (!sprite_program || !player_program || !shadow_program) {
         GLD_PERF_MONITOR(
             performance.batch_total_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - total_started).count();
@@ -501,10 +494,6 @@ void aoe2_batch_system(EcsWorld& world) {
         batch_resource_key, static_cast<unsigned int>(*player_program));
     batch_resource_key = batch_signature_append(
         batch_resource_key, static_cast<unsigned int>(*shadow_program));
-    batch_resource_key = batch_signature_append(
-        batch_resource_key, resources.palette_texture->get_id());
-    batch_resource_key = batch_signature_append(
-        batch_resource_key, resources.palette_revision);
 
     auto& dirty_queue = world.resource_or_add<Aoe2DirtyQueue>();
 #if defined(GLD_ENABLE_PERFORMANCE_MONITORING) && !defined(NDEBUG)

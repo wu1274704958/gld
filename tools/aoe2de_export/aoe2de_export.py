@@ -27,6 +27,14 @@ DEFAULT_FPS = 30.0
 LIST_PAGE_SIZE = 50
 DEFAULT_DAT_RELATIVE = Path("resources/_common/dat/empires2_x2_p1.dat")
 DEFAULT_UNIT_MAP = Path(__file__).resolve().with_name("unit_dat_map.json")
+PLAYERCOLOR_FORMAT = "rgba8_bc4_decoded"
+PLAYERCOLOR_DIFFUSE_ALPHA_MIN = 8
+PLAYERCOLOR_TRANSITION_RAW_MIN = 112
+PLAYERCOLOR_STRONG_RAW_MIN = 128
+# Retained only for the isolated diagnostic helper below; production export no
+# longer invokes the legacy consensus filter.
+PLAYERCOLOR_TEMPORAL_FILTER_VERSION = 1
+PLAYERCOLOR_BASE_RGB_TOLERANCE = 32
 
 SLD_HEADER = Struct("<4s4HI")
 SLD_FRAME_HEADER = Struct("<4H2BH")
@@ -473,12 +481,11 @@ def positive_finite_float(value: str) -> float:
 
 
 def validate_playercolor_args(args) -> None:
-    if not 0 <= args.playercolor_alpha_min <= 255:
-        raise SystemExit("--playercolor-alpha-min must be in range 0..255")
-    if not math.isfinite(args.playercolor_luma_min) or args.playercolor_luma_min < 0:
-        raise SystemExit("--playercolor-luma-min must be finite and non-negative")
-    if not math.isfinite(args.playercolor_sat_max) or args.playercolor_sat_max < 0:
-        raise SystemExit("--playercolor-sat-max must be finite and non-negative")
+    if args.playercolor_temporal_filter != "off":
+        raise SystemExit(
+            "consensus3 is not supported for rgba8_bc4_decoded; "
+            "use --playercolor-temporal-filter off"
+        )
 
 
 def validate_resource_id(resource_id: str) -> str:
@@ -621,7 +628,7 @@ def choose_layout(frames: list[ExportFrame]) -> AtlasLayout:
 
 
 def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
-                layout: AtlasLayout | None = None):
+                layout: AtlasLayout | None = None, *, preserve_pixels: bool = False):
     from PIL import Image
 
     layout = layout or choose_layout(frames)
@@ -637,7 +644,10 @@ def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
         row = idx // layout.cols
         x = col * layout.cell_w
         y = row * layout.cell_h
-        atlas.alpha_composite(frame.image, (x, y))
+        if preserve_pixels:
+            atlas.paste(frame.image, (x, y))
+        else:
+            atlas.alpha_composite(frame.image, (x, y))
         metadata.append({
             "source_ordinal": frame.source_ordinal,
             "source_frame_index": frame.source_frame_index,
@@ -688,19 +698,8 @@ def image_layer_record(status: str, source_count: int, image_name: str, atlas,
     }
 
 
-def is_diffuse_neutral_teamcolor(pixel: tuple[int, int, int, int], luma_min: float,
-                                 sat_max: float, alpha_min: int) -> bool:
-    r, g, b, a = pixel
-    if a <= alpha_min:
-        return False
-    luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    saturation = max(r, g, b) - min(r, g, b)
-    return luma > luma_min and saturation < sat_max
-
-
-def bake_playercolor_index_mask(mask, base, rule: str = "raw",
-                                luma_min: float = 120.0, sat_max: float = 8.0,
-                                alpha_min: int = 8):
+def bake_playercolor_index_mask(mask, base):
+    """Encode SLD layer 4 as R8: zero is absent; one..128 are palette indices."""
     from PIL import Image
 
     mask = mask.convert("RGBA")
@@ -716,34 +715,453 @@ def bake_playercolor_index_mask(mask, base, rule: str = "raw",
 
     for y in range(mask.height):
         for x in range(mask.width):
-            diffuse_px = base_px[x, y]
-            if diffuse_px[3] <= alpha_min:
+            # SLD stores the meaningful 128 player-color entries in the upper
+            # half of the decoded BC4 channel, in reverse palette order:
+            # 255 -> palette index 0 and 128 -> palette index 127.  The lower
+            # half is outside the runtime player-color palette, except for a
+            # narrow transition band recovered across adjacent frames below.
+            # Index zero is valid, hence the +1 encoding in the exported R8.
+            diffuse = base_px[x, y]
+            if diffuse[3] <= PLAYERCOLOR_DIFFUSE_ALPHA_MIN:
                 continue
-            raw_strength = max(mask_px[x, y][:3])
-            neutral_hit = is_diffuse_neutral_teamcolor(
-                diffuse_px, luma_min, sat_max, alpha_min
-            )
-            raw_hit = raw_strength > 8
-            if rule == "raw":
-                hit = raw_hit
-            elif rule == "diffuse-neutral":
-                hit = neutral_hit
-            elif rule == "hybrid":
-                hit = neutral_hit or raw_hit
-            else:
-                raise ExportError(f"unknown player-color rule: {rule}")
-            if not hit:
+            raw_value = mask_px[x, y][0]
+            if mask_px[x, y][3] == 0 or raw_value < PLAYERCOLOR_STRONG_RAW_MIN:
                 continue
-            if neutral_hit and not raw_hit:
-                strength = max(0, min(255, int(
-                    0.2126 * diffuse_px[0] + 0.7152 * diffuse_px[1] +
-                    0.0722 * diffuse_px[2]
-                )))
-            else:
-                strength = raw_strength
-            sub = max(0, min(7, int(round((strength / 255.0) * 7.0))))
-            out_px[x, y] = (sub, 0, 0, 255)
+            palette_index = 255 - raw_value
+            out_px[x, y] = (palette_index + 1, 0, 0, 255)
     return out
+
+
+def _frame_with_image(frame: ExportFrame, image) -> ExportFrame:
+    return ExportFrame(
+        image=image,
+        width=frame.width,
+        height=frame.height,
+        foot=frame.foot,
+        source_ordinal=frame.source_ordinal,
+        source_frame_index=frame.source_frame_index,
+        present=frame.present,
+    )
+
+
+def bake_playercolor_frames(player_frames: list[ExportFrame],
+                            main_frames: list[ExportFrame],
+                            frames_per_direction: int,
+                            animation_name: str):
+    """Bake strong indices and recover only temporally supported BC4 edges."""
+    import numpy
+    from PIL import Image
+
+    if len(player_frames) != len(main_frames):
+        raise ExportError("player-color and main frame counts differ")
+    if frames_per_direction <= 0 or len(player_frames) % frames_per_direction:
+        raise ExportError("invalid frame count for player-color transition recovery")
+    output = [
+        _frame_with_image(player, bake_playercolor_index_mask(
+            player.image, main.image
+        ))
+        for player, main in zip(player_frames, main_frames)
+    ]
+    stats = {
+        "mode": "aligned_transition_consensus",
+        "transition_raw_min": PLAYERCOLOR_TRANSITION_RAW_MIN,
+        "strong_raw_min": PLAYERCOLOR_STRONG_RAW_MIN,
+        "base_rgb_tolerance": PLAYERCOLOR_BASE_RGB_TOLERANCE,
+        "pixels_recovered": 0,
+    }
+    if frames_per_direction < 3:
+        return output, stats
+
+    looping = is_looping_animation(animation_name)
+    direction_count = len(player_frames) // frames_per_direction
+    for direction in range(direction_count):
+        start = direction * frames_per_direction
+        for local_index in range(frames_per_direction):
+            if not looping and local_index in (0, frames_per_direction - 1):
+                continue
+            previous_local = (local_index - 1) % frames_per_direction
+            following_local = (local_index + 1) % frames_per_direction
+            current_index = start + local_index
+            previous = player_frames[start + previous_local]
+            current = player_frames[current_index]
+            following = player_frames[start + following_local]
+            if not (previous.present and current.present and following.present):
+                continue
+
+            current_raw = numpy.asarray(
+                current.image.convert("RGBA"), dtype=numpy.uint8
+            )
+            current_main = numpy.asarray(
+                main_frames[current_index].image.convert("RGBA"), dtype=numpy.uint8
+            )
+            previous_raw, previous_valid = _sample_aligned(previous, current)
+            following_raw, following_valid = _sample_aligned(following, current)
+            previous_main, previous_main_valid = _sample_aligned(
+                main_frames[start + previous_local], main_frames[current_index]
+            )
+            following_main, following_main_valid = _sample_aligned(
+                main_frames[start + following_local], main_frames[current_index]
+            )
+
+            transition = (
+                (current_raw[:, :, 3] > 0) &
+                (current_raw[:, :, 0] >= PLAYERCOLOR_TRANSITION_RAW_MIN) &
+                (current_raw[:, :, 0] < PLAYERCOLOR_STRONG_RAW_MIN) &
+                (current_main[:, :, 3] > PLAYERCOLOR_DIFFUSE_ALPHA_MIN)
+            )
+            previous_support = (
+                (previous_raw[:, :, 3] > 0) &
+                (previous_raw[:, :, 0] >= PLAYERCOLOR_TRANSITION_RAW_MIN)
+            )
+            following_support = (
+                (following_raw[:, :, 3] > 0) &
+                (following_raw[:, :, 0] >= PLAYERCOLOR_TRANSITION_RAW_MIN)
+            )
+            current_rgb = current_main[:, :, :3].astype(numpy.int16)
+            previous_rgb = previous_main[:, :, :3].astype(numpy.int16)
+            following_rgb = following_main[:, :, :3].astype(numpy.int16)
+            stable_base = (
+                numpy.max(numpy.abs(previous_rgb - current_rgb), axis=2)
+                <= PLAYERCOLOR_BASE_RGB_TOLERANCE
+            ) & (
+                numpy.max(numpy.abs(following_rgb - current_rgb), axis=2)
+                <= PLAYERCOLOR_BASE_RGB_TOLERANCE
+            )
+            recovered = (
+                transition & previous_valid & following_valid &
+                previous_main_valid & following_main_valid &
+                (previous_main[:, :, 3] > PLAYERCOLOR_DIFFUSE_ALPHA_MIN) &
+                (following_main[:, :, 3] > PLAYERCOLOR_DIFFUSE_ALPHA_MIN) &
+                previous_support & following_support & stable_base
+            )
+            recovered_count = int(numpy.count_nonzero(recovered))
+            if recovered_count == 0:
+                continue
+            baked = numpy.asarray(
+                output[current_index].image.convert("RGBA"), dtype=numpy.uint8
+            ).copy()
+            # Transition values map beyond the 128-entry palette. Clamp them
+            # to its last entry while preserving coverage in the R8 encoding.
+            baked[recovered] = (128, 0, 0, 255)
+            output[current_index] = _frame_with_image(
+                current, Image.fromarray(baked, "RGBA")
+            )
+            stats["pixels_recovered"] += recovered_count
+    return output, stats
+
+
+def is_looping_animation(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.startswith(("idle", "walk", "attack"))
+
+
+def _sample_aligned(frame: ExportFrame, current: ExportFrame):
+    """Sample frame into current's pixel grid after aligning their foot points."""
+    import numpy
+
+    source = numpy.asarray(frame.image.convert("RGBA"), dtype=numpy.uint8)
+    result = numpy.zeros((current.height, current.width, 4), dtype=numpy.uint8)
+    valid = numpy.zeros((current.height, current.width), dtype=bool)
+    delta_x = frame.foot[0] - current.foot[0]
+    delta_y = frame.foot[1] - current.foot[1]
+    current_x0 = max(0, -delta_x)
+    current_y0 = max(0, -delta_y)
+    current_x1 = min(current.width, frame.width - delta_x)
+    current_y1 = min(current.height, frame.height - delta_y)
+    if current_x0 >= current_x1 or current_y0 >= current_y1:
+        return result, valid
+    source_x0 = current_x0 + delta_x
+    source_y0 = current_y0 + delta_y
+    source_x1 = current_x1 + delta_x
+    source_y1 = current_y1 + delta_y
+    result[current_y0:current_y1, current_x0:current_x1] = source[
+        source_y0:source_y1, source_x0:source_x1
+    ]
+    valid[current_y0:current_y1, current_x0:current_x1] = True
+    return result, valid
+
+
+def stabilize_playercolor_frames(player_frames: list[ExportFrame],
+                                 main_frames: list[ExportFrame],
+                                 frames_per_direction: int, name: str,
+                                 mode: str, alpha_min: int):
+    """Remove isolated mask/shade pops without blending moving sprite pixels."""
+    import numpy
+    from PIL import Image
+
+    if len(player_frames) != len(main_frames):
+        raise ExportError("player-color and main frame counts differ")
+    if mode == "off":
+        return player_frames, {
+            "mode": mode, "version": PLAYERCOLOR_TEMPORAL_FILTER_VERSION,
+            "coverage_pixels_changed": 0, "shade_pixels_changed": 0,
+        }
+    if mode != "consensus3":
+        raise ExportError(f"unknown player-color temporal filter: {mode}")
+    if frames_per_direction <= 0 or len(player_frames) % frames_per_direction:
+        raise ExportError("invalid frame count for player-color temporal filter")
+
+    looping = is_looping_animation(name)
+    output = list(player_frames)
+    coverage_changed = 0
+    shade_changed = 0
+    direction_count = len(player_frames) // frames_per_direction
+    if frames_per_direction < 3:
+        return output, {
+            "mode": mode, "version": PLAYERCOLOR_TEMPORAL_FILTER_VERSION,
+            "coverage_pixels_changed": 0, "shade_pixels_changed": 0,
+        }
+
+    for direction in range(direction_count):
+        start = direction * frames_per_direction
+        for local_index in range(frames_per_direction):
+            if not looping and local_index in (0, frames_per_direction - 1):
+                continue
+            previous_local = (local_index - 1) % frames_per_direction
+            next_local = (local_index + 1) % frames_per_direction
+            indices = (
+                start + previous_local,
+                start + local_index,
+                start + next_local,
+            )
+            previous, current, following = [player_frames[index] for index in indices]
+            if not (previous.present and current.present and following.present):
+                continue
+            previous_main, current_main, following_main = [
+                main_frames[index] for index in indices
+            ]
+
+            current_mask = numpy.asarray(
+                current.image.convert("RGBA"), dtype=numpy.uint8
+            ).copy()
+            current_base = numpy.asarray(
+                current_main.image.convert("RGBA"), dtype=numpy.uint8
+            )
+            previous_mask, previous_mask_valid = _sample_aligned(previous, current)
+            following_mask, following_mask_valid = _sample_aligned(following, current)
+            previous_base, previous_base_valid = _sample_aligned(
+                previous_main, current_main
+            )
+            following_base, following_base_valid = _sample_aligned(
+                following_main, current_main
+            )
+
+            valid = (previous_mask_valid & following_mask_valid &
+                     previous_base_valid & following_base_valid)
+            opaque = ((current_base[:, :, 3] > alpha_min) &
+                      (previous_base[:, :, 3] > alpha_min) &
+                      (following_base[:, :, 3] > alpha_min))
+            current_rgb = current_base[:, :, :3].astype(numpy.int16)
+            previous_rgb = previous_base[:, :, :3].astype(numpy.int16)
+            following_rgb = following_base[:, :, :3].astype(numpy.int16)
+            stable_base = (
+                numpy.max(numpy.abs(previous_rgb - current_rgb), axis=2)
+                <= PLAYERCOLOR_BASE_RGB_TOLERANCE
+            ) & (
+                numpy.max(numpy.abs(following_rgb - current_rgb), axis=2)
+                <= PLAYERCOLOR_BASE_RGB_TOLERANCE
+            )
+            eligible = valid & opaque & stable_base
+
+            previous_hit = previous_mask[:, :, 3] == 255
+            current_hit = current_mask[:, :, 3] == 255
+            following_hit = following_mask[:, :, 3] == 255
+            neighbor_coverage_agrees = previous_hit == following_hit
+            coverage_fix = eligible & neighbor_coverage_agrees & (
+                current_hit != previous_hit
+            )
+            add = coverage_fix & previous_hit
+            remove = coverage_fix & ~previous_hit
+            neighbor_shade_difference = numpy.abs(
+                previous_mask[:, :, 0].astype(numpy.int16) -
+                following_mask[:, :, 0].astype(numpy.int16)
+            )
+            agreed_shade = numpy.rint((
+                previous_mask[:, :, 0].astype(numpy.float32) +
+                following_mask[:, :, 0].astype(numpy.float32)
+            ) * 0.5).astype(numpy.uint8)
+            current_shade_difference = numpy.abs(
+                current_mask[:, :, 0].astype(numpy.int16) -
+                agreed_shade.astype(numpy.int16)
+            )
+            shade_fix = (eligible & previous_hit & current_hit & following_hit &
+                         (neighbor_shade_difference <= 1) &
+                         (current_shade_difference > 1))
+
+            current_mask[add, 0] = agreed_shade[add]
+            current_mask[add, 1:3] = 0
+            current_mask[add, 3] = 255
+            current_mask[remove] = 0
+            current_mask[shade_fix, 0] = agreed_shade[shade_fix]
+            coverage_changed += int(numpy.count_nonzero(coverage_fix))
+            shade_changed += int(numpy.count_nonzero(shade_fix))
+            output[indices[1]] = _frame_with_image(
+                current, Image.fromarray(current_mask, "RGBA")
+            )
+
+    return output, {
+        "mode": mode,
+        "version": PLAYERCOLOR_TEMPORAL_FILTER_VERSION,
+        "base_rgb_tolerance": PLAYERCOLOR_BASE_RGB_TOLERANCE,
+        "coverage_pixels_changed": coverage_changed,
+        "shade_pixels_changed": shade_changed,
+    }
+
+
+def _aligned_pair_arrays(first: ExportFrame, second: ExportFrame):
+    import numpy
+
+    min_x = min(-first.foot[0], -second.foot[0])
+    min_y = min(-first.foot[1], -second.foot[1])
+    max_x = max(first.width - first.foot[0], second.width - second.foot[0])
+    max_y = max(first.height - first.foot[1], second.height - second.foot[1])
+    shape = (max_y - min_y, max_x - min_x, 4)
+    first_canvas = numpy.zeros(shape, dtype=numpy.uint8)
+    second_canvas = numpy.zeros(shape, dtype=numpy.uint8)
+    for frame, canvas in ((first, first_canvas), (second, second_canvas)):
+        x = -frame.foot[0] - min_x
+        y = -frame.foot[1] - min_y
+        canvas[y:y + frame.height, x:x + frame.width] = numpy.asarray(
+            frame.image.convert("RGBA"), dtype=numpy.uint8
+        )
+    return first_canvas, second_canvas
+
+
+def _mask_pair_metrics(first_mask: ExportFrame, second_mask: ExportFrame,
+                       first_main: ExportFrame, second_main: ExportFrame):
+    import numpy
+
+    mask_a, mask_b = _aligned_pair_arrays(first_mask, second_mask)
+    main_a, main_b = _aligned_pair_arrays(first_main, second_main)
+    hit_a = mask_a[:, :, 3] == 255
+    hit_b = mask_b[:, :, 3] == 255
+    body_a = main_a[:, :, 3] > 8
+    body_b = main_b[:, :, 3] > 8
+
+    def iou(first, second) -> float:
+        union = int(numpy.count_nonzero(first | second))
+        if union == 0:
+            return 1.0
+        return float(numpy.count_nonzero(first & second) / union)
+
+    area_a = int(numpy.count_nonzero(hit_a))
+    area_b = int(numpy.count_nonzero(hit_b))
+    area_change = abs(area_b - area_a) / max(1, area_a, area_b)
+    if area_a and area_b:
+        y_a, x_a = numpy.nonzero(hit_a)
+        y_b, x_b = numpy.nonzero(hit_b)
+        centroid_jump = math.hypot(
+            float(x_b.mean() - x_a.mean()), float(y_b.mean() - y_a.mean())
+        )
+    else:
+        centroid_jump = 0.0 if area_a == area_b else float("inf")
+    overlap = hit_a & hit_b
+    overlap_count = int(numpy.count_nonzero(overlap))
+    shade_change = 0.0
+    if overlap_count:
+        shade_change = float(numpy.count_nonzero(
+            mask_a[:, :, 0][overlap] != mask_b[:, :, 0][overlap]
+        ) / overlap_count)
+    return {
+        "body_iou": round(iou(body_a, body_b), 6),
+        "mask_iou": round(iou(hit_a, hit_b), 6),
+        "mask_area_change_ratio": round(area_change, 6),
+        "mask_centroid_jump_pixels": (
+            round(centroid_jump, 6) if math.isfinite(centroid_jump) else None
+        ),
+        "subcolor_change_ratio": round(shade_change, 6),
+    }
+
+
+def write_playercolor_diagnostics(root: Path, out_dir: Path, name: str,
+                                  before: list[ExportFrame],
+                                  after: list[ExportFrame],
+                                  main_frames: list[ExportFrame],
+                                  frames_per_direction: int,
+                                  main_layout: AtlasLayout):
+    import numpy
+    from PIL import Image
+
+    target = root / out_dir.parent.name / out_dir.name / name
+    target.mkdir(parents=True, exist_ok=True)
+    before_atlas, _, _ = pack_frames(
+        before, frames_per_direction, layout=main_layout
+    )
+    after_atlas, _, _ = pack_frames(
+        after, frames_per_direction, layout=main_layout
+    )
+    before_atlas.save(target / "before.png")
+    after_atlas.save(target / "after.png")
+
+    difference_frames = []
+    for old, new in zip(before, after):
+        old_pixels = numpy.asarray(old.image.convert("RGBA"), dtype=numpy.uint8)
+        new_pixels = numpy.asarray(new.image.convert("RGBA"), dtype=numpy.uint8)
+        old_hit = old_pixels[:, :, 3] == 255
+        new_hit = new_pixels[:, :, 3] == 255
+        coverage_changed = old_hit != new_hit
+        shade_changed = old_hit & new_hit & (
+            old_pixels[:, :, 0] != new_pixels[:, :, 0]
+        )
+        diff = numpy.zeros_like(old_pixels)
+        diff[coverage_changed] = (255, 0, 255, 255)
+        diff[shade_changed] = (255, 255, 0, 255)
+        difference_frames.append(_frame_with_image(
+            old, Image.fromarray(diff, "RGBA")
+        ))
+    difference_atlas, _, _ = pack_frames(
+        difference_frames, frames_per_direction, layout=main_layout
+    )
+    difference_atlas.save(target / "difference.png")
+
+    direction_count = len(before) // frames_per_direction
+    looping = is_looping_animation(name)
+    pairs = []
+    flagged_source_frames: list[int] = []
+    for direction in range(direction_count):
+        start = direction * frames_per_direction
+        pair_count = frames_per_direction if looping else frames_per_direction - 1
+        for local_index in range(max(0, pair_count)):
+            next_local = (local_index + 1) % frames_per_direction
+            first_index = start + local_index
+            second_index = start + next_local
+            raw = _mask_pair_metrics(
+                before[first_index], before[second_index],
+                main_frames[first_index], main_frames[second_index],
+            )
+            stabilized = _mask_pair_metrics(
+                after[first_index], after[second_index],
+                main_frames[first_index], main_frames[second_index],
+            )
+            flagged = raw["body_iou"] >= 0.95 and raw["mask_iou"] < 0.8
+            if flagged:
+                flagged_source_frames.extend((
+                    before[first_index].source_frame_index,
+                    before[second_index].source_frame_index,
+                ))
+            pairs.append({
+                "direction": direction,
+                "from_frame": local_index,
+                "to_frame": next_local,
+                "from_source_frame": before[first_index].source_frame_index,
+                "to_source_frame": before[second_index].source_frame_index,
+                "flagged_stable_body_mask_jump": flagged,
+                "before": raw,
+                "after": stabilized,
+            })
+    report = {
+        "animation": name,
+        "frames_per_direction": frames_per_direction,
+        "direction_count": direction_count,
+        "looping": looping,
+        "thresholds": {"stable_body_iou_min": 0.95, "mask_iou_max": 0.8},
+        "flagged_pair_count": sum(
+            pair["flagged_stable_body_mask_jump"] for pair in pairs
+        ),
+        "pairs": pairs,
+    }
+    write_json(target / "metrics.json", report)
+    return sorted(set(flagged_source_frames))
 
 
 def layer_presence(records: list[dict[str, int]], layer_name: str) -> list[dict[str, int]]:
@@ -760,8 +1178,7 @@ def warning(code: str, message: str, source_frames: list[int] | None = None) -> 
 
 
 def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
-                     directions: int, fps: float, playercolor_rule: str,
-                     luma_min: float, sat_max: float, alpha_min: int):
+                     directions: int, fps: float):
     data = source.read_bytes()
     records = read_sld_frame_records(data)
     source_frame_count = len(records)
@@ -894,20 +1311,17 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                         (main_frame.width, main_frame.height) or
                         player_frame.foot != main_frame.foot):
                     raise ExportError(
-                        f"source frame {record['frame_index']} size/foot differs "
-                        "from main; same-UV sampling would be unsafe"
+                        f"source frame {record['frame_index']} geometry differs "
+                        "from main; SLD mask layers must inherit main geometry"
                     )
                 player_frames.append(player_frame)
 
-            raw_player_atlas, player_meta, _ = pack_frames(
-                player_frames, frames_per_direction, layout=main_layout
-            )
-            player_atlas = bake_playercolor_index_mask(
-                raw_player_atlas, main_atlas, playercolor_rule,
-                luma_min, sat_max, alpha_min
+            player_atlas, player_meta, _ = pack_frames(
+                player_frames, frames_per_direction, layout=main_layout,
+                preserve_pixels=True
             )
             if player_atlas.size != main_atlas.size:
-                raise ExportError("baked player-color atlas does not match main atlas")
+                raise ExportError("player-color atlas does not match main atlas")
             player_image = f"{name}_playercolor.png"
             player_atlas.save(graphics_out / player_image)
             player_status = "partial" if missing_player else "complete"
@@ -919,10 +1333,11 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                     "placeholders were inserted",
                     missing_player,
                 ))
-            layers["player_color"] = image_layer_record(
+            player_layer = image_layer_record(
                 player_status, presence_counts["player_color"], player_image,
                 player_atlas, player_meta, missing_player
             )
+            layers["player_color"] = player_layer
         except Exception as exc:  # noqa: BLE001
             message = f"{source.name} player-color layer is invalid: {exc}"
             warnings.append(warning("invalid_player_color", message))
@@ -970,11 +1385,7 @@ def manifest_settings(args) -> dict[str, Any]:
         "directions": args.directions,
         "fps": args.fps,
         "player_color": {
-            "rule": args.playercolor_rule,
-            "luma_min": args.playercolor_luma_min,
-            "saturation_max": args.playercolor_sat_max,
-            "alpha_min": args.playercolor_alpha_min,
-            "format": "r8_subcolor_alpha_binary",
+            "format": PLAYERCOLOR_FORMAT,
         },
     }
 
@@ -1016,9 +1427,7 @@ def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path],
         try:
             record = export_animation(
                 SLD, Texture, source, out_dir, name,
-                args.directions, args.fps, args.playercolor_rule,
-                args.playercolor_luma_min, args.playercolor_sat_max,
-                args.playercolor_alpha_min,
+                args.directions, args.fps,
             )
             manifest["animations"][name] = record
             print(f"exported {source.name} -> {record['config']}")
@@ -1208,12 +1617,9 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--graphics", nargs="*")
     parser.add_argument("--scale", choices=("x1", "x2", "auto"), default="auto")
     parser.add_argument(
-        "--playercolor-rule", choices=("raw", "diffuse-neutral", "hybrid"),
-        default="raw"
+        "--playercolor-temporal-filter", choices=("off",), default="off",
+        help="reserved for future index-aware filtering; currently always off",
     )
-    parser.add_argument("--playercolor-luma-min", type=float, default=120.0)
-    parser.add_argument("--playercolor-sat-max", type=float, default=8.0)
-    parser.add_argument("--playercolor-alpha-min", type=int, default=8)
     parser.add_argument("--directions", type=positive_int, default=DEFAULT_DIRECTIONS)
     parser.add_argument("--fps", type=positive_finite_float, default=DEFAULT_FPS)
     parser.add_argument("--dump-layers", action="store_true")

@@ -203,8 +203,9 @@ Each exported animation config records all five SLD layers. Layer statuses are:
 
 Main, shadow and player-color layers are aligned by physical SLD frame ordinal.
 Shadow has an independent atlas layout. Player-color always uses the exact main
-atlas layout and UVs; an incompatible mask is rejected instead of being sampled
-incorrectly.
+atlas layout and UVs. SLD mask layers inherit the main frame geometry, so a
+decoded size or hotspot mismatch is rejected as invalid rather than corrected
+with a guessed offset.
 
 Every exported frame includes a semantic foot point:
 
@@ -219,6 +220,12 @@ Every exported frame includes a semantic foot point:
 The point is the SLD layer hotspot relative to the cropped frame's top-left.
 At runtime, place that point at the unit's map/world position.
 
-Player-color output is an RGBA mask whose red channel is `0..7`, green/blue are
-zero, and alpha is binary. The default `raw` rule uses the decoded SLD layer 4;
-`diffuse-neutral` and `hybrid` are opt-in diagnostics/fallbacks.
+Player-color output is an `rgba8_bc4_decoded` atlas. It preserves the decoder's
+four bytes per texel: R is the decoded BC4 UNORM blend weight and G/B are zero.
+A is only an artifact of openage's shared RGBA image interface; AoE2DE does not
+sample it for player color. Export performs no thresholding, index reversal,
+temporal recovery, channel extraction, or geometric translation.
+
+Player-color temporal filtering is intentionally disabled for this raw baseline.
+`--playercolor-temporal-filter off` is the only accepted setting until a
+weight-aware BC4 filter is designed and independently validated.

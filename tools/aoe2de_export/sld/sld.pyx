@@ -70,13 +70,13 @@ cdef class SLD:
     # struct sld_frame_header {
     #   unsigned short canvas_width;
     #   unsigned short canvas_height;
-    #   unsigned short canvas_hotspot_x;
-    #   unsigned short canvas_hotspot_y;
+    #   short          canvas_hotspot_x;
+    #   short          canvas_hotspot_y;
     #   char           frame_type;
     #   char           unknown5;
     #   unsigned short frame_index;
     # };
-    sld_frame_header = Struct(endianness + "4H 2B H")
+    sld_frame_header = Struct(endianness + "2H 2h 2B H")
 
     # struct sld_layer_length {
     #   unsigned int length;
@@ -84,14 +84,14 @@ cdef class SLD:
     sld_layer_length = Struct(endianness + "I")
 
     # struct sld_layer_header_graphics {
-    #   unsigned short offset_x1;
-    #   unsigned short offset_y1;
-    #   unsigned short offset_x2;
-    #   unsigned short offset_y2;
+    #   short          offset_x1;
+    #   short          offset_y1;
+    #   short          offset_x2;
+    #   short          offset_y2;
     #   char           unknown1;
     #   char           unknown2;
     # };
-    sld_layer_header_graphics = Struct(endianness + "4H 2B")
+    sld_layer_header_graphics = Struct(endianness + "4h 2B")
 
     # struct sld_layer_header_mask {
     #   char           unknown1;
@@ -119,7 +119,7 @@ cdef class SLD:
 
         sld_header = SLD.sld_header.unpack_from(data)
         self.sld_type = sld_header[0]
-        version, frame_count, _, _, _ = sld_header[1:]
+        version, frame_count, _, frame_data_offset, _ = sld_header[1:]
 
         dbg("SLD")
         dbg(" version:     %s",   version)
@@ -136,36 +136,28 @@ cdef class SLD:
         # File bytes
         self.data = data
 
-        # Reference to previous layer
-        # SLD reuses their pixel data on some occasions
-        cdef (unsigned short, unsigned short) previous_size = (0, 0)
-        cdef (unsigned short, unsigned short) previous_offset = (0, 0)
-        cdef vector[vector[pixel]] *previous_layer = NULL
-        cdef SLDLayer previous_main
-        cdef SLDLayer previous_shadow
-        cdef SLDLayer previous_outline
-        cdef SLDLayer previous_dmg_mask
-        cdef SLDLayer previous_playercolor
-
-        # Header info
+        # Header and decoded layer objects
+        cdef SLDFrameHeader frame_header
         cdef SLDLayerHeader layer_header
-
-        # Dimensions of main layer (reused for dmg mask and playercolor)
-        cdef unsigned short main_width
-        cdef unsigned short main_height
-        cdef short main_hotspot_x
-        cdef short main_hotspot_y
+        cdef SLDLayer layer_def
+        cdef SLDLayer key_layer
 
         # Our position in the file bytes
         cdef unsigned int current_offset
 
         spam(SLDLayerHeader.repr_header())
 
-        # SLD files have no offsets, we have to calculate them
-        # from length fields
-        current_offset = SLD.sld_header.size
-        for ordinal in range(frame_count):
+        # Index all frames before decoding. Team and damage delta frames can
+        # expand the Main output rectangle to the Main rectangle belonging to
+        # their own keyframe, which is not known when Main is first encountered.
+        frame_metadata = []
+        key_ordinals = [0, 0, 0, 0, 0]
+        current_offset = frame_data_offset
+        if current_offset < SLD.sld_header.size:
+            # Early SLD variants and synthetic tests leave this field at zero.
+            current_offset = SLD.sld_header.size
 
+        for ordinal in range(frame_count):
             canvas_width, canvas_height, canvas_hotspot_x, canvas_hotspot_y,\
                 frame_type , _, frame_index = SLD.sld_frame_header.unpack_from(
                 data, current_offset)
@@ -179,36 +171,22 @@ cdef class SLD:
                 frame_index
             )
 
-            self.frame_records.append({
+            frame_record = {
                 "ordinal": ordinal,
                 "frame_index": frame_index,
                 "frame_type": frame_type,
-            })
+            }
+            self.frame_records.append(frame_record)
 
             current_offset += SLD.sld_frame_header.size
+            layers = {}
+            main_rect = None
 
-            layer_types = []
+            for layer_index in range(5):
+                if not frame_type & (1 << layer_index):
+                    continue
 
-            if frame_type & 0x01:
-                layer_types.append(SLDLayerType.MAIN)
-
-            if frame_type & 0x02:
-                layer_types.append(SLDLayerType.SHADOW)
-
-            if frame_type & 0x04:
-                layer_types.append(SLDLayerType.OUTLINE)
-
-            if frame_type & 0x08:
-                layer_types.append(SLDLayerType.DAMAGE)
-
-            if frame_type & 0x10:
-                layer_types.append(SLDLayerType.PLAYERCOLOR)
-
-            main_width = 0
-            main_height = 0
-            main_hotspot_x = 0
-            main_hotspot_y = 0
-            for layer_type in layer_types:
+                layer_type = LAYER_TYPES[layer_index]
                 layer_length = SLD.sld_layer_length.unpack_from(data, current_offset)[0]
                 start_offset = current_offset
                 current_offset += SLD.sld_layer_length.size
@@ -218,31 +196,26 @@ cdef class SLD:
                     offset_x1, offset_y1, offset_x2, offset_y2, flag0, flag1 = \
                         SLD.sld_layer_header_graphics.unpack_from(data, current_offset)
 
-                    layer_width = offset_x2 - offset_x1
-                    layer_height = offset_y2 - offset_y1
-                    layer_hotspot_x = canvas_hotspot_x - offset_x1
-                    layer_hotspot_y = canvas_hotspot_y - offset_y1
+                    source_rect = (offset_x1, offset_y1, offset_x2, offset_y2)
                     if layer_type is SLDLayerType.MAIN:
-                        main_width = layer_width
-                        main_height = layer_height
-                        main_hotspot_x = layer_hotspot_x
-                        main_hotspot_y = layer_hotspot_y
+                        main_rect = source_rect
 
                     current_offset += SLD.sld_layer_header_graphics.size
 
-                elif layer_type in (SLDLayerType.OUTLINE, ):
-                    # TODO
-                    pass
-
-                elif layer_type in (SLDLayerType.DAMAGE, SLDLayerType.PLAYERCOLOR):
+                else:
                     flag0, flag1 = SLD.sld_layer_header_mask.unpack_from(data, current_offset)
-
-                    layer_width = main_width
-                    layer_height = main_height
-                    layer_hotspot_x = main_hotspot_x
-                    layer_hotspot_y = main_hotspot_y
-
                     current_offset += SLD.sld_layer_header_mask.size
+
+                    # Mask command coordinates are defined by Main, not by the
+                    # most recently parsed graphics layer (usually Shadow).
+                    if layer_type in (SLDLayerType.DAMAGE, SLDLayerType.PLAYERCOLOR):
+                        if main_rect is None:
+                            raise ValueError("SLD mask layer has no Main geometry")
+                        source_rect = main_rect
+                    else:
+                        # Outline decoding is not implemented, but its flag is
+                        # still needed to maintain the official layer index.
+                        source_rect = None
 
                 # Command array
                 command_array_size = Struct("< H").unpack_from(data, current_offset)[0]
@@ -253,105 +226,136 @@ cdef class SLD:
                 current_offset += 2 * command_array_size
                 compressed_data_offset = current_offset
 
-                layer_header = SLDLayerHeader(
-                    layer_type,
-                    frame_type,
-                    offset_x1, offset_y1,
-                    layer_width, layer_height,
-                    layer_hotspot_x, layer_hotspot_y,
-                    command_array_size,
-                    command_array_offset,
-                    compressed_data_offset
-                )
+                layers[layer_index] = {
+                    "type": layer_type,
+                    "flag": flag0,
+                    "source_rect": source_rect,
+                    "command_array_size": command_array_size,
+                    "command_array_offset": command_array_offset,
+                    "compressed_data_offset": compressed_data_offset,
+                }
 
-                if layer_type is SLDLayerType.MAIN:
-                    layer_def = SLDLayerBC1(frame_header, layer_header)
-                    self.main_frames.append(layer_def)
-
-                    if flag0 & 0x80 and frame_index > 0:
-                        previous = previous_main
-                        previous_layer = previous.get_pcolor()
-                        previous_size = previous.layer_info.size
-                        previous_offset = previous.layer_info.offset
-
-                        layer_def.set_previous_layer(
-                            previous_size[0],
-                            previous_size[1],
-                            previous_offset[0],
-                            previous_offset[1],
-                            previous_layer
-                        )
-
-                    previous_main = layer_def
-
-                elif layer_type is SLDLayerType.SHADOW:
-                    layer_def = SLDLayerBC4(frame_header, layer_header)
-                    self.shadow_frames.append(layer_def)
-
-                    if flag0 & 0x80 and frame_index > 0:
-                        previous = previous_shadow
-                        previous_layer = previous.get_pcolor()
-                        previous_size = previous.layer_info.size
-                        previous_offset = previous.layer_info.offset
-
-                        layer_def.set_previous_layer(
-                            previous_size[0],
-                            previous_size[1],
-                            previous_offset[0],
-                            previous_offset[1],
-                            previous_layer
-                        )
-
-                    previous_shadow = layer_def
-
-                elif layer_type is SLDLayerType.OUTLINE:
-                    # TODO
-                    pass
-
-                elif layer_type is SLDLayerType.DAMAGE:
-                    layer_def = SLDLayerBC1(frame_header, layer_header)
-                    self.dmg_mask_frames.append(layer_def)
-
-                    if flag0 & 0x80 and frame_index > 0:
-                        previous = previous_dmg_mask
-                        previous_layer = previous.get_pcolor()
-                        previous_size = previous.layer_info.size
-                        previous_offset = previous.layer_info.offset
-
-                        layer_def.set_previous_layer(
-                            previous_size[0],
-                            previous_size[1],
-                            previous_offset[0],
-                            previous_offset[1],
-                            previous_layer
-                        )
-
-                    previous_dmg_mask = layer_def
-
-                elif layer_type is SLDLayerType.PLAYERCOLOR:
-                    layer_def = SLDLayerBC4(frame_header, layer_header)
-                    self.playercolor_mask_frames.append(layer_def)
-
-                    if flag0 & 0x80 and frame_index > 0:
-                        previous = previous_playercolor
-                        previous_layer = previous.get_pcolor()
-                        previous_size = previous.layer_info.size
-                        previous_offset = previous.layer_info.offset
-
-                        layer_def.set_previous_layer(
-                            previous_size[0],
-                            previous_size[1],
-                            previous_offset[0],
-                            previous_offset[1],
-                            previous_layer
-                        )
-
-                    previous_playercolor = layer_def
+                if not flag0 & 0x80:
+                    key_ordinals[layer_index] = ordinal
 
                 # Jump to next layer offset
                 current_offset = start_offset + layer_length
                 # padding to size % 4
                 current_offset += (4 - current_offset) % 4
+
+            frame_metadata.append({
+                "frame_header": frame_header,
+                "main_rect": main_rect,
+                "layers": layers,
+                "key_ordinals": list(key_ordinals),
+            })
+
+        # Create layers in source order. Delta layers retain their layer's most
+        # recent keyframe; intermediate delta frames never become the baseline.
+        key_layers = [None, None, None, None, None]
+        for ordinal, frame_meta in enumerate(frame_metadata):
+            frame_header = frame_meta["frame_header"]
+            layers = frame_meta["layers"]
+            main_rect = frame_meta["main_rect"]
+            resolved_main_rect = main_rect
+
+            if main_rect is not None:
+                main_key_ordinal = frame_meta["key_ordinals"][0]
+                main_meta = layers.get(0)
+                if main_meta is not None and main_meta["flag"] & 0x80:
+                    key_rect = frame_metadata[main_key_ordinal]["main_rect"]
+                    if key_rect is not None:
+                        resolved_main_rect = (
+                            min(resolved_main_rect[0], key_rect[0]),
+                            min(resolved_main_rect[1], key_rect[1]),
+                            max(resolved_main_rect[2], key_rect[2]),
+                            max(resolved_main_rect[3], key_rect[3]),
+                        )
+
+                # Damage and Team delta baselines use their keyframe's Main
+                # rectangle. Avoid adding it twice when it is the Main keyframe.
+                for mask_index in (3, 4):
+                    if mask_index not in layers:
+                        continue
+                    mask_key_ordinal = frame_meta["key_ordinals"][mask_index]
+                    if mask_key_ordinal in (ordinal, main_key_ordinal):
+                        continue
+                    key_rect = frame_metadata[mask_key_ordinal]["main_rect"]
+                    if key_rect is not None:
+                        resolved_main_rect = (
+                            min(resolved_main_rect[0], key_rect[0]),
+                            min(resolved_main_rect[1], key_rect[1]),
+                            max(resolved_main_rect[2], key_rect[2]),
+                            max(resolved_main_rect[3], key_rect[3]),
+                        )
+
+            for layer_index in range(5):
+                layer_meta = layers.get(layer_index)
+                if layer_meta is None or layer_index == 2:
+                    continue
+
+                source_rect = layer_meta["source_rect"]
+                output_rect = source_rect
+                if layer_index in (0, 3, 4):
+                    output_rect = resolved_main_rect
+                elif layer_index == 1 and layer_meta["flag"] & 0x80:
+                    shadow_key_ordinal = frame_meta["key_ordinals"][1]
+                    key_meta = frame_metadata[shadow_key_ordinal]["layers"].get(1)
+                    if key_meta is not None:
+                        key_rect = key_meta["source_rect"]
+                        output_rect = (
+                            min(output_rect[0], key_rect[0]),
+                            min(output_rect[1], key_rect[1]),
+                            max(output_rect[2], key_rect[2]),
+                            max(output_rect[3], key_rect[3]),
+                        )
+
+                output_width = output_rect[2] - output_rect[0]
+                output_height = output_rect[3] - output_rect[1]
+                layer_header = SLDLayerHeader(
+                    layer_meta["type"],
+                    frame_header.frame_type,
+                    output_rect[0], output_rect[1],
+                    output_width, output_height,
+                    frame_header.hotspot[0] - output_rect[0],
+                    frame_header.hotspot[1] - output_rect[1],
+                    layer_meta["command_array_size"],
+                    layer_meta["command_array_offset"],
+                    layer_meta["compressed_data_offset"]
+                )
+
+                if layer_index in (0, 3):
+                    layer_def = SLDLayerBC1(frame_header, layer_header)
+                else:
+                    layer_def = SLDLayerBC4(frame_header, layer_header)
+
+                layer_def.set_source_geometry(
+                    source_rect[2] - source_rect[0],
+                    source_rect[3] - source_rect[1],
+                    source_rect[0], source_rect[1]
+                )
+
+                if layer_meta["flag"] & 0x80:
+                    key_layer = key_layers[layer_index]
+                    if key_layer is not None:
+                        layer_def.set_previous_layer(
+                            key_layer.layer_info.size[0],
+                            key_layer.layer_info.size[1],
+                            key_layer.layer_info.offset[0],
+                            key_layer.layer_info.offset[1],
+                            key_layer.get_pcolor()
+                        )
+                else:
+                    key_layers[layer_index] = layer_def
+
+                if layer_index == 0:
+                    self.main_frames.append(layer_def)
+                elif layer_index == 1:
+                    self.shadow_frames.append(layer_def)
+                elif layer_index == 3:
+                    self.dmg_mask_frames.append(layer_def)
+                elif layer_index == 4:
+                    self.playercolor_mask_frames.append(layer_def)
 
     cpdef get_frames(self, layer: int = 0):
         """
@@ -422,7 +426,7 @@ cdef class SLDFrameHeader:
     Header info for an SLD frame.
     """
     cdef (unsigned short, unsigned short) canvas_size
-    cdef (unsigned short, unsigned short) hotspot
+    cdef (short, short) hotspot
     cdef unsigned char frame_type
     cdef unsigned short frame_index
 
@@ -458,7 +462,7 @@ cdef class SLDLayerHeader:
     Header info for an SLD layer.
     """
     cdef (unsigned short, unsigned short) size
-    cdef (unsigned short, unsigned short) offset
+    cdef (short, short) offset
     cdef (short, short) hotspot
     cdef object layer_type
     cdef unsigned char frame_type
@@ -519,10 +523,13 @@ cdef class SLDLayer:
 
     # matrix representing the 4x4 blocks and the pixels in the image
     cdef vector[vector[pixel]] pcolor
+    cdef (unsigned short, unsigned short) source_size
+    cdef (short, short) source_offset
+    cdef bool processed
 
     # Previous layer
     cdef (unsigned short, unsigned short) previous_size
-    cdef (unsigned short, unsigned short) previous_offset
+    cdef (short, short) previous_offset
     cdef vector[vector[pixel]] *previous_layer
 
     def __init__(self, frame_header, layer_header):
@@ -543,6 +550,9 @@ cdef class SLDLayer:
         self.previous_size = (0, 0)
         self.previous_offset = (0, 0)
         self.previous_layer = NULL
+        self.source_size = self.layer_info.size
+        self.source_offset = self.layer_info.offset
+        self.processed = False
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -558,46 +568,72 @@ cdef class SLDLayer:
 
         cdef unsigned char skip_count
         cdef unsigned char draw_count
-
         cdef unsigned int cmd_offset = first_cmd_offset
         cdef unsigned int data_offset = first_data_offset
-        cdef unsigned int block_idx = 0
+        cdef Py_ssize_t block_idx
+        cdef Py_ssize_t previous_block_idx
+        cdef Py_ssize_t output_block_idx
+        cdef Py_ssize_t output_width_blocks = self.layer_info.size[0] // 4
+        cdef Py_ssize_t output_height_blocks = self.layer_info.size[1] // 4
+        cdef Py_ssize_t source_width_blocks = self.source_size[0] // 4
+        cdef Py_ssize_t previous_width_blocks = self.previous_size[0] // 4
+        cdef Py_ssize_t previous_height_blocks = self.previous_size[1] // 4
+        cdef Py_ssize_t block_x
+        cdef Py_ssize_t block_y
+        cdef Py_ssize_t absolute_x
+        cdef Py_ssize_t absolute_y
+        cdef vector[pixel] decoded_block
 
+        if self.processed:
+            return
+
+        # Start with a transparent resolved output rectangle.
+        for _ in range(output_width_blocks * output_height_blocks):
+            self.pcolor.push_back(transparent_block)
+
+        # Delta frames begin from their layer's latest keyframe. Copy by
+        # absolute block coordinates because keyframe and output bounds differ.
+        if self.previous_layer != NULL:
+            for block_idx in range(output_width_blocks * output_height_blocks):
+                block_x = block_idx % output_width_blocks
+                block_y = block_idx // output_width_blocks
+                absolute_x = self.layer_info.offset[0] // 4 + block_x
+                absolute_y = self.layer_info.offset[1] // 4 + block_y
+                block_x = absolute_x - self.previous_offset[0] // 4
+                block_y = absolute_y - self.previous_offset[1] // 4
+                if (0 <= block_x < previous_width_blocks and
+                        0 <= block_y < previous_height_blocks):
+                    previous_block_idx = block_x + block_y * previous_width_blocks
+                    self.pcolor[block_idx] = self.previous_layer.at(previous_block_idx)
+
+        # Commands address the current source rectangle. Skip commands preserve
+        # the keyframe baseline; draw commands overwrite the addressed block.
+        block_idx = 0
         for _ in range(cmd_size):
             skip_count = data_raw[cmd_offset]
-            for _ in range(skip_count):
-                if self.previous_layer == NULL:
-                    self.pcolor.push_back(transparent_block)
-
-                else:
-                    previous_block_idx = get_block_index(
-                        self.layer_info.size[0],
-                        self.previous_size[0],
-                        self.previous_size[1],
-                        self.layer_info.offset[0],
-                        self.layer_info.offset[1],
-                        self.previous_offset[0],
-                        self.previous_offset[1],
-                        block_idx
-                    )
-                    if previous_block_idx >= 0:
-                        prev_block = self.previous_layer.at(previous_block_idx)
-                        self.pcolor.push_back(prev_block)
-
-                    else:
-                        self.pcolor.push_back(transparent_block)
-
-                block_idx += 1
-
+            block_idx += skip_count
             cmd_offset += 1
 
             draw_count = data_raw[cmd_offset]
             for _ in range(draw_count):
-                self.pcolor.push_back(self.decompress_block(data_raw, data_offset))
+                decoded_block = self.decompress_block(data_raw, data_offset)
                 data_offset += 8
+
+                block_x = block_idx % source_width_blocks
+                block_y = block_idx // source_width_blocks
+                absolute_x = self.source_offset[0] // 4 + block_x
+                absolute_y = self.source_offset[1] // 4 + block_y
+                block_x = absolute_x - self.layer_info.offset[0] // 4
+                block_y = absolute_y - self.layer_info.offset[1] // 4
+                if (0 <= block_x < output_width_blocks and
+                        0 <= block_y < output_height_blocks):
+                    output_block_idx = block_x + block_y * output_width_blocks
+                    self.pcolor[output_block_idx] = decoded_block
                 block_idx += 1
 
             cmd_offset += 1
+
+        self.processed = True
 
         return
 
@@ -613,8 +649,8 @@ cdef class SLDLayer:
     cdef inline void set_previous_layer(self,
         unsigned short width,
         unsigned short height,
-        unsigned short offset_x,
-        unsigned short offset_y,
+        short offset_x,
+        short offset_y,
         vector[vector[pixel]] *previous
     ):
         """
@@ -623,6 +659,15 @@ cdef class SLDLayer:
         self.previous_size = (width, height)
         self.previous_offset = (offset_x, offset_y)
         self.previous_layer = previous
+
+    cdef inline void set_source_geometry(self,
+        unsigned short width,
+        unsigned short height,
+        short offset_x,
+        short offset_y
+    ):
+        self.source_size = (width, height)
+        self.source_offset = (offset_x, offset_y)
 
     cdef inline vector[vector[pixel]] *get_pcolor(self):
         """
@@ -925,10 +970,10 @@ cdef inline short get_block_index(
     unsigned short width1,
     unsigned short width2,
     unsigned short height2,
-    unsigned short offset1_x,
-    unsigned short offset1_y,
-    unsigned short offset2_x,
-    unsigned short offset2_y,
+    short offset1_x,
+    short offset1_y,
+    short offset2_x,
+    short offset2_y,
     unsigned short block_idx1
 ):
     """

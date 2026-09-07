@@ -31,15 +31,14 @@ Public entry points are under `aoe2/include/aoe2`:
   world-space foot position; per-frame foot offsets remain authoritative in
   `Aoe2UnitAppearance`.
 
-Player colour uses the exporter's `r8_subcolor_alpha_binary` mask. Main atlas,
-nearest-filtered mask and the shared 8x8 palette LUT occupy batch texture slots
-0, 1 and 2. Shadow and non-player-colour sprites remain single-texture batches.
+Player colour uses the exporter's `rgba8_bc4_decoded` layer. The main atlas
+and nearest-filtered Player Color layer occupy batch texture slots 0 and 1.
+Shadow and non-player-colour sprites remain single-texture batches.
 
-The schema-v2 cache images remain unchanged on disk. During asynchronous load,
-the runtime extracts only the channels consumed by the shaders: shadow source R
-is uploaded as `GL_R8`, while player-colour source R+A is packed into `GL_RG8`.
-The RG texture swizzles G back to sampled alpha, so shaders continue to read the
-mask as `.r` subcolour plus `.a` binary coverage. Main atlases remain RGBA8.
+During asynchronous load, shadow and Player Color source R are uploaded as
+`GL_R8`, while main atlases remain RGBA8. Player Color PNGs retain the decoder's
+RGBA output for offline inspection, but runtime loading extracts only R as the
+continuous blend weight.
 
 Appearance loading parses all animation metadata but texture residency is lazy.
 Only the initial/current animation is requested; animations already visited stay
@@ -99,9 +98,9 @@ Playback can also be externally driven. Set `SpawnOptions::playback_mode` (or
 `set_aoe2_playback_mode`) to `Aoe2PlaybackMode::External`, then provide the
 authoritative elapsed seconds with `set_aoe2_playback_time`. In this mode render
 `dt` never advances time. Asynchronous animation transitions preserve the supplied
-time and resolve the matching frame when the target atlas commits. The independent
-`gld_aoe2_gameplay_bridge` uses this mode so gameplay fixed ticks, rather than asset
-readiness or display frames, own attack/death timing.
+time and resolve the matching frame when the target atlas commits. This keeps the
+renderer ready for an external simulation clock without depending on a gameplay
+implementation.
 
 The `aoe2_unit_preview` example displays sixteen direction slots. Controls:
 
@@ -110,7 +109,7 @@ The `aoe2_unit_preview` example displays sixteen direction slots. Controls:
 - Q/E: player colour
 - Space: pause
 - R: restart animation
-- M: normal/mask/subcolour debug views
+- M: normal/Player Color R debug views
 - F5: rescan the cache root
 
 `aoe2_unit_metadata_preview` displays one unit with a generic batched Gizmo

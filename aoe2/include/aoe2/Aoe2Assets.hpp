@@ -19,7 +19,7 @@ namespace gld::ecs::aoe2 {
 
 enum class LayerStatus { Complete, Partial, Missing, Unsupported, Invalid };
 enum class AnimationResidencyState { Unloaded, Loading, Ready, Failed };
-enum class PlayerColorFormat { None, R8SubcolorAlphaBinary };
+enum class PlayerColorFormat { None, Rgba8Bc4Decoded };
 
 enum class AnimationSlot : std::uint16_t {
     Invalid = 0,
