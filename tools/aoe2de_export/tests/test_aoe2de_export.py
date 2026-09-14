@@ -110,6 +110,19 @@ def fake_projectile_dat(prefix: str = "p_ball", frame_count: int = 30,
     )
 
 
+def fake_unit_animation_dat(prefix: str = "u_test", frame_duration: float = 0.02325,
+                            frame_count: int = 2):
+    dat = fake_dat(prefix)
+    dat.graphics[0] = SimpleNamespace(
+        file_name=f"{prefix}_idleA_x1",
+        angle_count=2,
+        frame_count=frame_count,
+        sequence_type=3,
+        frame_duration=frame_duration,
+    )
+    return dat
+
+
 def make_sld(frame_types: list[int]) -> bytes:
     data = bytearray(exporter.SLD_HEADER.pack(
         b"SLD0", 1, len(frame_types), 0, 0, 0
@@ -172,6 +185,29 @@ class ExporterTests(unittest.TestCase):
             prefix: {"civ_id": 0, "unit_id": 4},
         }), encoding="utf-8")
         return path
+
+    def make_particle_tree(self, root: Path, *, size=(6, 4), mode="RGBA"):
+        aoe2 = root / "aoe2"
+        particles = exporter.particles_dir(aoe2)
+        frames = particles / "textures" / "smoke" / "smoke_hit"
+        frames.mkdir(parents=True)
+        for index in range(1, 4):
+            color = (index * 20, 30, 40, 255) if mode == "RGBA" else (index * 20, 30, 40)
+            image = Image.new(mode, size, color)
+            image.save(frames / f"smoke_hit_{index:02d}.png")
+        (particles / "smoke_hit.json").write_text(json.dumps({
+            "AtlasImagesRaw": {
+                "Format": r"textures\smoke\smoke_hit\smoke_hit_%02d.png",
+                "First": 1,
+                "Last": 3,
+            },
+            "Type": "Once",
+            "Duration": 1.5,
+            "Scale": 0.5,
+            "Alpha": 0.75,
+            "StopMode": "Complete",
+        }), encoding="utf-8")
+        return aoe2
 
     def run_fake(self, argv: list[str]):
         stdout = io.StringIO()
@@ -247,6 +283,62 @@ class ExporterTests(unittest.TestCase):
                 "rgba8_bc4_decoded",
                 manifest["export_settings"]["player_color"]["format"],
             )
+
+    def test_unit_animation_uses_matching_dat_graphic_frame_duration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2, _ = self.make_tree(root, [0x17] * 4)
+            out_root = root / "cache"
+            stdout = io.StringIO()
+            with mock.patch.object(
+                    exporter, "load_openage", return_value=(FakeSLD, FakeTexture)), \
+                 mock.patch.object(
+                    exporter, "load_dat", return_value=fake_unit_animation_dat()):
+                with contextlib.redirect_stdout(stdout):
+                    result = exporter.main([
+                        "--aoe2", str(aoe2), "--out", str(out_root),
+                        "--unit", "u_test", "--animations", "idleA",
+                    ])
+            self.assertEqual(0, result)
+            config = json.loads(
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
+            )
+            self.assertAlmostEqual(1.0 / 0.02325, config["fps"])
+            self.assertEqual({
+                "graphic_id": 0,
+                "angle_count": 2,
+                "frame_count": 2,
+                "sequence_type": 3,
+                "frame_duration": 0.02325,
+            }, config["dat_graphic"])
+
+    def test_unit_animation_accepts_dat_sized_frames_plus_trailing_remainder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2, _ = self.make_tree(root, [0x17] * 5)
+            out_root = root / "cache"
+            with mock.patch.object(
+                    exporter, "load_openage", return_value=(FakeSLD, FakeTexture)), \
+                 mock.patch.object(
+                    exporter, "load_dat", return_value=fake_unit_animation_dat()):
+                result = exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(out_root),
+                    "--unit", "u_test", "--animations", "idleA",
+                ])
+            self.assertEqual(0, result)
+            config = json.loads(
+                (out_root / "units" / "u_test" / "graphics" / "idleA.json").read_text()
+            )
+            self.assertEqual([4], config["unused_source_frames"])
+
+    def test_unit_single_frame_zero_duration_uses_fallback_fps(self):
+        dat = fake_unit_animation_dat(frame_duration=0.0, frame_count=1)
+        metadata = exporter.resolve_unit_animation_graphic_metadata(
+            dat, Path("u_test_idleA_x2.sld")
+        )
+        self.assertIsNotNone(metadata)
+        self.assertEqual(0.0, metadata.frame_duration)
+        self.assertIsNone(metadata.fps)
 
     def test_building_export_writes_schema_states_and_muzzle_candidate(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -727,6 +819,124 @@ class ExporterTests(unittest.TestCase):
                 "--aoe2", ".", "--out", "cache",
                 "--unit", "u_test", "--projectile-unit-id", "3",
             ])
+
+    def test_particle_effect_export_writes_once_animation_and_center_anchor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_tree(root)
+            out_root = root / "cache"
+            result = exporter.main([
+                "--aoe2", str(aoe2), "--out", str(out_root),
+                "--particle-effect", "smoke_hit",
+            ])
+            self.assertEqual(0, result)
+            target = out_root / "effects" / "smoke_hit"
+            manifest = json.loads((target / "manifest.json").read_text())
+            config = json.loads((target / "graphics" / "smoke_hit.json").read_text())
+            self.assertEqual(1, manifest["schema_version"])
+            self.assertEqual("aoe2de_effect", manifest["kind"])
+            self.assertEqual("once", manifest["playback"])
+            self.assertEqual(1.5, manifest["duration_seconds"])
+            self.assertEqual(2.0, manifest["fps"])
+            self.assertEqual(0.5, manifest["scale"])
+            self.assertEqual(0.75, manifest["alpha"])
+            self.assertEqual({"x": 3, "y": 2, "space": "source_canvas_pixels_top_left"},
+                             manifest["anchor"])
+            self.assertEqual("time_once", config["sampling_mode"])
+            self.assertEqual(1, config["direction_count"])
+            self.assertEqual(3, config["frames_per_direction"])
+            self.assertEqual({"x": 3, "y": 2, "space": "frame_pixels_top_left"},
+                             config["layers"]["main"]["frames"][0]["foot"])
+            self.assertTrue((target / "graphics" / "smoke_hit.png").is_file())
+
+    def test_particle_effect_validation_preserves_existing_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_tree(root)
+            config_path = exporter.particles_dir(aoe2) / "smoke_hit.json"
+            document = json.loads(config_path.read_text())
+            document["AtlasFile"] = "unsupported.dds"
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            target = root / "cache" / "effects" / "smoke_hit"
+            target.mkdir(parents=True)
+            marker = target / "keep.txt"
+            marker.write_text("valid old cache", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "unsupported particle effect fields"):
+                exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--particle-effect", "smoke_hit",
+                ])
+            self.assertEqual("valid old cache", marker.read_text())
+
+    def test_particle_effect_rejects_path_escape_and_non_rgba_frames(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_tree(root)
+            config_path = exporter.particles_dir(aoe2) / "smoke_hit.json"
+            document = json.loads(config_path.read_text())
+            document["AtlasImagesRaw"]["Format"] = r"..\outside_%02d.png"
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "escapes the particles directory"):
+                exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--particle-effect", "smoke_hit",
+                ])
+
+    def test_particle_effect_rejects_invalid_sequence_metadata(self):
+        invalid_cases = (
+            ({"Type": "Loop"}, "only Type=Once"),
+            ({"AtlasImagesRaw": {
+                "Format": r"textures\smoke\smoke_hit.png", "First": 0, "Last": 2,
+            }}, "exactly one integer printf placeholder"),
+            ({"AtlasImagesRaw": {
+                "Format": r"textures\smoke\smoke_hit_%02d.png", "First": 2, "Last": 1,
+            }}, "non-negative ordered range"),
+        )
+        for ordinal, (replacement, expected_error) in enumerate(invalid_cases):
+            with self.subTest(case=ordinal), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                aoe2 = self.make_particle_tree(root)
+                config_path = exporter.particles_dir(aoe2) / "smoke_hit.json"
+                document = json.loads(config_path.read_text())
+                document.update(replacement)
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaisesRegex(SystemExit, expected_error):
+                    exporter.main([
+                        "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                        "--particle-effect", "smoke_hit",
+                    ])
+
+    def test_particle_effect_rejects_missing_or_mismatched_frames(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_tree(root)
+            frame_dir = (exporter.particles_dir(aoe2) / "textures" / "smoke" /
+                         "smoke_hit")
+            (frame_dir / "smoke_hit_01.png").unlink()
+            with self.assertRaisesRegex(SystemExit, "frame does not exist"):
+                exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--particle-effect", "smoke_hit",
+                ])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_tree(root)
+            frame_path = (exporter.particles_dir(aoe2) / "textures" / "smoke" /
+                          "smoke_hit" / "smoke_hit_01.png")
+            Image.new("RGBA", (7, 4), (255, 255, 255, 255)).save(frame_path)
+            with self.assertRaisesRegex(SystemExit, "dimensions .* differ"):
+                exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--particle-effect", "smoke_hit",
+                ])
+
+            aoe2 = self.make_particle_tree(root / "second", mode="RGB")
+            with self.assertRaisesRegex(SystemExit, "must be RGBA"):
+                exporter.main([
+                    "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                    "--particle-effect", "smoke_hit",
+                ])
 
     def test_missing_genieutils_has_actionable_install_hint(self):
         original_import = __import__

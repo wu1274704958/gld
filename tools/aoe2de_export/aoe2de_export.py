@@ -19,6 +19,7 @@ from typing import Any
 GRAPHICS_SCHEMA_VERSION = 2
 UNIT_SCHEMA_VERSION = 3
 BUILDING_SCHEMA_VERSION = 4
+EFFECT_SCHEMA_VERSION = 1
 GRAPHIC_NAME_RE = re.compile(
     r"^(?P<prefix>.+)_(?P<action>[A-Za-z0-9]+)_(?P<scale>x[12])\.sld$"
 )
@@ -91,6 +92,16 @@ class ProjectileGraphicMetadata:
     frame_duration: float
 
 
+@dataclass(frozen=True)
+class UnitAnimationGraphicMetadata:
+    graphic_id: int
+    direction_count: int
+    frames_per_direction: int
+    sequence_type: int
+    frame_duration: float
+    fps: float | None
+
+
 @dataclass
 class ExportFrame:
     image: Any
@@ -120,6 +131,10 @@ class AtlasLayout:
 
 def graphics_dir(aoe2: Path) -> Path:
     return aoe2 / "resources" / "_common" / "drs" / "graphics"
+
+
+def particles_dir(aoe2: Path) -> Path:
+    return aoe2 / "resources" / "_common" / "particles"
 
 
 def dat_path_for(aoe2: Path) -> Path:
@@ -439,6 +454,63 @@ def _graphic_prefix_without_scale(value: str) -> str:
     return re.sub(r"_x[12]$", "", name, flags=re.IGNORECASE)
 
 
+def resolve_unit_animation_graphic_metadata(
+        dat: Any, source: Path) -> UnitAnimationGraphicMetadata | None:
+    source_name = _graphic_prefix_without_scale(source.name).casefold()
+    matches: list[UnitAnimationGraphicMetadata] = []
+    for graphic_id, graphic in enumerate(getattr(dat, "graphics", ())):
+        graphic_file = str(getattr(graphic, "file_name", ""))
+        if _graphic_prefix_without_scale(graphic_file).casefold() != source_name:
+            continue
+        required = ("angle_count", "frame_count", "sequence_type", "frame_duration")
+        if any(not hasattr(graphic, field) for field in required):
+            continue
+        direction_count = int(getattr(graphic, "angle_count"))
+        frames_per_direction = int(getattr(graphic, "frame_count"))
+        sequence_type = int(getattr(graphic, "sequence_type"))
+        frame_duration = float(getattr(graphic, "frame_duration"))
+        if direction_count <= 0 or frames_per_direction <= 0:
+            raise ExportError(
+                f"unit Graphic {graphic_id} has invalid dimensions "
+                f"{direction_count}x{frames_per_direction}"
+            )
+        if not math.isfinite(frame_duration) or frame_duration < 0.0:
+            raise ExportError(
+                f"unit Graphic {graphic_id} has invalid frame_duration "
+                f"{frame_duration!r}"
+            )
+        if frame_duration == 0.0 and frames_per_direction != 1:
+            raise ExportError(
+                f"unit Graphic {graphic_id} has zero frame_duration for a "
+                f"{frames_per_direction}-frame animation"
+            )
+        matches.append(UnitAnimationGraphicMetadata(
+            graphic_id=graphic_id,
+            direction_count=direction_count,
+            frames_per_direction=frames_per_direction,
+            sequence_type=sequence_type,
+            frame_duration=frame_duration,
+            fps=1.0 / frame_duration if frame_duration > 0.0 else None,
+        ))
+
+    if not matches:
+        return None
+    first = matches[0]
+    timing = (
+        first.direction_count, first.frames_per_direction,
+        first.sequence_type, first.frame_duration,
+    )
+    if any((
+            match.direction_count, match.frames_per_direction,
+            match.sequence_type, match.frame_duration,
+    ) != timing for match in matches[1:]):
+        graphic_ids = ", ".join(str(match.graphic_id) for match in matches)
+        raise ExportError(
+            f"{source.name} matches DAT Graphics {graphic_ids} with conflicting metadata"
+        )
+    return first
+
+
 def resolve_projectile_graphic_metadata(dat: Any, civ_id: int, unit_id: int,
                                         source: Path) -> ProjectileGraphicMetadata:
     unit = get_dat_unit(dat, civ_id, unit_id)
@@ -649,7 +721,7 @@ def validate_resource_id(resource_id: str) -> str:
 
 def target_directory(root: Path, category: str, resource_id: str) -> Path:
     resource_id = validate_resource_id(resource_id)
-    if category not in {"units", "buildings", "graphics"}:
+    if category not in {"units", "buildings", "graphics", "effects"}:
         raise SystemExit(f"invalid cache category: {category}")
     resolved_root = root.resolve()
     category_root = (resolved_root / category).resolve()
@@ -1345,7 +1417,8 @@ def warning(code: str, message: str, source_frames: list[int] | None = None) -> 
 
 def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                      directions: int, fps: float,
-                     sampling_mode: str = "timeline"):
+                     sampling_mode: str = "timeline",
+                     dat_graphic: UnitAnimationGraphicMetadata | None = None):
     data = source.read_bytes()
     records = read_sld_frame_records(data)
     source_frame_count = len(records)
@@ -1532,6 +1605,14 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         "warnings": warnings,
         "layers": layers,
     }
+    if dat_graphic is not None:
+        config["dat_graphic"] = {
+            "graphic_id": dat_graphic.graphic_id,
+            "angle_count": dat_graphic.direction_count,
+            "frame_count": dat_graphic.frames_per_direction,
+            "sequence_type": dat_graphic.sequence_type,
+            "frame_duration": dat_graphic.frame_duration,
+        }
     config_name = f"{name}.json"
     write_json(graphics_out / config_name, config)
     layer_summary = {
@@ -1589,17 +1670,22 @@ def invalid_animation_record(source: Path, message: str) -> dict[str, Any]:
 
 def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path], out_dir: Path,
                 directions: int | None = None, record_name: str = "animations",
-                fps: float | None = None, sampling_mode: str = "timeline") -> None:
+                fps: float | None = None, sampling_mode: str = "timeline",
+                dat_graphics: dict[str, UnitAnimationGraphicMetadata] | None = None) -> None:
     if not sources:
         return
     SLD, Texture = load_openage(args.openage)
     for name, source in sources.items():
         try:
+            dat_graphic = dat_graphics.get(name) if dat_graphics is not None else None
             record = export_animation(
                 SLD, Texture, source, out_dir, name,
-                args.directions if directions is None else directions,
-                args.fps if fps is None else fps,
+                dat_graphic.direction_count if dat_graphic is not None else
+                    (args.directions if directions is None else directions),
+                dat_graphic.fps if dat_graphic is not None and dat_graphic.fps is not None else
+                    (args.fps if fps is None else fps),
                 sampling_mode,
+                dat_graphic,
             )
             manifest[record_name][name] = record
             print(f"exported {source.name} -> {record['config']}")
@@ -1641,6 +1727,35 @@ def export_unit(args) -> int:
     dat_match = resolve_dat_unit(dat, args.unit, args.civ_id, args.unit_id, unit_map)
     dat_metadata = serialize_dat_metadata(dat_path, args.aoe2, dat_match)
 
+    dat_graphics: dict[str, UnitAnimationGraphicMetadata] = {}
+    for action, source in sources.items():
+        try:
+            metadata = resolve_unit_animation_graphic_metadata(dat, source)
+        except ExportError as exc:
+            raise SystemExit(f"failed to resolve DAT timing for {source.name}: {exc}") from exc
+        if metadata is None:
+            print(
+                f"warning: {source.name} has no matching DAT Graphic; "
+                f"using --directions={args.directions} and --fps={args.fps}"
+            )
+            continue
+        expected_frames = metadata.direction_count * metadata.frames_per_direction
+        actual_frames = len(read_sld_frame_records(source.read_bytes()))
+        if not expected_frames <= actual_frames < expected_frames + metadata.direction_count:
+            raise SystemExit(
+                f"unit Graphic {metadata.graphic_id} expects "
+                f"{metadata.direction_count}x{metadata.frames_per_direction}="
+                f"{expected_frames} usable frames (plus fewer than one direction of "
+                f"trailing frames), but {source.name} contains {actual_frames}"
+            )
+        if (args.directions != DEFAULT_DIRECTIONS and
+                args.directions != metadata.direction_count):
+            raise SystemExit(
+                f"--directions={args.directions} conflicts with DAT angle_count="
+                f"{metadata.direction_count} for {source.name}"
+            )
+        dat_graphics[action] = metadata
+
     out_dir = clean_target(args.out, "units", resource_id)
     manifest = {
         "schema_version": UNIT_SCHEMA_VERSION,
@@ -1667,7 +1782,7 @@ def export_unit(args) -> int:
             "warning_count": 1,
             "error": message,
         }
-    run_exports(args, manifest, sources, out_dir)
+    run_exports(args, manifest, sources, out_dir, dat_graphics=dat_graphics)
     finish_manifest(manifest)
     write_json(out_dir / "manifest.json", manifest)
     return 0
@@ -1851,6 +1966,204 @@ def export_graphics(args) -> int:
     return 0
 
 
+def _finite_number(value: Any, field: str, *, positive: bool = False,
+                   minimum: float | None = None,
+                   maximum: float | None = None) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ExportError(f"{field} must be a number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ExportError(f"{field} must be finite")
+    if positive and result <= 0.0:
+        raise ExportError(f"{field} must be greater than zero")
+    if minimum is not None and result < minimum:
+        raise ExportError(f"{field} must be at least {minimum}")
+    if maximum is not None and result > maximum:
+        raise ExportError(f"{field} must be at most {maximum}")
+    return result
+
+
+def _particle_frame_path(root: Path, pattern: str, frame_index: int) -> Path:
+    normalized = pattern.replace("\\", "/")
+    relative = Path(normalized)
+    if relative.is_absolute() or relative.anchor:
+        raise ExportError("AtlasImagesRaw.Format must be relative to the particles directory")
+    conversions = list(re.finditer(r"%(?:0[1-9][0-9]*)?d", normalized))
+    if len(conversions) != 1 or normalized.count("%") != 1:
+        raise ExportError("AtlasImagesRaw.Format must contain exactly one integer printf placeholder")
+    try:
+        formatted = normalized % frame_index
+    except (TypeError, ValueError) as exc:
+        raise ExportError(f"invalid AtlasImagesRaw.Format: {exc}") from exc
+    resolved_root = root.resolve()
+    resolved = (resolved_root / formatted).resolve()
+    if resolved == resolved_root or resolved_root not in resolved.parents:
+        raise ExportError(f"particle frame escapes the particles directory: {formatted}")
+    return resolved
+
+
+def export_particle_effect(args) -> int:
+    from PIL import Image
+
+    effect_name = validate_resource_id(args.particle_effect)
+    resource_id = validate_resource_id(args.name or effect_name)
+    root = particles_dir(args.aoe2)
+    if not root.is_dir():
+        raise SystemExit(f"particles directory does not exist: {root}")
+    source_config = (root / f"{effect_name}.json").resolve()
+    if source_config.parent != root.resolve() or not source_config.is_file():
+        raise SystemExit(f"particle effect config does not exist: {source_config}")
+
+    try:
+        document = json.loads(source_config.read_text(encoding="utf-8-sig"))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"failed to read particle effect {source_config}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise SystemExit(f"particle effect root must be a JSON object: {source_config}")
+    allowed_fields = {"AtlasImagesRaw", "Type", "Duration", "Scale", "Alpha", "StopMode"}
+    unknown_fields = sorted(set(document) - allowed_fields)
+    if unknown_fields:
+        raise SystemExit(
+            f"unsupported particle effect fields in {source_config.name}: "
+            f"{', '.join(unknown_fields)}"
+        )
+    if set(document) != allowed_fields:
+        missing = sorted(allowed_fields - set(document))
+        raise SystemExit(
+            f"particle effect {source_config.name} is missing required fields: "
+            f"{', '.join(missing)}"
+        )
+    if document["Type"] != "Once" or document["StopMode"] != "Complete":
+        raise SystemExit("only Type=Once and StopMode=Complete particle effects are supported")
+    atlas_raw = document["AtlasImagesRaw"]
+    if not isinstance(atlas_raw, dict) or set(atlas_raw) != {"Format", "First", "Last"}:
+        raise SystemExit("AtlasImagesRaw must contain exactly Format, First and Last")
+    pattern = atlas_raw["Format"]
+    first = atlas_raw["First"]
+    last = atlas_raw["Last"]
+    if not isinstance(pattern, str) or not pattern:
+        raise SystemExit("AtlasImagesRaw.Format must be a non-empty string")
+    if (isinstance(first, bool) or not isinstance(first, int) or first < 0 or
+            isinstance(last, bool) or not isinstance(last, int) or last < first):
+        raise SystemExit("AtlasImagesRaw First/Last must define a non-negative ordered range")
+    try:
+        duration = _finite_number(document["Duration"], "Duration", positive=True)
+        scale = _finite_number(document["Scale"], "Scale", positive=True)
+        alpha = _finite_number(document["Alpha"], "Alpha", minimum=0.0, maximum=1.0)
+        frame_paths = [_particle_frame_path(root, pattern, frame) for frame in range(first, last + 1)]
+    except ExportError as exc:
+        raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
+
+    missing_paths = [path for path in frame_paths if not path.is_file()]
+    if missing_paths:
+        raise SystemExit(f"particle effect frame does not exist: {missing_paths[0]}")
+
+    images = []
+    frame_size: tuple[int, int] | None = None
+    for path in frame_paths:
+        try:
+            with Image.open(path) as image:
+                if image.mode != "RGBA":
+                    raise ExportError(f"{path.name} must be RGBA, got {image.mode}")
+                if image.width <= 0 or image.height <= 0:
+                    raise ExportError(f"{path.name} has invalid dimensions")
+                if frame_size is None:
+                    frame_size = image.size
+                elif image.size != frame_size:
+                    raise ExportError(
+                        f"{path.name} dimensions {image.size} differ from {frame_size}"
+                    )
+                images.append(image.copy())
+        except ExportError as exc:
+            raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"failed to read particle frame {path}: {exc}") from exc
+
+    assert frame_size is not None
+    frame_count = len(images)
+    fps = frame_count / duration
+    foot = (frame_size[0] // 2, frame_size[1] // 2)
+    frames = [
+        ExportFrame(image, image.width, image.height, foot, ordinal, first + ordinal)
+        for ordinal, image in enumerate(images)
+    ]
+    try:
+        atlas, metadata, _layout = pack_frames(frames, frame_count)
+    except ExportError as exc:
+        raise SystemExit(f"failed to pack particle effect {effect_name}: {exc}") from exc
+
+    # Destructive cleanup happens only after every source field and image has
+    # been validated and the atlas can be constructed successfully.
+    out_dir = clean_target(args.out, "effects", resource_id)
+    graphics_out = out_dir / "graphics"
+    graphics_out.mkdir()
+    image_name = f"{resource_id}.png"
+    atlas.save(graphics_out / image_name)
+    layers = {
+        "main": image_layer_record(
+            "complete", frame_count, image_name, atlas, metadata, []
+        ),
+        "shadow": empty_layer_record("missing", 0),
+        "outline": empty_layer_record("missing", 0),
+        "damage": empty_layer_record("missing", 0),
+        "player_color": empty_layer_record("missing", 0),
+    }
+    config_name = f"{resource_id}.json"
+    write_json(graphics_out / config_name, {
+        "schema_version": GRAPHICS_SCHEMA_VERSION,
+        "name": resource_id,
+        "source": source_config.name,
+        "scale": None,
+        "source_frame_count": frame_count,
+        "exported_frame_count": frame_count,
+        "direction_count": 1,
+        "frames_per_direction": frame_count,
+        "fps": fps,
+        "sampling_mode": "time_once",
+        "frame_order": "direction_major",
+        "unused_source_frames": [],
+        "warnings": [],
+        "layers": layers,
+    })
+    write_json(out_dir / "manifest.json", {
+        "schema_version": EFFECT_SCHEMA_VERSION,
+        "kind": "aoe2de_effect",
+        "id": resource_id,
+        "source_root": str(args.aoe2).replace("\\", "/"),
+        "source": {
+            "config": source_config.relative_to(args.aoe2.resolve()).as_posix(),
+            "format": pattern.replace("\\", "/"),
+            "first_frame": first,
+            "last_frame": last,
+        },
+        "playback": "once",
+        "duration_seconds": duration,
+        "fps": fps,
+        "scale": scale,
+        "alpha": alpha,
+        "stop_mode": document["StopMode"].lower(),
+        "frame_size": {"width": frame_size[0], "height": frame_size[1]},
+        "anchor": {
+            "x": foot[0],
+            "y": foot[1],
+            "space": "source_canvas_pixels_top_left",
+        },
+        "animation": {
+            "status": "exported",
+            "config": f"graphics/{config_name}",
+            "layers": {name: layer["status"] for name, layer in layers.items()},
+        },
+        "summary": {
+            "complete": True,
+            "exported_frame_count": frame_count,
+            "missing_frame_count": 0,
+            "warning_count": 0,
+        },
+    })
+    print(f"exported particle effect {effect_name} -> effects/{resource_id}")
+    return 0
+
+
 def dump_sld_layers(args) -> int:
     if not args.graphics:
         raise SystemExit("--dump-layers requires --graphics with at least one .sld filename")
@@ -1913,6 +2226,10 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--page", type=positive_int, default=1)
     parser.add_argument("--unit", metavar="PREFIX")
     parser.add_argument("--building", metavar="PREFIX")
+    parser.add_argument(
+        "--particle-effect", metavar="EFFECT",
+        help="export an AoE2DE AtlasImagesRaw one-shot particle effect",
+    )
     parser.add_argument("--animations", nargs="*")
     parser.add_argument("--graphics", nargs="*")
     parser.add_argument("--scale", choices=("x1", "x2", "auto"), default="auto")
@@ -1933,10 +2250,13 @@ def main(argv: list[str] | None = None) -> int:
         args.list is not None,
         args.unit is not None,
         args.building is not None,
+        args.particle_effect is not None,
         bool(args.graphics),
     ))
     if selected_modes > 1:
-        raise SystemExit("choose only one of --list, --unit, --building, or --graphics")
+        raise SystemExit(
+            "choose only one of --list, --unit, --building, --particle-effect, or --graphics"
+        )
     if args.projectile_unit_id is not None and not args.graphics:
         raise SystemExit("--projectile-unit-id is only valid with --graphics")
     if args.list is not None:
@@ -1950,9 +2270,11 @@ def main(argv: list[str] | None = None) -> int:
         return export_unit(args)
     if args.building:
         return export_building(args)
+    if args.particle_effect:
+        return export_particle_effect(args)
     if args.graphics:
         return export_graphics(args)
-    raise SystemExit("choose --list, --unit, --building, or --graphics")
+    raise SystemExit("choose --list, --unit, --building, --particle-effect, or --graphics")
 
 
 if __name__ == "__main__":

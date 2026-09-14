@@ -9,6 +9,7 @@
 导出器从本机 Age of Empires II: Definitive Edition 安装目录读取：
 
 - `.sld` Sprite 动画；
+- `resources/_common/particles` 下经过验证的逐帧 RGBA 一次性 Effect；
 - Gameplay DAT 中的 Unit/Combat 元数据；
 
 输出是供本地开发使用的版本化缓存，不是通用的 AoE2DE 资源再分发工具。生成的原始游戏资源不应提交或重新分发。
@@ -74,6 +75,15 @@ python tools\aoe2de_export\aoe2de_export.py `
   --name p_ball --graphics p_ball_x2.sld --projectile-unit-id 368
 ```
 
+导出 `AtlasImagesRaw` 一次性粒子效果，例如手推炮命中的 `smoke_hit`：
+
+```powershell
+python tools\aoe2de_export\aoe2de_export.py `
+  --aoe2 "D:\program1\steam\steamapps\common\AoE2DE" `
+  --out "E:\code\gld\res\aoe2de_cache" `
+  --particle-effect smoke_hit
+```
+
 列出可用 Unit：
 
 ```powershell
@@ -90,12 +100,13 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
 
 ## 4. 导出模式与目录
 
-导出器支持四类导出入口及一个诊断入口：
+导出器支持五类导出入口及一个诊断入口：
 
 - `--list`：按前缀发现 Unit Graphic；
 - `--unit`：导出 Unit 动画，同时读取 DAT；
 - `--building`：导出 Building 状态与 DAT，使用显式 Building 映射；
 - `--graphics`：导出一个或多个独立 Graphic，不读取 DAT；
+- `--particle-effect`：导出严格校验的 `AtlasImagesRaw` 一次性 RGBA Effect；
 - `--dump-layers`：诊断性导出 SLD 的各个原始图层。
 
 `--out` 表示缓存根目录，不是最终资源目录。输出布局为：
@@ -121,6 +132,11 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
     manifest.json
     graphics/
       ...
+  effects/<effect-id>/
+    manifest.json
+    graphics/
+      <effect-id>.json
+      <effect-id>.png
 ```
 
 Unit 默认使用完整 SLD 前缀作为资源 ID，`--name` 可以覆盖。资源 ID 仅允许字母、数字、`.`、`_` 和 `-`。
@@ -170,7 +186,14 @@ Main、Shadow、Player Color 必须按 SLD 的物理帧序号对齐，不能只�
 ## 6. 帧方向、时间与图集布局
 
 - 默认方向数为 16，可通过 `--directions` 修改；
-- 默认帧率为 30 FPS，可通过 `--fps` 修改；
+- Unit 动画按去除 `_x1`/`_x2` 后的源文件名匹配 DAT Graphic，并使用各自的
+  `frame_duration` 计算 `fps = 1 / frame_duration`；
+- Unit 动画 JSON 的 `dat_graphic` 会保留 `graphic_id`、`angle_count`、
+  `frame_count`、`sequence_type` 和 `frame_duration`，并校验 SLD 的可用物理帧数；
+- DAT 中 `frame_duration=0` 的单帧静态姿势没有时间采样含义，保留原值并使用
+  `--fps` 作为无实际影响的兼容值；
+- 找不到对应 DAT Graphic 的非标准 Unit 动画才回退到 `--directions` 和 `--fps`；
+  默认回退帧率为 30 FPS；
 - `--scale auto` 优先选择 `_x2.sld`，不存在时回退到 `_x1.sld`；
 - 源帧采用 `direction_major`：先排列某方向的全部动画帧，再排列下一方向；
 - 每方向帧数为 `有效总帧数 / direction_count`；
@@ -188,6 +211,14 @@ Main、Shadow、Player Color 必须按 SLD 的物理帧序号对齐，不能只�
 不满足上述已验证组合的 Projectile 会在清理旧输出前终止，不能再用“总帧数就是
 方向数”的经验规则猜测。Manifest 的 `projectile` 节点同时保留 DAT Unit/Graphic
 ID、速度、弧度和原始 Graphic 维度，供 Gameplay 转换与诊断使用。
+
+Particle Effect 使用独立 schema 1、`kind: "aoe2de_effect"` 和
+`sampling_mode: "time_once"`。当前只接受顶层字段 `AtlasImagesRaw`、`Type`、
+`Duration`、`Scale`、`Alpha`、`StopMode`，且要求 `Type=Once`、
+`StopMode=Complete`。帧路径必须位于 particles 目录内，序列不能缺帧，图片必须都是
+相同尺寸的 RGBA。Effect 使用原始画布中心作为逐帧 anchor，透明首尾帧也会保留，
+因此运行时能够按 `Duration` 单次播放且不会因逐帧裁切改变爆炸中心。未知字段、组合
+发射器、非法占位符和不一致画布会在删除旧缓存前失败。
 
 Main 图集使用固定大小的网格 Cell：Cell 宽高取所有帧裁剪尺寸的最大值，列数近似取总帧数平方根。每帧的实际 `x/y/w/h` 会写入 JSON。
 
