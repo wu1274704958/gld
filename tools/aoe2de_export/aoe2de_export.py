@@ -18,6 +18,7 @@ from typing import Any
 
 GRAPHICS_SCHEMA_VERSION = 2
 UNIT_SCHEMA_VERSION = 3
+BUILDING_SCHEMA_VERSION = 4
 GRAPHIC_NAME_RE = re.compile(
     r"^(?P<prefix>.+)_(?P<action>[A-Za-z0-9]+)_(?P<scale>x[12])\.sld$"
 )
@@ -27,6 +28,7 @@ DEFAULT_FPS = 30.0
 LIST_PAGE_SIZE = 50
 DEFAULT_DAT_RELATIVE = Path("resources/_common/dat/empires2_x2_p1.dat")
 DEFAULT_UNIT_MAP = Path(__file__).resolve().with_name("unit_dat_map.json")
+DEFAULT_BUILDING_MAP = Path(__file__).resolve().with_name("building_dat_map.json")
 PLAYERCOLOR_FORMAT = "rgba8_bc4_decoded"
 PLAYERCOLOR_DIFFUSE_ALPHA_MIN = 8
 PLAYERCOLOR_TRANSITION_RAW_MIN = 112
@@ -65,6 +67,28 @@ class UnitMatch:
     unit: Any
     graphics: tuple[tuple[int, str], ...]
     mapping_source: str
+
+
+@dataclass(frozen=True)
+class BuildingMapEntry:
+    civ_id: int
+    unit_id: int
+    states: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ProjectileGraphicMetadata:
+    civ_id: int
+    unit_id: int
+    graphic_id: int
+    direction_count: int
+    frames_per_direction: int
+    sampling_mode: str
+    fps: float
+    unit_speed: float
+    projectile_arc: float
+    sequence_type: int
+    frame_duration: float
 
 
 @dataclass
@@ -138,6 +162,40 @@ def load_unit_map(path: Path) -> dict[str, dict[str, int]]:
                 '{"civ_id": non-negative int, "unit_id": non-negative int}'
             )
         result[prefix] = entry
+    return result
+
+
+def load_building_map(path: Path) -> dict[str, BuildingMapEntry]:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"failed to read building map {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"building map root must be a JSON object: {path}")
+
+    result: dict[str, BuildingMapEntry] = {}
+    allowed_states = {"built", "construction", "attack", "destruction", "rubble", "open", "closed"}
+    for prefix, entry in value.items():
+        if not isinstance(prefix, str) or not isinstance(entry, dict):
+            raise SystemExit(f"invalid building map entry for {prefix!r}")
+        if set(entry) - {"civ_id", "unit_id", "states"} or not {"civ_id", "unit_id"} <= set(entry):
+            raise SystemExit(
+                f"invalid building map entry for {prefix!r}; expected civ_id, unit_id, and optional states"
+            )
+        if not all(isinstance(entry[key], int) and entry[key] >= 0 for key in ("civ_id", "unit_id")):
+            raise SystemExit(f"building map IDs must be non-negative integers: {prefix!r}")
+
+        states = entry.get("states", {})
+        if not isinstance(states, dict) or any(
+                state not in allowed_states or not isinstance(source, str) or
+                Path(source).name != source or not source.lower().endswith(".sld")
+                for state, source in states.items()):
+            raise SystemExit(
+                f"building map states for {prefix!r} must map supported state names to local .sld filenames"
+            )
+        result[prefix] = BuildingMapEntry(entry["civ_id"], entry["unit_id"], states)
     return result
 
 
@@ -265,6 +323,22 @@ def resolve_dat_unit(dat: Any, prefix: str, civ_id: int,
     raise SystemExit("\n".join(lines))
 
 
+def resolve_dat_building(dat: Any, prefix: str, civ_id: int, unit_id: int | None,
+                         building_map: dict[str, BuildingMapEntry]) -> UnitMatch:
+    if unit_id is not None:
+        unit = get_dat_unit(dat, civ_id, unit_id)
+        return UnitMatch(civ_id, unit_id, unit, referenced_graphics(dat, unit), "explicit")
+    if prefix not in building_map:
+        raise SystemExit(
+            f"building {prefix!r} requires --unit-id or an explicit entry in the building map; "
+            "automatic graphic-prefix matching is intentionally unsupported"
+        )
+
+    entry = building_map[prefix]
+    unit = get_dat_unit(dat, entry.civ_id, entry.unit_id)
+    return UnitMatch(entry.civ_id, entry.unit_id, unit, referenced_graphics(dat, unit), "map")
+
+
 def _number(value: Any) -> int | float:
     return value if isinstance(value, int) and not isinstance(value, bool) else float(value)
 
@@ -303,6 +377,9 @@ def serialize_dat_metadata(dat_path: Path, aoe2: Path, match: UnitMatch) -> dict
                                        "DAT outline_size_z"),
         },
     }
+    blast_defense_level = getattr(unit, "blast_defense_level", None)
+    if blast_defense_level is not None:
+        value["blast_defense_level"] = int(blast_defense_level)
     combat = getattr(unit, "type_50", None)
     creatable = getattr(unit, "creatable", None)
     if combat is not None:
@@ -323,6 +400,12 @@ def serialize_dat_metadata(dat_path: Path, aoe2: Path, match: UnitMatch) -> dict
             "blast_attack_level": int(getattr(combat, "blast_attack_level")),
             "attack_graphic_id": int(getattr(combat, "attack_graphic")),
         }
+        blast_damage = getattr(combat, "blast_damage", None)
+        if blast_damage is not None:
+            record["blast_damage"] = float(blast_damage)
+        friendly_fire_damage = getattr(combat, "friendly_fire_damage", None)
+        if friendly_fire_damage is not None:
+            record["friendly_fire_damage"] = float(friendly_fire_damage)
         if creatable is not None:
             area = getattr(creatable, "projectile_spawning_area")
             record.update({
@@ -349,6 +432,73 @@ def serialize_dat_metadata(dat_path: Path, aoe2: Path, match: UnitMatch) -> dict
             },
         }
     return value
+
+
+def _graphic_prefix_without_scale(value: str) -> str:
+    name = Path(str(value).replace("\\", "/")).stem
+    return re.sub(r"_x[12]$", "", name, flags=re.IGNORECASE)
+
+
+def resolve_projectile_graphic_metadata(dat: Any, civ_id: int, unit_id: int,
+                                        source: Path) -> ProjectileGraphicMetadata:
+    unit = get_dat_unit(dat, civ_id, unit_id)
+    standing_graphic = getattr(unit, "standing_graphic", (-1, -1))
+    graphic_id = int(standing_graphic[0] if isinstance(standing_graphic, (tuple, list)) else standing_graphic)
+    graphics = getattr(dat, "graphics", ())
+    if graphic_id < 0 or graphic_id >= len(graphics):
+        raise SystemExit(
+            f"projectile unit {unit_id} has invalid standing Graphic ID {graphic_id}"
+        )
+
+    graphic = graphics[graphic_id]
+    graphic_file = str(getattr(graphic, "file_name", ""))
+    if _graphic_prefix_without_scale(graphic_file) != _graphic_prefix_without_scale(source.name):
+        raise SystemExit(
+            f"projectile unit {unit_id} Graphic {graphic_id} references {graphic_file!r}, "
+            f"not {source.name!r}"
+        )
+
+    direction_count = int(getattr(graphic, "angle_count"))
+    frames_per_direction = int(getattr(graphic, "frame_count"))
+    sequence_type = int(getattr(graphic, "sequence_type"))
+    frame_duration = float(getattr(graphic, "frame_duration"))
+    if direction_count <= 0 or frames_per_direction <= 0:
+        raise SystemExit(
+            f"projectile Graphic {graphic_id} has invalid dimensions "
+            f"{direction_count}x{frames_per_direction}"
+        )
+
+    if direction_count == 1 and sequence_type == 1 and frame_duration > 0.0:
+        sampling_mode = "time_loop"
+        fps = 1.0 / frame_duration
+    elif direction_count > 1 and sequence_type == 2:
+        sampling_mode = "pitch_pose"
+        # Pitch poses are sampled by index rather than elapsed time. Retain a
+        # stable time-to-frame scale for the renderer API.
+        fps = DEFAULT_FPS
+    else:
+        raise SystemExit(
+            f"projectile Graphic {graphic_id} has unsupported sampling semantics: "
+            f"angle_count={direction_count}, frame_count={frames_per_direction}, "
+            f"sequence_type={sequence_type}, frame_duration={frame_duration}"
+        )
+
+    projectile = getattr(unit, "projectile", None)
+    if projectile is None:
+        raise SystemExit(f"unit {unit_id} has no projectile metadata")
+    return ProjectileGraphicMetadata(
+        civ_id=civ_id,
+        unit_id=unit_id,
+        graphic_id=graphic_id,
+        direction_count=direction_count,
+        frames_per_direction=frames_per_direction,
+        sampling_mode=sampling_mode,
+        fps=fps,
+        unit_speed=float(getattr(unit, "speed")),
+        projectile_arc=float(getattr(projectile, "projectile_arc")),
+        sequence_type=sequence_type,
+        frame_duration=frame_duration,
+    )
 
 
 def parse_graphic_name(name: str) -> tuple[str, str, str] | None:
@@ -499,7 +649,7 @@ def validate_resource_id(resource_id: str) -> str:
 
 def target_directory(root: Path, category: str, resource_id: str) -> Path:
     resource_id = validate_resource_id(resource_id)
-    if category not in {"units", "graphics"}:
+    if category not in {"units", "buildings", "graphics"}:
         raise SystemExit(f"invalid cache category: {category}")
     resolved_root = root.resolve()
     category_root = (resolved_root / category).resolve()
@@ -568,6 +718,22 @@ def resolve_scaled_graphic(root: Path, prefix: str, action: str, scale: str) -> 
     scales = ("x2", "x1") if scale == "auto" else (scale,)
     for scale_name in scales:
         path = root / f"{prefix}_{action}_{scale_name}.sld"
+        if path.is_file():
+            return path
+    return None
+
+
+def resolve_scaled_building_state(root: Path, prefix: str, state: str, scale: str,
+                                  overrides: dict[str, str]) -> Path | None:
+    override = overrides.get(state)
+    if override is not None:
+        path = root / override
+        return path if path.is_file() else None
+
+    suffix = "" if state == "built" else f"_{state}"
+    scales = ("x2", "x1") if scale == "auto" else (scale,)
+    for scale_name in scales:
+        path = root / f"{prefix}{suffix}_{scale_name}.sld"
         if path.is_file():
             return path
     return None
@@ -1178,7 +1344,8 @@ def warning(code: str, message: str, source_frames: list[int] | None = None) -> 
 
 
 def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
-                     directions: int, fps: float):
+                     directions: int, fps: float,
+                     sampling_mode: str = "timeline"):
     data = source.read_bytes()
     records = read_sld_frame_records(data)
     source_frame_count = len(records)
@@ -1357,6 +1524,7 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         "direction_count": directions,
         "frames_per_direction": frames_per_direction,
         "fps": fps,
+        "sampling_mode": sampling_mode,
         "frame_order": "direction_major",
         "unused_source_frames": [
             record["frame_index"] for record in unused_records
@@ -1379,28 +1547,29 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
     }
 
 
-def manifest_settings(args) -> dict[str, Any]:
+def manifest_settings(args, directions: int | None = None,
+                      fps: float | None = None) -> dict[str, Any]:
     return {
         "scale": args.scale,
-        "directions": args.directions,
-        "fps": args.fps,
+        "directions": args.directions if directions is None else directions,
+        "fps": args.fps if fps is None else fps,
         "player_color": {
             "format": PLAYERCOLOR_FORMAT,
         },
     }
 
 
-def finish_manifest(manifest: dict[str, Any]) -> None:
-    records = list(manifest["animations"].values())
+def finish_manifest(manifest: dict[str, Any], record_name: str = "animations") -> None:
+    records = list(manifest[record_name].values())
     exported = sum(record["status"] == "exported" for record in records)
     missing = sum(record["status"] == "missing_source" for record in records)
     invalid = sum(record["status"] == "invalid" for record in records)
     warning_count = sum(int(record.get("warning_count", 0)) for record in records)
     manifest["summary"] = {
         "complete": missing == 0 and invalid == 0,
-        "exported_animation_count": exported,
-        "missing_animation_count": missing,
-        "invalid_animation_count": invalid,
+        f"exported_{record_name[:-1]}_count": exported,
+        f"missing_{record_name[:-1]}_count": missing,
+        f"invalid_{record_name[:-1]}_count": invalid,
         "warning_count": warning_count,
     }
 
@@ -1418,8 +1587,9 @@ def invalid_animation_record(source: Path, message: str) -> dict[str, Any]:
     }
 
 
-def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path],
-                out_dir: Path) -> None:
+def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path], out_dir: Path,
+                directions: int | None = None, record_name: str = "animations",
+                fps: float | None = None, sampling_mode: str = "timeline") -> None:
     if not sources:
         return
     SLD, Texture = load_openage(args.openage)
@@ -1427,12 +1597,14 @@ def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path],
         try:
             record = export_animation(
                 SLD, Texture, source, out_dir, name,
-                args.directions, args.fps,
+                args.directions if directions is None else directions,
+                args.fps if fps is None else fps,
+                sampling_mode,
             )
-            manifest["animations"][name] = record
+            manifest[record_name][name] = record
             print(f"exported {source.name} -> {record['config']}")
         except Exception as exc:  # noqa: BLE001
-            manifest["animations"][name] = invalid_animation_record(
+            manifest[record_name][name] = invalid_animation_record(
                 source, f"failed to export {source.name}: {exc}"
             )
 
@@ -1501,6 +1673,82 @@ def export_unit(args) -> int:
     return 0
 
 
+def missing_building_state_record(state: str, prefix: str) -> dict[str, Any]:
+    message = f"building state '{state}' is missing for '{prefix}'"
+    print(f"warning: {message}")
+    return {
+        "status": "missing_source",
+        "source": None,
+        "scale": None,
+        "config": None,
+        "layers": None,
+        "warning_count": 1,
+        "error": message,
+    }
+
+
+def export_building(args) -> int:
+    root = graphics_dir(args.aoe2)
+    if not root.is_dir():
+        raise SystemExit(f"graphics directory does not exist: {root}")
+
+    resource_id = args.name or args.building
+    validate_resource_id(resource_id)
+    dat_path = args.dat or dat_path_for(args.aoe2)
+    dat = load_dat(dat_path)
+    building_map = load_building_map(args.building_map)
+    dat_match = resolve_dat_building(dat, args.building, args.civ_id, args.unit_id, building_map)
+    dat_metadata = serialize_dat_metadata(dat_path, args.aoe2, dat_match)
+
+    mapping = building_map.get(args.building)
+    overrides = mapping.states if mapping is not None else {}
+    states = ("built", "construction", "attack", "destruction", "rubble", "open", "closed")
+    sources = {
+        state: source
+        for state in states
+        if (source := resolve_scaled_building_state(root, args.building, state, args.scale, overrides)) is not None
+    }
+    out_dir = clean_target(args.out, "buildings", resource_id)
+    directions = args.building_directions
+    manifest: dict[str, Any] = {
+        "schema_version": BUILDING_SCHEMA_VERSION,
+        "kind": "aoe2de_building",
+        "id": resource_id,
+        "building": {"prefix": args.building},
+        "source_root": str(args.aoe2).replace("\\", "/"),
+        "export_settings": manifest_settings(args, directions),
+        "orientation": {
+            "mode": "fixed" if directions == 1 else "directional",
+            "direction_count": directions,
+        },
+        "dat": dat_metadata,
+        "anchors": {
+            "foot_source": "sld_hotspot",
+            "muzzle_candidates": [],
+        },
+        "ground_overlay": {"status": "missing"},
+        "states": {},
+    }
+    combat = dat_metadata.get("combat")
+    if combat is not None:
+        manifest["anchors"]["muzzle_candidates"].append({
+            "source": "dat_graphic_displacement",
+            "space": "aoe2_dat_local",
+            "calibrated": False,
+            "value": combat["weapon_offset"],
+        })
+
+    for state in states:
+        if state not in sources:
+            manifest["states"][state] = missing_building_state_record(state, args.building)
+    run_exports(args, manifest, sources, out_dir, directions, "states")
+    for state, record in manifest["states"].items():
+        record["loop"] = state in {"built", "rubble", "open", "closed"}
+    finish_manifest(manifest, "states")
+    write_json(out_dir / "manifest.json", manifest)
+    return 0
+
+
 def export_graphics(args) -> int:
     if not args.graphics:
         raise SystemExit("--graphics requires at least one .sld filename")
@@ -1510,6 +1758,34 @@ def export_graphics(args) -> int:
     if not root.is_dir():
         raise SystemExit(f"graphics directory does not exist: {root}")
     validate_resource_id(args.name)
+
+    projectile_metadata = None
+    if args.projectile_unit_id is not None:
+        if len(args.graphics) != 1:
+            raise SystemExit("--projectile-unit-id requires exactly one --graphics source")
+        source = root / args.graphics[0]
+        if not source.is_file():
+            raise SystemExit(f"missing source graphic: {source}")
+        dat_path = args.dat or dat_path_for(args.aoe2)
+        projectile_metadata = resolve_projectile_graphic_metadata(
+            load_dat(dat_path), args.civ_id, args.projectile_unit_id, source
+        )
+        expected_frames = (
+            projectile_metadata.direction_count * projectile_metadata.frames_per_direction
+        )
+        actual_frames = len(read_sld_frame_records(source.read_bytes()))
+        if actual_frames != expected_frames:
+            raise SystemExit(
+                f"projectile Graphic {projectile_metadata.graphic_id} expects "
+                f"{projectile_metadata.direction_count}x"
+                f"{projectile_metadata.frames_per_direction}={expected_frames} frames, "
+                f"but {source.name} contains {actual_frames}"
+            )
+        if args.directions != DEFAULT_DIRECTIONS and args.directions != projectile_metadata.direction_count:
+            raise SystemExit(
+                f"--directions={args.directions} conflicts with DAT angle_count="
+                f"{projectile_metadata.direction_count}"
+            )
 
     requested = [Path(filename).stem for filename in args.graphics]
     if len(set(requested)) != len(requested):
@@ -1524,18 +1800,36 @@ def export_graphics(args) -> int:
         if not (root / filename).is_file()
     ]
     out_dir = clean_target(args.out, "graphics", args.name)
+    directions = projectile_metadata.direction_count if projectile_metadata is not None else args.directions
+    fps = projectile_metadata.fps if projectile_metadata is not None else args.fps
+    sampling_mode = projectile_metadata.sampling_mode if projectile_metadata is not None else "timeline"
     manifest = {
         "schema_version": GRAPHICS_SCHEMA_VERSION,
         "kind": "aoe2de_graphics",
         "id": args.name,
         "unit": None,
         "source_root": str(args.aoe2).replace("\\", "/"),
-        "export_settings": manifest_settings(args),
+        "export_settings": manifest_settings(args, directions, fps),
         "requested_animations": requested,
         "discovered_animations": sorted(sources),
         "missing_animations": missing,
         "animations": {},
     }
+    if projectile_metadata is not None:
+        manifest["projectile"] = {
+            "civ_id": projectile_metadata.civ_id,
+            "unit_id": projectile_metadata.unit_id,
+            "graphic_id": projectile_metadata.graphic_id,
+            "speed": projectile_metadata.unit_speed,
+            "projectile_arc": projectile_metadata.projectile_arc,
+            "graphic": {
+                "angle_count": projectile_metadata.direction_count,
+                "frame_count": projectile_metadata.frames_per_direction,
+                "sequence_type": projectile_metadata.sequence_type,
+                "frame_duration": projectile_metadata.frame_duration,
+                "sampling_mode": projectile_metadata.sampling_mode,
+            },
+        }
     for name in missing:
         message = f"requested graphic '{name}' is missing"
         print(f"warning: {message}")
@@ -1548,7 +1842,10 @@ def export_graphics(args) -> int:
             "warning_count": 1,
             "error": message,
         }
-    run_exports(args, manifest, sources, out_dir)
+    run_exports(
+        args, manifest, sources, out_dir,
+        directions=directions, fps=fps, sampling_mode=sampling_mode,
+    )
     finish_manifest(manifest)
     write_json(out_dir / "manifest.json", manifest)
     return 0
@@ -1607,12 +1904,15 @@ def parse_args(argv: list[str] | None = None):
     )
     parser.add_argument("--civ-id", type=non_negative_int, default=0)
     parser.add_argument("--unit-id", type=non_negative_int)
+    parser.add_argument("--projectile-unit-id", type=non_negative_int)
     parser.add_argument("--unit-map", type=Path, default=DEFAULT_UNIT_MAP)
+    parser.add_argument("--building-map", type=Path, default=DEFAULT_BUILDING_MAP)
     parser.add_argument("--out", type=Path, help="cache root directory")
     parser.add_argument("--name", help="resource id under --out")
     parser.add_argument("--list", nargs="?", const="*", metavar="PATTERN")
     parser.add_argument("--page", type=positive_int, default=1)
     parser.add_argument("--unit", metavar="PREFIX")
+    parser.add_argument("--building", metavar="PREFIX")
     parser.add_argument("--animations", nargs="*")
     parser.add_argument("--graphics", nargs="*")
     parser.add_argument("--scale", choices=("x1", "x2", "auto"), default="auto")
@@ -1621,6 +1921,7 @@ def parse_args(argv: list[str] | None = None):
         help="reserved for future index-aware filtering; currently always off",
     )
     parser.add_argument("--directions", type=positive_int, default=DEFAULT_DIRECTIONS)
+    parser.add_argument("--building-directions", type=positive_int, default=1)
     parser.add_argument("--fps", type=positive_finite_float, default=DEFAULT_FPS)
     parser.add_argument("--dump-layers", action="store_true")
     return parser.parse_args(argv)
@@ -1628,6 +1929,16 @@ def parse_args(argv: list[str] | None = None):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    selected_modes = sum((
+        args.list is not None,
+        args.unit is not None,
+        args.building is not None,
+        bool(args.graphics),
+    ))
+    if selected_modes > 1:
+        raise SystemExit("choose only one of --list, --unit, --building, or --graphics")
+    if args.projectile_unit_id is not None and not args.graphics:
+        raise SystemExit("--projectile-unit-id is only valid with --graphics")
     if args.list is not None:
         return list_units(args.aoe2, args.list, args.page)
     if not args.out:
@@ -1637,9 +1948,11 @@ def main(argv: list[str] | None = None) -> int:
         return dump_sld_layers(args)
     if args.unit:
         return export_unit(args)
+    if args.building:
+        return export_building(args)
     if args.graphics:
         return export_graphics(args)
-    raise SystemExit("choose --list, --unit, or --graphics")
+    raise SystemExit("choose --list, --unit, --building, or --graphics")
 
 
 if __name__ == "__main__":

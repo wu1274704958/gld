@@ -63,6 +63,7 @@ def fake_dat(prefix: str = "u_test"):
         graphic_displacement=(0.0, 0.16, 0.8), accuracy_percent=80,
         accuracy_dispersion=0.5, min_range=0.0, max_range=4.0,
         reload_time=2.0, blast_width=0.0, blast_attack_level=0,
+        blast_damage=1.0, friendly_fire_damage=0.5,
         attack_graphic=1, attack_graphic_2=-1,
     )
     creatable = SimpleNamespace(
@@ -74,7 +75,8 @@ def fake_dat(prefix: str = "u_test"):
         dying_graphic=-1, undead_graphic=-1, dead_fish=None,
         damage_graphics=[], collision_size_x=0.2, collision_size_y=0.2,
         collision_size_z=0.8, outline_size_x=0.3, outline_size_y=0.4,
-        outline_size_z=0.9, type_50=combat, creatable=creatable,
+        outline_size_z=0.9, blast_defense_level=3,
+        type_50=combat, creatable=creatable,
     )
     graphics = [
         SimpleNamespace(file_name=f"{prefix}_idleA_x2"),
@@ -83,6 +85,28 @@ def fake_dat(prefix: str = "u_test"):
     return SimpleNamespace(
         graphics=graphics,
         civs=[SimpleNamespace(units=[None, None, None, None, unit])],
+    )
+
+
+def fake_projectile_dat(prefix: str = "p_ball", frame_count: int = 30,
+                        angle_count: int = 1, sequence_type: int = 1,
+                        frame_duration: float = 0.02):
+    projectile = SimpleNamespace(
+        projectile_arc=-0.05, projectile_type=0, smart_mode=0,
+        hit_mode=0, vanish_mode=0, area_effect_specials=0,
+    )
+    unit = SimpleNamespace(
+        id=3, name="PROJECTILE", type=60, standing_graphic=(0, -1),
+        speed=4.0, projectile=projectile,
+    )
+    graphic = SimpleNamespace(
+        file_name=f"{prefix}_x1", frame_count=frame_count,
+        angle_count=angle_count, sequence_type=sequence_type,
+        frame_duration=frame_duration,
+    )
+    return SimpleNamespace(
+        graphics=[graphic],
+        civs=[SimpleNamespace(units=[None, None, None, unit])],
     )
 
 
@@ -132,6 +156,22 @@ class ExporterTests(unittest.TestCase):
         source = graphics / f"u_test_{action}_x2.sld"
         source.write_bytes(make_sld(frame_types))
         return aoe2, source
+
+    def make_building_tree(self, root: Path, frame_types: list[int],
+                           prefix: str = "b_test_tower"):
+        aoe2 = root / "aoe2"
+        graphics = exporter.graphics_dir(aoe2)
+        graphics.mkdir(parents=True)
+        for suffix in ("", "_destruction", "_rubble"):
+            (graphics / f"{prefix}{suffix}_x2.sld").write_bytes(make_sld(frame_types))
+        return aoe2
+
+    def write_building_map(self, root: Path, prefix: str = "b_test_tower"):
+        path = root / "building_dat_map.json"
+        path.write_text(json.dumps({
+            prefix: {"civ_id": 0, "unit_id": 4},
+        }), encoding="utf-8")
+        return path
 
     def run_fake(self, argv: list[str]):
         stdout = io.StringIO()
@@ -207,6 +247,80 @@ class ExporterTests(unittest.TestCase):
                 "rgba8_bc4_decoded",
                 manifest["export_settings"]["player_color"]["format"],
             )
+
+    def test_building_export_writes_schema_states_and_muzzle_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_building_tree(root, [0x17])
+            map_path = self.write_building_map(root)
+            out_root = root / "cache"
+            old_target = out_root / "buildings" / "b_test_tower"
+            old_target.mkdir(parents=True)
+            (old_target / "stale.txt").write_text("old", encoding="utf-8")
+
+            result, _stdout = self.run_fake([
+                "--aoe2", str(aoe2), "--out", str(out_root),
+                "--building", "b_test_tower", "--building-map", str(map_path),
+            ])
+            self.assertEqual(0, result)
+            self.assertFalse((old_target / "stale.txt").exists())
+            manifest = json.loads((old_target / "manifest.json").read_text())
+            self.assertEqual(4, manifest["schema_version"])
+            self.assertEqual("aoe2de_building", manifest["kind"])
+            self.assertEqual({"mode": "fixed", "direction_count": 1}, manifest["orientation"])
+            self.assertEqual("exported", manifest["states"]["built"]["status"])
+            self.assertTrue(manifest["states"]["built"]["loop"])
+            self.assertFalse(manifest["states"]["destruction"]["loop"])
+            self.assertEqual("missing_source", manifest["states"]["construction"]["status"])
+            self.assertEqual(
+                {"x": 0.0, "y": 0.16, "z": 0.8},
+                manifest["anchors"]["muzzle_candidates"][0]["value"],
+            )
+
+    def test_building_requires_explicit_mapping_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_building_tree(root, [0x17])
+            out_root = root / "cache"
+            target = out_root / "buildings" / "b_test_tower"
+            target.mkdir(parents=True)
+            stale = target / "stale.txt"
+            stale.write_text("old", encoding="utf-8")
+
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                self.run_fake([
+                    "--aoe2", str(aoe2), "--out", str(out_root),
+                    "--building", "b_test_tower",
+                    "--building-map", str(root / "missing-building-map.json"),
+                ])
+            self.assertTrue(stale.exists())
+
+    def test_building_map_can_override_an_irregular_state_filename(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_building_tree(root, [0x17])
+            graphics = exporter.graphics_dir(aoe2)
+            custom_attack = "b_test_tower_attack_ready_x2.sld"
+            (graphics / custom_attack).write_bytes(make_sld([0x17]))
+            map_path = root / "building_dat_map.json"
+            map_path.write_text(json.dumps({
+                "b_test_tower": {
+                    "civ_id": 0,
+                    "unit_id": 4,
+                    "states": {"attack": custom_attack},
+                },
+            }), encoding="utf-8")
+
+            result, _stdout = self.run_fake([
+                "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                "--building", "b_test_tower", "--building-map", str(map_path),
+            ])
+            self.assertEqual(0, result)
+            manifest = json.loads(
+                (root / "cache" / "buildings" / "b_test_tower" / "manifest.json").read_text()
+            )
+            self.assertEqual("exported", manifest["states"]["attack"]["status"])
+            self.assertEqual(custom_attack, manifest["states"]["attack"]["source"])
 
     def test_temporal_filter_repairs_isolated_coverage_and_shade_pops(self):
         main = [solid_frame(index) for index in range(7)]
@@ -454,6 +568,66 @@ class ExporterTests(unittest.TestCase):
                     "--graphics", source.name,
                 ])
 
+    def test_projectile_graphic_uses_dat_time_loop_layout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = root / "aoe2"
+            graphics = exporter.graphics_dir(aoe2)
+            graphics.mkdir(parents=True)
+            source = graphics / "p_ball_x2.sld"
+            source.write_bytes(make_sld([0x07] * 30))
+            out_root = root / "cache"
+            stdout = io.StringIO()
+            with mock.patch.object(exporter, "load_openage", return_value=(FakeSLD, FakeTexture)), \
+                 mock.patch.object(exporter, "load_dat", return_value=fake_projectile_dat()):
+                with contextlib.redirect_stdout(stdout):
+                    result = exporter.main([
+                        "--aoe2", str(aoe2), "--out", str(out_root),
+                        "--name", "p_ball", "--graphics", source.name,
+                        "--projectile-unit-id", "3",
+                    ])
+            self.assertEqual(0, result)
+            manifest = json.loads(
+                (out_root / "graphics" / "p_ball" / "manifest.json").read_text()
+            )
+            config = json.loads(
+                (out_root / "graphics" / "p_ball" / "graphics" / "p_ball_x2.json").read_text()
+            )
+            self.assertEqual(1, config["direction_count"])
+            self.assertEqual(30, config["frames_per_direction"])
+            self.assertEqual("time_loop", config["sampling_mode"])
+            self.assertAlmostEqual(50.0, config["fps"])
+            self.assertEqual(0, manifest["projectile"]["graphic_id"])
+            self.assertEqual(-0.05, manifest["projectile"]["projectile_arc"])
+
+    def test_projectile_graphic_uses_dat_pitch_pose_layout(self):
+        metadata = exporter.resolve_projectile_graphic_metadata(
+            fake_projectile_dat(
+                prefix="p_arrow", frame_count=11, angle_count=32,
+                sequence_type=2, frame_duration=0.0,
+            ),
+            0, 3, Path("p_arrow_x2.sld"),
+        )
+        self.assertEqual(32, metadata.direction_count)
+        self.assertEqual(11, metadata.frames_per_direction)
+        self.assertEqual("pitch_pose", metadata.sampling_mode)
+
+    def test_projectile_graphic_rejects_dat_sld_frame_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = root / "aoe2"
+            graphics = exporter.graphics_dir(aoe2)
+            graphics.mkdir(parents=True)
+            source = graphics / "p_ball_x2.sld"
+            source.write_bytes(make_sld([0x07] * 29))
+            with mock.patch.object(exporter, "load_dat", return_value=fake_projectile_dat()):
+                with self.assertRaisesRegex(SystemExit, "expects 1x30=30 frames"):
+                    exporter.main([
+                        "--aoe2", str(aoe2), "--out", str(root / "cache"),
+                        "--name", "p_ball", "--graphics", source.name,
+                        "--projectile-unit-id", "3",
+                    ])
+
     def test_dat_mapping_priority_explicit_map_and_unique(self):
         dat = fake_dat()
         unique = exporter.resolve_dat_unit(dat, "u_test", 0, None, {})
@@ -495,7 +669,10 @@ class ExporterTests(unittest.TestCase):
                          metadata["collision_size"])
         self.assertEqual({"x": 0.3, "y": 0.4, "z": 0.9},
                          metadata["outline_size"])
+        self.assertEqual(3, metadata["blast_defense_level"])
         combat = metadata["combat"]
+        self.assertEqual(1.0, combat["blast_damage"])
+        self.assertEqual(0.5, combat["friendly_fire_damage"])
         self.assertEqual(-1, combat["secondary_projectile_unit_id"])
         self.assertEqual(1, combat["projectile_min_count"])
         self.assertEqual(
@@ -543,6 +720,13 @@ class ExporterTests(unittest.TestCase):
             )
             self.assertEqual(2, manifest["schema_version"])
             self.assertNotIn("dat", manifest)
+
+    def test_projectile_unit_id_requires_graphics_mode(self):
+        with self.assertRaisesRegex(SystemExit, "only valid with --graphics"):
+            exporter.main([
+                "--aoe2", ".", "--out", "cache",
+                "--unit", "u_test", "--projectile-unit-id", "3",
+            ])
 
     def test_missing_genieutils_has_actionable_install_hint(self):
         original_import = __import__

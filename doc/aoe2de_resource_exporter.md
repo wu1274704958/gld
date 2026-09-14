@@ -25,7 +25,9 @@
 | `tools/aoe2de_export/unit_dat_map.json` | SLD Unit 前缀到文明与 DAT Unit ID 的稳定映射 |
 | `tools/aoe2de_export/tests/test_aoe2de_export.py` | 导出参数、图层对齐、Player Color 原始通道保留和 manifest 的回归测试 |
 
-依赖包括 Python、Cython、NumPy、Pillow 和 `genieutils-py`。仅导出独立 Graphic 时不读取 DAT，也不需要 `genieutils-py`。
+依赖包括 Python、Cython、NumPy、Pillow 和 `genieutils-py`。普通独立 Graphic
+导出不读取 DAT；使用 `--projectile-unit-id` 自动解析 Projectile Graphic 语义时
+会读取 DAT，因此也需要 `genieutils-py`。
 
 ## 3. 构建与运行
 
@@ -62,6 +64,16 @@ python tools\aoe2de_export\aoe2de_export.py `
   --name p_arrow --graphics p_arrow_x2.sld --directions 32 --fps 30
 ```
 
+Projectile 应优先通过 DAT Unit ID 导出，避免把时间帧误判为方向帧。例如手推炮
+炮弹 Unit 368：
+
+```powershell
+python tools\aoe2de_export\aoe2de_export.py `
+  --aoe2 "D:\program1\steam\steamapps\common\AoE2DE" `
+  --out "E:\code\gld\res\aoe2de_cache" `
+  --name p_ball --graphics p_ball_x2.sld --projectile-unit-id 368
+```
+
 列出可用 Unit：
 
 ```powershell
@@ -78,10 +90,11 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
 
 ## 4. 导出模式与目录
 
-导出器支持四类入口：
+导出器支持四类导出入口及一个诊断入口：
 
 - `--list`：按前缀发现 Unit Graphic；
 - `--unit`：导出 Unit 动画，同时读取 DAT；
+- `--building`：导出 Building 状态与 DAT，使用显式 Building 映射；
 - `--graphics`：导出一个或多个独立 Graphic，不读取 DAT；
 - `--dump-layers`：诊断性导出 SLD 的各个原始图层。
 
@@ -97,6 +110,13 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
       idleA_shadow.png
       idleA_playercolor.png
       ...
+  buildings/<building-id>/
+    manifest.json
+    graphics/
+      built.json
+      destruction.json
+      rubble.json
+      ...
   graphics/<graphic-id>/
     manifest.json
     graphics/
@@ -105,7 +125,25 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
 
 Unit 默认使用完整 SLD 前缀作为资源 ID，`--name` 可以覆盖。资源 ID 仅允许字母、数字、`.`、`_` 和 `-`。
 
-重新导出时，目标 `units/<id>` 或 `graphics/<id>` 会被完整删除再创建。导出器会先验证参数、输入 Graphic、DAT 和 Unit 映射，再执行删除；但仍不得将包含其他数据的目录误传给 `--out`。
+重新导出时，目标 `units/<id>`、`buildings/<id>` 或 `graphics/<id>` 会被完整删除再创建。导出器会先验证参数、输入 Graphic、DAT 和 Unit 映射，再执行删除；但仍不得将包含其他数据的目录误传给 `--out`。
+
+Building 使用 schema 4、`kind: "aoe2de_building"`，其 DAT 映射来自默认的
+`building_dat_map.json` 或 `--building-map`。建筑 Graphic 可能跨文明/时代共享，
+因此不支持按前缀自动匹配 DAT Unit。首个样本可这样导出：
+
+```powershell
+python tools\aoe2de_export\aoe2de_export.py `
+  --aoe2 "D:\program1\steam\steamapps\common\AoE2DE" `
+  --out "E:\code\gld\res\aoe2de_cache" `
+  --building b_afri_tower_age2
+```
+
+导出器按明确后缀寻找 `built`、`destruction` 与 `rubble`。`construction`、
+`attack`、`open`、`closed` 没有源文件时记录为 `missing_source`；如需覆盖，在
+Building map 的 `states` 中提供同一 graphics 目录内的完整 `.sld` 文件名。
+`--building-directions` 默认为 1。DAT `combat.weapon_offset` 同时会作为未校准的
+`anchors.muzzle_candidates` 输出，坐标空间为 `aoe2_dat_local`，不能直接当作 Recoil
+炮口坐标使用。
 
 ## 5. SLD 图层语义
 
@@ -137,6 +175,19 @@ Main、Shadow、Player Color 必须按 SLD 的物理帧序号对齐，不能只�
 - 源帧采用 `direction_major`：先排列某方向的全部动画帧，再排列下一方向；
 - 每方向帧数为 `有效总帧数 / direction_count`；
 - 不能整除方向数的尾部帧会在打包前删除，并写入 `unused_source_frames`。
+
+普通 Unit/Building 动画在 JSON 中写入 `sampling_mode: "timeline"`。Projectile
+使用 `--projectile-unit-id` 时，导出器从 DAT Graphic 读取 `angle_count`、
+`frame_count`、`sequence_type` 和 `frame_duration`，校验它们的乘积与 SLD 物理帧数
+完全相等，然后选择：
+
+- `pitch_pose`：多角度、Sequence Type 2；运行时按弹道俯仰选择帧，例如箭矢；
+- `time_loop`：单角度、Sequence Type 1 且具有正帧时长；运行时按时间循环，例如
+  `p_ball` 的 1 方向 × 30 帧旋转动画。
+
+不满足上述已验证组合的 Projectile 会在清理旧输出前终止，不能再用“总帧数就是
+方向数”的经验规则猜测。Manifest 的 `projectile` 节点同时保留 DAT Unit/Graphic
+ID、速度、弧度和原始 Graphic 维度，供 Gameplay 转换与诊断使用。
 
 Main 图集使用固定大小的网格 Cell：Cell 宽高取所有帧裁剪尺寸的最大值，列数近似取总帧数平方根。每帧的实际 `x/y/w/h` 会写入 JSON。
 
@@ -227,6 +278,7 @@ Player Color layer 必须用 nearest 采样；Diffuse 可使用 linear。预览�
 - `weapon_offset`；
 - 命中率、散布、最小/最大射程、装填时间；
 - 爆炸宽度与攻击等级；
+- 爆炸伤害倍率、友军伤害倍率与 Unit 爆炸防御等级（DAT 版本提供时）；
 - Projectile 数量和生成区域。
 
 DAT 中合法的 `-1` ID 会原样保留。未提供的可选字段会省略，不使用 `null` 或随意构造默认值。
