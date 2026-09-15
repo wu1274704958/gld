@@ -75,13 +75,19 @@ python tools\aoe2de_export\aoe2de_export.py `
   --name p_ball --graphics p_ball_x2.sld --projectile-unit-id 368
 ```
 
-导出 `AtlasImagesRaw` 一次性粒子效果，例如手推炮命中的 `smoke_hit`：
+导出一次性粒子效果，例如手推炮命中的 `smoke_hit`，或 TexturePacker 图集形式的
+投石机命中扬尘 `impact_dust`：
 
 ```powershell
 python tools\aoe2de_export\aoe2de_export.py `
   --aoe2 "D:\program1\steam\steamapps\common\AoE2DE" `
   --out "E:\code\gld\res\aoe2de_cache" `
   --particle-effect smoke_hit
+
+python tools\aoe2de_export\aoe2de_export.py `
+  --aoe2 "D:\program1\steam\steamapps\common\AoE2DE" `
+  --out "E:\code\gld\res\aoe2de_cache" `
+  --particle-effect impact_dust
 ```
 
 列出可用 Unit：
@@ -106,7 +112,8 @@ python -m unittest discover -s tools\aoe2de_export\tests -p "test_aoe2de_export.
 - `--unit`：导出 Unit 动画，同时读取 DAT；
 - `--building`：导出 Building 状态与 DAT，使用显式 Building 映射；
 - `--graphics`：导出一个或多个独立 Graphic，不读取 DAT；
-- `--particle-effect`：导出严格校验的 `AtlasImagesRaw` 一次性 RGBA Effect；
+- `--particle-effect`：导出严格校验的 `AtlasImagesRaw` 或 TexturePacker `AtlasFile`
+  一次性 RGBA Effect；
 - `--dump-layers`：诊断性导出 SLD 的各个原始图层。
 
 `--out` 表示缓存根目录，不是最终资源目录。输出布局为：
@@ -205,18 +212,25 @@ Main、Shadow、Player Color 必须按 SLD 的物理帧序号对齐，不能只�
 完全相等，然后选择：
 
 - `pitch_pose`：多角度、Sequence Type 2；运行时按弹道俯仰选择帧，例如箭矢；
-- `time_loop`：单角度、Sequence Type 1 且具有正帧时长；运行时按时间循环，例如
-  `p_ball` 的 1 方向 × 30 帧旋转动画。
+- `time_loop`：单角度、Sequence Type 1 或 7 且具有正帧时长；运行时按时间循环，例如
+  `p_ball` 和 `p_mangonel` 的 1 方向 × 30 帧旋转动画。
 
 不满足上述已验证组合的 Projectile 会在清理旧输出前终止，不能再用“总帧数就是
 方向数”的经验规则猜测。Manifest 的 `projectile` 节点同时保留 DAT Unit/Graphic
 ID、速度、弧度和原始 Graphic 维度，供 Gameplay 转换与诊断使用。
 
 Particle Effect 使用独立 schema 1、`kind: "aoe2de_effect"` 和
-`sampling_mode: "time_once"`。当前只接受顶层字段 `AtlasImagesRaw`、`Type`、
-`Duration`、`Scale`、`Alpha`、`StopMode`，且要求 `Type=Once`、
-`StopMode=Complete`。帧路径必须位于 particles 目录内，序列不能缺帧，图片必须都是
-相同尺寸的 RGBA。Effect 使用原始画布中心作为逐帧 anchor，透明首尾帧也会保留，
+`sampling_mode: "time_once"`。支持两种受控输入：
+
+- `AtlasImagesRaw`、`Type`、`Duration`、`Scale`、`Alpha`、`StopMode`：逐帧 RGBA；
+- `AtlasFile`、`ImageFirst`、`ImageCount`、`ImageAngles`、`Type`、`Duration`、
+  `Scale`、`StopMode`、`IsPersistent`，以及可选 `Alpha`：AoE2DE TexturePacker 图集。
+
+两种输入均要求 `Type=Once`、`StopMode=Complete`。所有路径必须位于 particles 目录内。
+TexturePacker 模式会按配套 JSON 的 `frame`、`rotated`、`spriteSourceSize` 和
+`sourceSize` 恢复裁边/旋转帧；`ImageCount` 必须能被 `ImageAngles` 整除，最终 FPS 为
+`(ImageCount / ImageAngles) / Duration`。Effect 使用原始画布中心作为逐帧 anchor，
+透明首尾帧也会保留，
 因此运行时能够按 `Duration` 单次播放且不会因逐帧裁切改变爆炸中心。未知字段、组合
 发射器、非法占位符和不一致画布会在删除旧缓存前失败。
 

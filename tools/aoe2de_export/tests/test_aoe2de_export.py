@@ -209,6 +209,54 @@ class ExporterTests(unittest.TestCase):
         }), encoding="utf-8")
         return aoe2
 
+    def make_particle_atlas_tree(self, root: Path):
+        aoe2 = root / "aoe2"
+        particles = exporter.particles_dir(aoe2)
+        atlases = particles / "textures" / "atlases"
+        atlases.mkdir(parents=True)
+        atlas = Image.new("RGBA", (8, 4), (0, 0, 0, 0))
+        atlas.putpixel((0, 0), (255, 0, 0, 255))
+        atlas.putpixel((1, 0), (128, 0, 0, 255))
+        # The second logical 1x2 frame is stored clockwise as a packed 2x1 row.
+        atlas.putpixel((2, 0), (0, 255, 0, 255))
+        atlas.putpixel((3, 0), (0, 128, 0, 255))
+        atlas.putpixel((4, 0), (0, 0, 255, 255))
+        atlas.putpixel((5, 0), (0, 0, 128, 255))
+        atlas.putpixel((6, 0), (255, 255, 0, 255))
+        atlas.putpixel((7, 0), (128, 128, 0, 255))
+        atlas.save(atlases / "impact_test.png")
+        frames = []
+        for index in range(4):
+            rotated = index == 1
+            frames.append({
+                "filename": f"impact_test_{index + 1:03d}.png",
+                "frame": {"x": index * 2, "y": 0, "w": 1 if rotated else 2,
+                          "h": 2 if rotated else 1},
+                "rotated": rotated,
+                "trimmed": True,
+                "spriteSourceSize": {
+                    "x": 2, "y": 1, "w": 1 if rotated else 2,
+                    "h": 2 if rotated else 1,
+                },
+                "sourceSize": {"w": 6, "h": 4},
+            })
+        (atlases / "impact_test.json").write_text(json.dumps({
+            "frames": frames,
+            "meta": {"image": "impact_test.png", "size": {"w": 8, "h": 4}},
+        }), encoding="utf-8")
+        (particles / "impact_test.json").write_text(json.dumps({
+            "AtlasFile": r"textures\atlases\impact_test.dds",
+            "ImageFirst": 0,
+            "ImageCount": 4,
+            "ImageAngles": 2,
+            "Type": "Once",
+            "Duration": 1.0,
+            "Scale": 0.5,
+            "StopMode": "Complete",
+            "IsPersistent": True,
+        }), encoding="utf-8")
+        return aoe2
+
     def run_fake(self, argv: list[str]):
         stdout = io.StringIO()
         with mock.patch.object(exporter, "load_openage", return_value=(FakeSLD, FakeTexture)), \
@@ -704,6 +752,19 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(11, metadata.frames_per_direction)
         self.assertEqual("pitch_pose", metadata.sampling_mode)
 
+    def test_projectile_graphic_uses_dat_sequence_seven_time_loop(self):
+        metadata = exporter.resolve_projectile_graphic_metadata(
+            fake_projectile_dat(
+                prefix="p_mangonel", frame_count=30, angle_count=1,
+                sequence_type=7, frame_duration=1.0 / 60.0,
+            ),
+            0, 3, Path("p_mangonel_x1.sld"),
+        )
+        self.assertEqual(1, metadata.direction_count)
+        self.assertEqual(30, metadata.frames_per_direction)
+        self.assertEqual("time_loop", metadata.sampling_mode)
+        self.assertAlmostEqual(60.0, metadata.fps)
+
     def test_projectile_graphic_rejects_dat_sld_frame_mismatch(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -867,6 +928,29 @@ class ExporterTests(unittest.TestCase):
                     "--particle-effect", "smoke_hit",
                 ])
             self.assertEqual("valid old cache", marker.read_text())
+
+    def test_particle_effect_exports_texturepacker_atlas_and_directions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = self.make_particle_atlas_tree(root)
+            out_root = root / "cache"
+            result = exporter.main([
+                "--aoe2", str(aoe2), "--out", str(out_root),
+                "--particle-effect", "impact_test",
+            ])
+            self.assertEqual(0, result)
+            target = out_root / "effects" / "impact_test"
+            manifest = json.loads((target / "manifest.json").read_text())
+            config = json.loads((target / "graphics" / "impact_test.json").read_text())
+            self.assertEqual(2, config["direction_count"])
+            self.assertEqual(2, config["frames_per_direction"])
+            self.assertEqual(2.0, config["fps"])
+            self.assertEqual(1.0, manifest["alpha"])
+            self.assertEqual(2, manifest["source"]["direction_count"])
+            self.assertEqual({"x": 1, "y": 1, "space": "frame_pixels_top_left"},
+                             config["layers"]["main"]["frames"][1]["foot"])
+            self.assertEqual(1, config["layers"]["main"]["frames"][1]["w"])
+            self.assertEqual(2, config["layers"]["main"]["frames"][1]["h"])
 
     def test_particle_effect_rejects_path_escape_and_non_rgba_frames(self):
         with tempfile.TemporaryDirectory() as temp:

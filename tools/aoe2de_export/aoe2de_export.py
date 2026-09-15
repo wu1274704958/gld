@@ -540,7 +540,11 @@ def resolve_projectile_graphic_metadata(dat: Any, civ_id: int, unit_id: int,
             f"{direction_count}x{frames_per_direction}"
         )
 
-    if direction_count == 1 and sequence_type == 1 and frame_duration > 0.0:
+    # DAT uses both sequence types 1 and 7 for single-angle graphics whose
+    # frames advance continuously in flight.  Type 7 is used by rotating
+    # mangonel stones (p_mangonel); it has the same time-loop sampling
+    # contract as the already-supported type 1 cannonball.
+    if direction_count == 1 and sequence_type in (1, 7) and frame_duration > 0.0:
         sampling_mode = "time_loop"
         fps = 1.0 / frame_duration
     elif direction_count > 1 and sequence_type == 2:
@@ -2002,6 +2006,127 @@ def _particle_frame_path(root: Path, pattern: str, frame_index: int) -> Path:
     return resolved
 
 
+def _particle_asset_path(root: Path, value: Any, field: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ExportError(f"{field} must be a non-empty relative path")
+    normalized = value.replace("\\", "/")
+    relative = Path(normalized)
+    if relative.is_absolute() or relative.anchor:
+        raise ExportError(f"{field} must be relative to the particles directory")
+    resolved_root = root.resolve()
+    resolved = (resolved_root / relative).resolve()
+    if resolved == resolved_root or resolved_root not in resolved.parents:
+        raise ExportError(f"{field} escapes the particles directory: {value}")
+    return resolved
+
+
+def _particle_integer(value: Any, field: str, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ExportError(f"{field} must be an integer of at least {minimum}")
+    return value
+
+
+def _load_texturepacker_particle_frames(root: Path, document: dict[str, Any], Image):
+    atlas_file = _particle_asset_path(root, document["AtlasFile"], "AtlasFile")
+    metadata_file = atlas_file.with_suffix(".json")
+    if not metadata_file.is_file():
+        raise ExportError(f"particle atlas metadata does not exist: {metadata_file}")
+    try:
+        metadata_document = json.loads(metadata_file.read_text(encoding="utf-8-sig"))
+    except Exception as exc:  # noqa: BLE001
+        raise ExportError(f"failed to read particle atlas metadata {metadata_file}: {exc}") from exc
+    if not isinstance(metadata_document, dict):
+        raise ExportError("particle atlas metadata root must be a JSON object")
+    records = metadata_document.get("frames")
+    atlas_meta = metadata_document.get("meta")
+    if not isinstance(records, list) or not isinstance(atlas_meta, dict):
+        raise ExportError("particle atlas metadata must contain frames[] and meta")
+    atlas_relative_parent = Path(str(document["AtlasFile"]).replace("\\", "/")).parent
+    atlas_image = _particle_asset_path(
+        root, (atlas_relative_parent / str(atlas_meta.get("image", ""))).as_posix(),
+        "particle atlas meta.image",
+    )
+    if not atlas_image.is_file():
+        raise ExportError(f"particle atlas image does not exist: {atlas_image}")
+
+    first = _particle_integer(document["ImageFirst"], "ImageFirst")
+    count = _particle_integer(document["ImageCount"], "ImageCount", minimum=1)
+    directions = _particle_integer(document["ImageAngles"], "ImageAngles", minimum=1)
+    if count % directions != 0:
+        raise ExportError("ImageCount must be divisible by ImageAngles")
+    if first + count > len(records):
+        raise ExportError(
+            f"particle atlas requests frames {first}..{first + count - 1}, "
+            f"but metadata contains only {len(records)} frames"
+        )
+
+    try:
+        with Image.open(atlas_image) as source_image:
+            if source_image.mode != "RGBA":
+                raise ExportError(f"{atlas_image.name} must be RGBA, got {source_image.mode}")
+            atlas = source_image.copy()
+    except ExportError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ExportError(f"failed to read particle atlas image {atlas_image}: {exc}") from exc
+
+    frames: list[ExportFrame] = []
+    source_size: tuple[int, int] | None = None
+    for ordinal, record in enumerate(records[first:first + count]):
+        if not isinstance(record, dict):
+            raise ExportError(f"particle atlas frame {first + ordinal} must be an object")
+        packed = record.get("frame")
+        source = record.get("sourceSize")
+        sprite = record.get("spriteSourceSize")
+        rotated = record.get("rotated", False)
+        if not all(isinstance(value, dict) for value in (packed, source, sprite)):
+            raise ExportError(f"particle atlas frame {first + ordinal} is missing frame/sourceSize/spriteSourceSize")
+        if not isinstance(rotated, bool):
+            raise ExportError(f"particle atlas frame {first + ordinal} rotated must be boolean")
+        try:
+            x = _particle_integer(packed["x"], "frame.x")
+            y = _particle_integer(packed["y"], "frame.y")
+            width = _particle_integer(packed["w"], "frame.w", minimum=1)
+            height = _particle_integer(packed["h"], "frame.h", minimum=1)
+            source_width = _particle_integer(source["w"], "sourceSize.w", minimum=1)
+            source_height = _particle_integer(source["h"], "sourceSize.h", minimum=1)
+            sprite_x = _particle_integer(sprite["x"], "spriteSourceSize.x")
+            sprite_y = _particle_integer(sprite["y"], "spriteSourceSize.y")
+            sprite_width = _particle_integer(sprite["w"], "spriteSourceSize.w", minimum=1)
+            sprite_height = _particle_integer(sprite["h"], "spriteSourceSize.h", minimum=1)
+        except (KeyError, TypeError) as exc:
+            raise ExportError(f"particle atlas frame {first + ordinal} has incomplete bounds") from exc
+        if (width, height) != (sprite_width, sprite_height):
+            raise ExportError(
+                f"particle atlas frame {first + ordinal} logical frame and sprite sizes differ"
+            )
+        if sprite_x + width > source_width or sprite_y + height > source_height:
+            raise ExportError(f"particle atlas frame {first + ordinal} exceeds its source canvas")
+        if source_size is None:
+            source_size = (source_width, source_height)
+        elif source_size != (source_width, source_height):
+            raise ExportError("particle atlas source canvas size changes between frames")
+
+        # TexturePacker keeps logical w/h in this AoE2DE atlas format even when
+        # the packed pixels are rotated.  A rotated rectangle therefore occupies
+        # h-by-w pixels in the atlas and must be turned counter-clockwise once.
+        packed_width, packed_height = ((height, width) if rotated else (width, height))
+        if x + packed_width > atlas.width or y + packed_height > atlas.height:
+            raise ExportError(f"particle atlas frame {first + ordinal} exceeds atlas bounds")
+        image = atlas.crop((x, y, x + packed_width, y + packed_height))
+        if rotated:
+            image = image.transpose(Image.Transpose.ROTATE_90)
+        if image.size != (width, height):
+            raise ExportError(f"particle atlas frame {first + ordinal} was not restored to its logical size")
+        foot = (source_width // 2 - sprite_x, source_height // 2 - sprite_y)
+        frames.append(ExportFrame(
+            image, width, height, foot, ordinal, first + ordinal,
+        ))
+
+    assert source_size is not None
+    return frames, directions, count // directions, source_size, atlas_file, metadata_file
+
+
 def export_particle_effect(args) -> int:
     from PIL import Image
 
@@ -2020,75 +2145,112 @@ def export_particle_effect(args) -> int:
         raise SystemExit(f"failed to read particle effect {source_config}: {exc}") from exc
     if not isinstance(document, dict):
         raise SystemExit(f"particle effect root must be a JSON object: {source_config}")
-    allowed_fields = {"AtlasImagesRaw", "Type", "Duration", "Scale", "Alpha", "StopMode"}
+    raw_fields = {"AtlasImagesRaw", "Type", "Duration", "Scale", "Alpha", "StopMode"}
+    atlas_fields = {
+        "AtlasFile", "ImageFirst", "ImageCount", "ImageAngles", "Type",
+        "Duration", "Scale", "StopMode", "IsPersistent",
+    }
+    allowed_fields = raw_fields if "AtlasImagesRaw" in document else atlas_fields | {"Alpha"}
     unknown_fields = sorted(set(document) - allowed_fields)
     if unknown_fields:
         raise SystemExit(
             f"unsupported particle effect fields in {source_config.name}: "
             f"{', '.join(unknown_fields)}"
         )
-    if set(document) != allowed_fields:
-        missing = sorted(allowed_fields - set(document))
+    required_fields = raw_fields if "AtlasImagesRaw" in document else atlas_fields
+    if not required_fields.issubset(document):
+        missing = sorted(required_fields - set(document))
         raise SystemExit(
             f"particle effect {source_config.name} is missing required fields: "
             f"{', '.join(missing)}"
         )
     if document["Type"] != "Once" or document["StopMode"] != "Complete":
         raise SystemExit("only Type=Once and StopMode=Complete particle effects are supported")
-    atlas_raw = document["AtlasImagesRaw"]
-    if not isinstance(atlas_raw, dict) or set(atlas_raw) != {"Format", "First", "Last"}:
-        raise SystemExit("AtlasImagesRaw must contain exactly Format, First and Last")
-    pattern = atlas_raw["Format"]
-    first = atlas_raw["First"]
-    last = atlas_raw["Last"]
-    if not isinstance(pattern, str) or not pattern:
-        raise SystemExit("AtlasImagesRaw.Format must be a non-empty string")
-    if (isinstance(first, bool) or not isinstance(first, int) or first < 0 or
-            isinstance(last, bool) or not isinstance(last, int) or last < first):
-        raise SystemExit("AtlasImagesRaw First/Last must define a non-negative ordered range")
     try:
         duration = _finite_number(document["Duration"], "Duration", positive=True)
         scale = _finite_number(document["Scale"], "Scale", positive=True)
-        alpha = _finite_number(document["Alpha"], "Alpha", minimum=0.0, maximum=1.0)
-        frame_paths = [_particle_frame_path(root, pattern, frame) for frame in range(first, last + 1)]
+        alpha = _finite_number(document.get("Alpha", 1.0), "Alpha", minimum=0.0, maximum=1.0)
     except ExportError as exc:
         raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
-
-    missing_paths = [path for path in frame_paths if not path.is_file()]
-    if missing_paths:
-        raise SystemExit(f"particle effect frame does not exist: {missing_paths[0]}")
-
-    images = []
-    frame_size: tuple[int, int] | None = None
-    for path in frame_paths:
+    source_record: dict[str, Any]
+    if "AtlasImagesRaw" in document:
+        atlas_raw = document["AtlasImagesRaw"]
+        if not isinstance(atlas_raw, dict) or set(atlas_raw) != {"Format", "First", "Last"}:
+            raise SystemExit("AtlasImagesRaw must contain exactly Format, First and Last")
+        pattern = atlas_raw["Format"]
+        first = atlas_raw["First"]
+        last = atlas_raw["Last"]
+        if not isinstance(pattern, str) or not pattern:
+            raise SystemExit("AtlasImagesRaw.Format must be a non-empty string")
+        if (isinstance(first, bool) or not isinstance(first, int) or first < 0 or
+                isinstance(last, bool) or not isinstance(last, int) or last < first):
+            raise SystemExit("AtlasImagesRaw First/Last must define a non-negative ordered range")
         try:
-            with Image.open(path) as image:
-                if image.mode != "RGBA":
-                    raise ExportError(f"{path.name} must be RGBA, got {image.mode}")
-                if image.width <= 0 or image.height <= 0:
-                    raise ExportError(f"{path.name} has invalid dimensions")
-                if frame_size is None:
-                    frame_size = image.size
-                elif image.size != frame_size:
-                    raise ExportError(
-                        f"{path.name} dimensions {image.size} differ from {frame_size}"
-                    )
-                images.append(image.copy())
+            frame_paths = [
+                _particle_frame_path(root, pattern, frame) for frame in range(first, last + 1)
+            ]
         except ExportError as exc:
             raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
-        except Exception as exc:  # noqa: BLE001
-            raise SystemExit(f"failed to read particle frame {path}: {exc}") from exc
+        missing_paths = [path for path in frame_paths if not path.is_file()]
+        if missing_paths:
+            raise SystemExit(f"particle effect frame does not exist: {missing_paths[0]}")
+        images = []
+        frame_size: tuple[int, int] | None = None
+        for path in frame_paths:
+            try:
+                with Image.open(path) as image:
+                    if image.mode != "RGBA":
+                        raise ExportError(f"{path.name} must be RGBA, got {image.mode}")
+                    if image.width <= 0 or image.height <= 0:
+                        raise ExportError(f"{path.name} has invalid dimensions")
+                    if frame_size is None:
+                        frame_size = image.size
+                    elif image.size != frame_size:
+                        raise ExportError(
+                            f"{path.name} dimensions {image.size} differ from {frame_size}"
+                        )
+                    images.append(image.copy())
+            except ExportError as exc:
+                raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001
+                raise SystemExit(f"failed to read particle frame {path}: {exc}") from exc
+        assert frame_size is not None
+        foot = (frame_size[0] // 2, frame_size[1] // 2)
+        frames = [
+            ExportFrame(image, image.width, image.height, foot, ordinal, first + ordinal)
+            for ordinal, image in enumerate(images)
+        ]
+        directions = 1
+        frames_per_direction = len(frames)
+        source_record = {
+            "config": source_config.relative_to(args.aoe2.resolve()).as_posix(),
+            "format": pattern.replace("\\", "/"),
+            "first_frame": first,
+            "last_frame": last,
+        }
+    else:
+        if not isinstance(document["IsPersistent"], bool):
+            raise SystemExit("IsPersistent must be boolean")
+        try:
+            frames, directions, frames_per_direction, frame_size, atlas_file, metadata_file = (
+                _load_texturepacker_particle_frames(root, document, Image)
+            )
+        except ExportError as exc:
+            raise SystemExit(f"invalid particle effect {source_config.name}: {exc}") from exc
+        first = int(document["ImageFirst"])
+        source_record = {
+            "config": source_config.relative_to(args.aoe2.resolve()).as_posix(),
+            "atlas": atlas_file.relative_to(args.aoe2.resolve()).as_posix(),
+            "atlas_metadata": metadata_file.relative_to(args.aoe2.resolve()).as_posix(),
+            "first_frame": first,
+            "frame_count": len(frames),
+            "direction_count": directions,
+        }
 
-    assert frame_size is not None
-    frame_count = len(images)
-    fps = frame_count / duration
-    foot = (frame_size[0] // 2, frame_size[1] // 2)
-    frames = [
-        ExportFrame(image, image.width, image.height, foot, ordinal, first + ordinal)
-        for ordinal, image in enumerate(images)
-    ]
+    frame_count = len(frames)
+    fps = frames_per_direction / duration
     try:
-        atlas, metadata, _layout = pack_frames(frames, frame_count)
+        atlas, metadata, _layout = pack_frames(frames, frames_per_direction)
     except ExportError as exc:
         raise SystemExit(f"failed to pack particle effect {effect_name}: {exc}") from exc
 
@@ -2116,8 +2278,8 @@ def export_particle_effect(args) -> int:
         "scale": None,
         "source_frame_count": frame_count,
         "exported_frame_count": frame_count,
-        "direction_count": 1,
-        "frames_per_direction": frame_count,
+        "direction_count": directions,
+        "frames_per_direction": frames_per_direction,
         "fps": fps,
         "sampling_mode": "time_once",
         "frame_order": "direction_major",
@@ -2130,12 +2292,7 @@ def export_particle_effect(args) -> int:
         "kind": "aoe2de_effect",
         "id": resource_id,
         "source_root": str(args.aoe2).replace("\\", "/"),
-        "source": {
-            "config": source_config.relative_to(args.aoe2.resolve()).as_posix(),
-            "format": pattern.replace("\\", "/"),
-            "first_frame": first,
-            "last_frame": last,
-        },
+        "source": source_record,
         "playback": "once",
         "duration_seconds": duration,
         "fps": fps,
@@ -2144,8 +2301,8 @@ def export_particle_effect(args) -> int:
         "stop_mode": document["StopMode"].lower(),
         "frame_size": {"width": frame_size[0], "height": frame_size[1]},
         "anchor": {
-            "x": foot[0],
-            "y": foot[1],
+            "x": frame_size[0] // 2,
+            "y": frame_size[1] // 2,
             "space": "source_canvas_pixels_top_left",
         },
         "animation": {
@@ -2228,7 +2385,7 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--building", metavar="PREFIX")
     parser.add_argument(
         "--particle-effect", metavar="EFFECT",
-        help="export an AoE2DE AtlasImagesRaw one-shot particle effect",
+        help="export an AoE2DE raw-frame or TexturePacker-atlas one-shot particle effect",
     )
     parser.add_argument("--animations", nargs="*")
     parser.add_argument("--graphics", nargs="*")
