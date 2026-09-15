@@ -115,18 +115,16 @@ class ExportFrame:
 
 @dataclass(frozen=True)
 class AtlasLayout:
-    cols: int
-    rows: int
-    cell_w: int
-    cell_h: int
+    """Result of packing one frame list into a single atlas.
 
-    @property
-    def width(self) -> int:
-        return self.cols * self.cell_w
+    ``slots`` holds one ``(x, y, w, h)`` per input frame in *input order*, so a
+    layout chosen for the main layer can be replayed verbatim onto the
+    player-color layer, which must land on identical coordinates.
+    """
 
-    @property
-    def height(self) -> int:
-        return self.rows * self.cell_h
+    width: int
+    height: int
+    slots: tuple[tuple[int, int, int, int], ...]
 
 
 def graphics_dir(aoe2: Path) -> Path:
@@ -857,16 +855,127 @@ def transparent_frame(record: dict[str, int], width: int, height: int,
     )
 
 
+def _skyline_raise(segments: list[list[int]], x: int, level: int, width: int) -> None:
+    """Raise the skyline to ``level`` across ``[x, x + width)``.
+
+    ``segments`` is a list of ``[x, y, width]`` runs that always tile
+    ``[0, atlas_width)`` exactly, so a placed rect splits any run it overlaps
+    instead of leaving a gap for the next placement to fall into.
+    """
+    end = x + width
+    updated: list[list[int]] = []
+    for start, height, run in segments:
+        run_end = start + run
+        if run_end <= x or start >= end:
+            updated.append([start, height, run])
+            continue
+        if start < x:
+            updated.append([start, height, x - start])
+        if run_end > end:
+            updated.append([end, height, run_end - end])
+    updated.append([x, level, width])
+    updated.sort(key=lambda run: run[0])
+
+    merged: list[list[int]] = []
+    for run in updated:
+        if run[2] <= 0:
+            continue
+        if merged and merged[-1][1] == run[1] and merged[-1][0] + merged[-1][2] == run[0]:
+            merged[-1][2] += run[2]
+            continue
+        merged.append(run)
+    segments[:] = merged
+
+
+def _skyline_pack(sizes: list[tuple[int, int]], atlas_width: int):
+    """Bottom-left skyline packing.
+
+    ``sizes`` must already be sorted; the returned placements line up with that
+    order. Returns ``(height, [(x, y), ...])``, or ``None`` when a rectangle is
+    wider than ``atlas_width``.
+    """
+    if any(width <= 0 or height <= 0 or width > atlas_width for width, height in sizes):
+        return None
+
+    segments: list[list[int]] = [[0, 0, atlas_width]]
+    placements: list[tuple[int, int]] = []
+    for width, height in sizes:
+        best_x = -1
+        best_level = 0
+        for index, (start, _, _) in enumerate(segments):
+            if start + width > atlas_width:
+                continue
+            level = 0
+            covered = 0
+            scan = index
+            while covered < width and scan < len(segments):
+                level = max(level, segments[scan][1])
+                covered += segments[scan][2]
+                scan += 1
+            if covered < width:
+                continue
+            if best_x < 0 or level < best_level or (level == best_level and start < best_x):
+                best_x = start
+                best_level = level
+        if best_x < 0:
+            return None
+        placements.append((best_x, best_level))
+        _skyline_raise(segments, best_x, best_level + height, width)
+
+    height = max(y + size[1] for (_, y), size in zip(placements, sizes))
+    return height, placements
+
+
 def choose_layout(frames: list[ExportFrame]) -> AtlasLayout:
+    """Pack a frame list into one atlas with a bottom-left skyline packer.
+
+    Frames within one animation vary a lot in size -- a death animation is wide
+    and flat once the unit lies down and narrow and tall while it stands -- so
+    the previous uniform grid, whose cell was the independent maximum of width
+    and height, spent most of every cell on empty pixels. Measured fill on real
+    exports was 36-78%; the skyline adapts each slot to its own frame.
+    """
     if not frames:
         raise ExportError("cannot pack an empty frame list")
-    cell_w = max(frame.width for frame in frames)
-    cell_h = max(frame.height for frame in frames)
-    if cell_w <= 0 or cell_h <= 0:
+    sizes = [(frame.width, frame.height) for frame in frames]
+    if any(width <= 0 or height <= 0 for width, height in sizes):
         raise ExportError("frame dimensions must be greater than zero")
-    cols = max(1, math.ceil(math.sqrt(len(frames))))
-    rows = math.ceil(len(frames) / cols)
-    return AtlasLayout(cols, rows, cell_w, cell_h)
+
+    # Tallest first is what the skyline packer wants; the original index breaks
+    # ties so the same input always produces the same atlas.
+    order = sorted(range(len(sizes)), key=lambda i: (-sizes[i][1], -sizes[i][0], i))
+    ordered = [sizes[index] for index in order]
+
+    total_area = sum(width * height for width, height in sizes)
+    min_width = max(width for width, _ in sizes)
+    # A square-ish atlas is what GPUs want, and minimising area alone is not
+    # enough to get one: a one-column strip of the same atlas can have an equal
+    # or smaller area than the square (388x522316 vs 14340x14330), so the
+    # objective below minimises the longest side instead.
+    ideal = max(min_width, math.ceil(math.sqrt(total_area)))
+    candidates = {min_width}
+    for factor in (0.7, 0.85, 1.0, 1.15, 1.3, 1.5, 1.8, 2.2):
+        candidates.add(max(min_width, math.ceil(ideal * factor)))
+
+    best = None
+    for candidate in sorted(candidates):
+        packed = _skyline_pack(ordered, candidate)
+        if packed is None:
+            continue
+        height, placements = packed
+        score = (max(candidate, height), candidate * height)
+        if best is None or score < best[0]:
+            best = (score, candidate, height, placements)
+    if best is None:
+        raise ExportError("frames do not fit any candidate atlas width")
+
+    _, atlas_width, atlas_height, placements = best
+    slots: list[tuple[int, int, int, int]] = [(0, 0, 0, 0)] * len(frames)
+    for position, frame_index in enumerate(order):
+        x, y = placements[position]
+        width, height = sizes[frame_index]
+        slots[frame_index] = (x, y, width, height)
+    return AtlasLayout(atlas_width, atlas_height, tuple(slots))
 
 
 def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
@@ -874,18 +983,16 @@ def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
     from PIL import Image
 
     layout = layout or choose_layout(frames)
-    if len(frames) > layout.cols * layout.rows:
-        raise ExportError("forced atlas layout has insufficient cells")
-    if any(frame.width > layout.cell_w or frame.height > layout.cell_h for frame in frames):
-        raise ExportError("frame exceeds forced atlas cell dimensions")
+    if len(layout.slots) != len(frames):
+        raise ExportError("forced atlas layout does not match the frame count")
+    for frame, (_, _, slot_w, slot_h) in zip(frames, layout.slots):
+        if frame.width > slot_w or frame.height > slot_h:
+            raise ExportError("frame exceeds forced atlas slot dimensions")
 
     atlas = Image.new("RGBA", (layout.width, layout.height), (0, 0, 0, 0))
     metadata = []
-    for idx, frame in enumerate(frames):
-        col = idx % layout.cols
-        row = idx // layout.cols
-        x = col * layout.cell_w
-        y = row * layout.cell_h
+    for idx, (frame, slot) in enumerate(zip(frames, layout.slots)):
+        x, y = slot[0], slot[1]
         if preserve_pixels:
             atlas.paste(frame.image, (x, y))
         else:

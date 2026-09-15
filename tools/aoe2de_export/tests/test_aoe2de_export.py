@@ -929,6 +929,112 @@ class ExporterTests(unittest.TestCase):
                 ])
             self.assertEqual("valid old cache", marker.read_text())
 
+    def make_export_frames(self, sizes):
+        return [
+            exporter.ExportFrame(
+                image=Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+                width=width,
+                height=height,
+                foot=(0, 0),
+                source_ordinal=index,
+                source_frame_index=index,
+            )
+            for index, (width, height) in enumerate(sizes)
+        ]
+
+    def assert_layout_is_sound(self, frames, layout):
+        self.assertEqual(len(frames), len(layout.slots))
+        for frame, (x, y, width, height) in zip(frames, layout.slots):
+            self.assertEqual(frame.width, width)
+            self.assertEqual(frame.height, height)
+            self.assertGreaterEqual(x, 0)
+            self.assertGreaterEqual(y, 0)
+            self.assertLessEqual(x + width, layout.width)
+            self.assertLessEqual(y + height, layout.height)
+
+        ordered = sorted(layout.slots)
+        for index, (x, y, width, height) in enumerate(ordered):
+            for other_x, other_y, other_width, other_height in ordered[index + 1:]:
+                if other_x >= x + width:
+                    break
+                overlap = other_y < y + height and y < other_y + other_height
+                self.assertFalse(
+                    overlap,
+                    f"slots overlap at ({x},{y},{width},{height}) and "
+                    f"({other_x},{other_y},{other_width},{other_height})",
+                )
+
+    def test_atlas_packing_places_every_frame_without_overlap(self):
+        frames = self.make_export_frames(
+            [(388, 276)] * 240 + [(180, 60)] * 120 + [(92, 144)] * 120
+        )
+        layout = exporter.choose_layout(frames)
+        self.assert_layout_is_sound(frames, layout)
+
+    def test_atlas_packing_packs_mixed_frame_sizes_tightly(self):
+        # Frames of one animation differ in size, which is what the old
+        # cell = (max width, max height) grid wasted: a death animation is wide
+        # and flat once the unit lies down and narrow and tall while it stands,
+        # so no frame ever filled its cell and the measured fill was 36%.
+        sizes = [(180, 60) if index % 3 else (92, 144) for index in range(480)]
+        frames = self.make_export_frames(sizes)
+        layout = exporter.choose_layout(frames)
+        self.assert_layout_is_sound(frames, layout)
+        content = sum(width * height for width, height in sizes)
+        self.assertGreater(content / (layout.width * layout.height), 0.85)
+
+    def test_atlas_packing_stays_near_square(self):
+        # Minimising area alone would accept a one-column strip, whose area is
+        # as small as the square's but which is useless as a texture.
+        frames = self.make_export_frames([(388, 276)] * 1920)
+        layout = exporter.choose_layout(frames)
+        self.assertLess(max(layout.width, layout.height), 2 * min(layout.width, layout.height))
+
+    def test_atlas_packing_is_deterministic(self):
+        sizes = [(64, 80), (96, 32), (64, 80), (128, 96)] * 40
+        first = exporter.choose_layout(self.make_export_frames(sizes))
+        second = exporter.choose_layout(self.make_export_frames(sizes))
+        self.assertEqual(first.width, second.width)
+        self.assertEqual(first.height, second.height)
+        self.assertEqual(first.slots, second.slots)
+
+    def test_atlas_packing_keeps_slots_in_input_order(self):
+        # Packing reorders frames internally; slots must still describe the
+        # input order because the JSON frame array and the renderer both index
+        # by direction and frame number.
+        frames = self.make_export_frames([(10, 10), (50, 50), (10, 10), (50, 50)])
+        layout = exporter.choose_layout(frames)
+        self.assertEqual([(10, 10), (50, 50), (10, 10), (50, 50)],
+                         [slot[2:] for slot in layout.slots])
+
+    def test_forced_layout_replays_the_main_layer_placement(self):
+        frames = self.make_export_frames([(20, 40), (40, 20), (24, 24)])
+        layout = exporter.choose_layout(frames)
+        atlas, metadata, used = exporter.pack_frames(frames, 3, layout=layout)
+        self.assertEqual(layout.width, atlas.width)
+        self.assertEqual(layout.height, atlas.height)
+        self.assertEqual(layout.width, used.width)
+        self.assertEqual(list(layout.slots),
+                         [(item["x"], item["y"], item["w"], item["h"]) for item in metadata])
+
+    def test_forced_layout_rejects_a_frame_larger_than_its_slot(self):
+        layout = exporter.choose_layout(self.make_export_frames([(20, 20)]))
+        with self.assertRaises(exporter.ExportError):
+            exporter.pack_frames(self.make_export_frames([(40, 40)]), 1, layout=layout)
+
+    def test_forced_layout_rejects_a_mismatched_frame_count(self):
+        layout = exporter.choose_layout(self.make_export_frames([(20, 20)]))
+        with self.assertRaises(exporter.ExportError):
+            exporter.pack_frames(self.make_export_frames([(20, 20), (20, 20)]), 2, layout=layout)
+
+    def test_atlas_packing_rejects_empty_and_degenerate_input(self):
+        with self.assertRaises(exporter.ExportError):
+            exporter.choose_layout([])
+        with self.assertRaises(exporter.ExportError):
+            exporter.choose_layout(self.make_export_frames([(0, 10)]))
+        with self.assertRaises(exporter.ExportError):
+            exporter.choose_layout(self.make_export_frames([(10, 0)]))
+
     def test_particle_effect_exports_texturepacker_atlas_and_directions(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
