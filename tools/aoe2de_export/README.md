@@ -45,11 +45,37 @@ res/aoe2de_cache/units/u_arc_archer/
   manifest.json
   graphics/
     idleA.json
-    idleA.png
-    idleA_shadow.png
-    idleA_playercolor.png
+    idleA.dds
+    idleA_shadow.dds
+    idleA_playercolor.dds
     ...
 ```
+
+### Why the atlases are DDS
+
+Every SLD layer is already block compressed, so each atlas is assembled by
+copying the source 4x4 blocks into place. Nothing is decoded and re-encoded,
+which keeps the pixels identical to the source and avoids emitting an RGBA
+image eight times the size of the block data.
+
+| layer | format | bytes/pixel |
+|---|---|---|
+| main (SLD layer 0, BC1) | `DXGI_FORMAT_BC1_UNORM` | 0.5 |
+| shadow (SLD layer 1, BC4) | `DXGI_FORMAT_BC4_UNORM` | 0.5 |
+| player_color (SLD layer 4, BC4) | `DXGI_FORMAT_BC4_UNORM` | 0.5 |
+
+The player-color layer is a straight copy of the source block values because
+nothing rewrites it; the shader reads `.r` as a continuous team-colour blend
+weight. The `bake_*`/`stabilize_*` helpers further down the module are not
+reached by the production path and are exercised only by tests.
+
+Atlases are written with the DX10 extended header and carry no mipmaps. Frame
+dimensions are always a multiple of four and placements are sums of them, so
+every frame lands block aligned; `choose_layout` rounds the atlas extent up so
+the surface is a whole number of blocks across.
+
+`--graphics` and `--dump-layers` still write PNGs, since those are inspection
+exports rather than pipeline output.
 
 Unit exports write `ROOT/units/<resource-id>`; standalone `--graphics` and
 `--dump-layers` exports write `ROOT/graphics/<resource-id>`. An existing

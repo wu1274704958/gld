@@ -17,6 +17,7 @@ cimport cython
 cimport numpy
 
 from libc.stdint cimport uint8_t
+from libc.string cimport memcpy
 from libcpp cimport bool
 from libcpp.pair cimport pair
 from libcpp.vector cimport vector
@@ -343,7 +344,8 @@ cdef class SLD:
                             key_layer.layer_info.size[1],
                             key_layer.layer_info.offset[0],
                             key_layer.layer_info.offset[1],
-                            key_layer.get_pcolor()
+                            key_layer.get_pcolor(),
+                            key_layer.get_raw_blocks_ptr()
                         )
                 else:
                     key_layers[layer_index] = layer_def
@@ -527,6 +529,21 @@ cdef class SLDLayer:
     cdef (short, short) source_offset
     cdef bool processed
 
+    # Raw compressed blocks, in the same grid layout as pcolor. Keeping them
+    # alongside the decoded pixels lets a frame be re-packed into a new atlas
+    # by copying blocks, with no decode/re-encode round trip that would
+    # quantise the image a second time.
+    cdef vector[uint8_t] raw_blocks
+    cdef vector[uint8_t] *previous_raw_blocks
+
+    # Bytes per compressed block (8 for both BC1 and BC4); set by subclasses.
+    cdef int block_bytes
+
+    # Byte pattern an undrawn block gets. Zero bytes are NOT a safe default:
+    # an all-zero BC1 block decodes to opaque black, so the fill has to be the
+    # format's own transparent encoding.
+    cdef vector[uint8_t] transparent_raw
+
     # Previous layer
     cdef (unsigned short, unsigned short) previous_size
     cdef (short, short) previous_offset
@@ -550,6 +567,8 @@ cdef class SLDLayer:
         self.previous_size = (0, 0)
         self.previous_offset = (0, 0)
         self.previous_layer = NULL
+        self.previous_raw_blocks = NULL
+        self.block_bytes = 0
         self.source_size = self.layer_info.size
         self.source_offset = self.layer_info.offset
         self.processed = False
@@ -587,9 +606,19 @@ cdef class SLDLayer:
         if self.processed:
             return
 
-        # Start with a transparent resolved output rectangle.
+        if self.block_bytes == 0:
+            raise ValueError("SLDLayer subclass did not declare its block size")
+
+        # Start with a transparent resolved output rectangle. The raw grid is
+        # indexed exactly like pcolor, so a block and its pixels stay paired.
         for _ in range(output_width_blocks * output_height_blocks):
             self.pcolor.push_back(transparent_block)
+
+        self.raw_blocks.assign(output_width_blocks * output_height_blocks * self.block_bytes, 0)
+        for block_idx in range(output_width_blocks * output_height_blocks):
+            for byte_idx in range(self.block_bytes):
+                self.raw_blocks[block_idx * self.block_bytes + byte_idx] = \
+                    self.transparent_raw[byte_idx]
 
         # Delta frames begin from their layer's latest keyframe. Copy by
         # absolute block coordinates because keyframe and output bounds differ.
@@ -605,6 +634,12 @@ cdef class SLDLayer:
                         0 <= block_y < previous_height_blocks):
                     previous_block_idx = block_x + block_y * previous_width_blocks
                     self.pcolor[block_idx] = self.previous_layer.at(previous_block_idx)
+                    if self.previous_raw_blocks != NULL:
+                        memcpy(
+                            &self.raw_blocks[block_idx * self.block_bytes],
+                            &self.previous_raw_blocks.at(previous_block_idx * self.block_bytes),
+                            self.block_bytes
+                        )
 
         # Commands address the current source rectangle. Skip commands preserve
         # the keyframe baseline; draw commands overwrite the addressed block.
@@ -617,7 +652,6 @@ cdef class SLDLayer:
             draw_count = data_raw[cmd_offset]
             for _ in range(draw_count):
                 decoded_block = self.decompress_block(data_raw, data_offset)
-                data_offset += 8
 
                 block_x = block_idx % source_width_blocks
                 block_y = block_idx // source_width_blocks
@@ -629,7 +663,13 @@ cdef class SLDLayer:
                         0 <= block_y < output_height_blocks):
                     output_block_idx = block_x + block_y * output_width_blocks
                     self.pcolor[output_block_idx] = decoded_block
+                    memcpy(
+                        &self.raw_blocks[output_block_idx * self.block_bytes],
+                        &data_raw[data_offset],
+                        self.block_bytes
+                    )
                 block_idx += 1
+                data_offset += self.block_bytes
 
             cmd_offset += 1
 
@@ -651,7 +691,8 @@ cdef class SLDLayer:
         unsigned short height,
         short offset_x,
         short offset_y,
-        vector[vector[pixel]] *previous
+        vector[vector[pixel]] *previous,
+        vector[uint8_t] *previous_raw
     ):
         """
         Set a reference to the previous layer.
@@ -659,6 +700,7 @@ cdef class SLDLayer:
         self.previous_size = (width, height)
         self.previous_offset = (offset_x, offset_y)
         self.previous_layer = previous
+        self.previous_raw_blocks = previous_raw
 
     cdef inline void set_source_geometry(self,
         unsigned short width,
@@ -674,6 +716,45 @@ cdef class SLDLayer:
         Get the pixel data for the layer.
         """
         return &self.pcolor
+
+    cdef inline vector[uint8_t] *get_raw_blocks_ptr(self):
+        """
+        Get the raw compressed block data for the layer.
+        """
+        return &self.raw_blocks
+
+    def get_raw_blocks(self):
+        """
+        Return the layer's compressed blocks in the same grid order as the
+        decoded pixels, as a flat ``bytes`` of ``width_blocks * height_blocks *
+        block_bytes``. Call :meth:`get_size` for the block grid dimensions.
+
+        Only valid after the layer has been decoded, i.e. after the frame it
+        belongs to has been fetched with ``SLD.get_frames``.
+        """
+        if self.block_bytes == 0:
+            raise ValueError("SLDLayer subclass did not declare its block size")
+
+        cdef Py_ssize_t count = self.raw_blocks.size()
+        return bytes(<uint8_t[:count]>self.raw_blocks.data())
+
+    def get_size(self):
+        """
+        Return the layer's ``(width, height)`` in pixels.
+        """
+        return (self.layer_info.size[0], self.layer_info.size[1])
+
+    def get_offset(self):
+        """
+        Return the layer's ``(x, y)`` offset in the SLD canvas, in pixels.
+        """
+        return (self.layer_info.offset[0], self.layer_info.offset[1])
+
+    def get_block_size(self):
+        """
+        Return the number of bytes in one compressed block of this layer.
+        """
+        return self.block_bytes
 
     def get_picture_data(self):
         """
@@ -704,6 +785,11 @@ cdef class SLDLayerBC1(SLDLayer):
     """
     def __init__(self, frame_header, layer_header):
         super().__init__(frame_header, layer_header)
+        # A BC1 block is 4x4 pixels in 8 bytes.
+        self.block_bytes = 8
+        # Zero endpoints put the block in 3-colour mode, where index 3 is the
+        # transparent one, so all indices set to 3 give a fully clear block.
+        self.transparent_raw = [0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
 
     @cython.boundscheck(False)
     cdef inline vector[pixel] decompress_block(self,
@@ -820,6 +906,11 @@ cdef class SLDLayerBC4(SLDLayer):
     """
     def __init__(self, frame_header, layer_header):
         super().__init__(frame_header, layer_header)
+        # A BC4 block is 4x4 pixels in 8 bytes, same as BC1.
+        self.block_bytes = 8
+        # BC4 carries a single value with no alpha, and index 0 selects the
+        # first endpoint, so an all-zero block already reads back as 0.
+        self.transparent_raw = [0x00] * 8
 
     @cython.boundscheck(False)
     cdef inline vector[pixel] decompress_block(self,

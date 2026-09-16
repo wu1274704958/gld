@@ -15,6 +15,8 @@ from pathlib import Path
 from struct import Struct
 from typing import Any
 
+from block_atlas import pack_blocks, write_dds
+
 
 GRAPHICS_SCHEMA_VERSION = 2
 UNIT_SCHEMA_VERSION = 3
@@ -38,6 +40,9 @@ PLAYERCOLOR_STRONG_RAW_MIN = 128
 # longer invokes the legacy consensus filter.
 PLAYERCOLOR_TEMPORAL_FILTER_VERSION = 1
 PLAYERCOLOR_BASE_RGB_TOLERANCE = 32
+# Block-compressed atlases are addressed in 4x4 blocks, so every atlas and
+# every frame lands on a multiple of this.
+BLOCK_ALIGN = 4
 
 SLD_HEADER = Struct("<4s4HI")
 SLD_FRAME_HEADER = Struct("<4H2BH")
@@ -111,6 +116,10 @@ class ExportFrame:
     source_ordinal: int
     source_frame_index: int
     present: bool = True
+    # The frame's own compressed blocks, when the layer has them. Carrying them
+    # through lets a block-compressed atlas be assembled by copying instead of
+    # decoding to pixels and encoding again, which would quantise twice.
+    raw_blocks: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -837,6 +846,7 @@ def export_frame(frame, record: dict[str, int], *, present: bool = True) -> Expo
         source_ordinal=record["ordinal"],
         source_frame_index=record["frame_index"],
         present=present,
+        raw_blocks=getattr(frame, "raw_blocks", None) or None,
     )
 
 
@@ -926,6 +936,11 @@ def _skyline_pack(sizes: list[tuple[int, int]], atlas_width: int):
     return height, placements
 
 
+def align_up(value: int, multiple: int) -> int:
+    """Round ``value`` up to the next multiple, leaving it alone if already one."""
+    return (value + multiple - 1) // multiple * multiple
+
+
 def choose_layout(frames: list[ExportFrame]) -> AtlasLayout:
     """Pack a frame list into one atlas with a bottom-left skyline packer.
 
@@ -970,6 +985,14 @@ def choose_layout(frames: list[ExportFrame]) -> AtlasLayout:
         raise ExportError("frames do not fit any candidate atlas width")
 
     _, atlas_width, atlas_height, placements = best
+
+    # Block-compressed textures are addressed in 4x4 blocks, so the surface has
+    # to be a whole number of blocks across. Frame dimensions are already
+    # multiples of four and placements are sums of them, so only the atlas
+    # extent itself needs rounding up; the added strip stays transparent.
+    atlas_width = align_up(atlas_width, BLOCK_ALIGN)
+    atlas_height = align_up(atlas_height, BLOCK_ALIGN)
+
     slots: list[tuple[int, int, int, int]] = [(0, 0, 0, 0)] * len(frames)
     for position, frame_index in enumerate(order):
         x, y = placements[position]
@@ -978,33 +1001,32 @@ def choose_layout(frames: list[ExportFrame]) -> AtlasLayout:
     return AtlasLayout(atlas_width, atlas_height, tuple(slots))
 
 
-def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
-                layout: AtlasLayout | None = None, *, preserve_pixels: bool = False):
-    from PIL import Image
-
-    layout = layout or choose_layout(frames)
+def validate_layout(frames: list[ExportFrame], layout: AtlasLayout) -> None:
+    """Reject a layout that cannot hold the frames it was chosen for."""
     if len(layout.slots) != len(frames):
-        raise ExportError("forced atlas layout does not match the frame count")
+        raise ExportError("atlas layout does not match the frame count")
     for frame, (_, _, slot_w, slot_h) in zip(frames, layout.slots):
         if frame.width > slot_w or frame.height > slot_h:
             raise ExportError("frame exceeds forced atlas slot dimensions")
 
-    atlas = Image.new("RGBA", (layout.width, layout.height), (0, 0, 0, 0))
+
+def frame_metadata(frames: list[ExportFrame], layout: AtlasLayout,
+                   frames_per_direction: int) -> list[dict[str, Any]]:
+    """Per-frame placement records for the manifest.
+
+    Kept separate from the pixel assembly so a block-compressed atlas, which
+    never builds a PIL image, produces exactly the same manifest.
+    """
     metadata = []
     for idx, (frame, slot) in enumerate(zip(frames, layout.slots)):
-        x, y = slot[0], slot[1]
-        if preserve_pixels:
-            atlas.paste(frame.image, (x, y))
-        else:
-            atlas.alpha_composite(frame.image, (x, y))
         metadata.append({
             "source_ordinal": frame.source_ordinal,
             "source_frame_index": frame.source_frame_index,
             "direction": idx // frames_per_direction,
             "frame": idx % frames_per_direction,
             "present": frame.present,
-            "x": x,
-            "y": y,
+            "x": slot[0],
+            "y": slot[1],
             "w": frame.width,
             "h": frame.height,
             "foot": {
@@ -1013,7 +1035,25 @@ def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
                 "space": "frame_pixels_top_left",
             },
         })
-    return atlas, metadata, layout
+    return metadata
+
+
+def pack_frames(frames: list[ExportFrame], frames_per_direction: int,
+                layout: AtlasLayout | None = None, *, preserve_pixels: bool = False):
+    from PIL import Image
+
+    layout = layout or choose_layout(frames)
+    validate_layout(frames, layout)
+
+    atlas = Image.new("RGBA", (layout.width, layout.height), (0, 0, 0, 0))
+    for frame, slot in zip(frames, layout.slots):
+        x, y = slot[0], slot[1]
+        if preserve_pixels:
+            atlas.paste(frame.image, (x, y))
+        else:
+            atlas.alpha_composite(frame.image, (x, y))
+
+    return atlas, frame_metadata(frames, layout, frames_per_direction), layout
 
 
 def empty_layer_record(status: str, source_count: int, missing: list[int] | None = None,
@@ -1033,7 +1073,8 @@ def empty_layer_record(status: str, source_count: int, missing: list[int] | None
     return value
 
 
-def image_layer_record(status: str, source_count: int, image_name: str, atlas,
+def image_layer_record(status: str, source_count: int, image_name: str,
+                       atlas_size: tuple[int, int],
                        metadata: list[dict], missing: list[int]) -> dict[str, Any]:
     return {
         "status": status,
@@ -1041,8 +1082,8 @@ def image_layer_record(status: str, source_count: int, image_name: str, atlas,
         "exported_frame_count": len(metadata),
         "missing_source_frames": missing,
         "image": image_name,
-        "atlas_w": atlas.width,
-        "atlas_h": atlas.height,
+        "atlas_w": atlas_size[0],
+        "atlas_h": atlas_size[1],
         "frames": metadata,
     }
 
@@ -1576,15 +1617,22 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         export_frame(main_map[record["ordinal"]], record)
         for record in usable_records
     ]
-    main_atlas, main_meta, main_layout = pack_frames(
-        main_frames, frames_per_direction
+    # The main layer ships as a BC1 DDS assembled by copying the SLD's own
+    # blocks, so the pixels are never decoded and re-encoded. That keeps the
+    # image identical to the source and avoids materialising an RGBA atlas that
+    # would be roughly eight times the size of the block data.
+    main_layout = choose_layout(main_frames)
+    main_meta = frame_metadata(main_frames, main_layout, frames_per_direction)
+    main_image = f"{name}.dds"
+    write_dds(
+        graphics_out / main_image,
+        main_layout.width, main_layout.height,
+        pack_blocks(main_frames, main_layout, "bc1"), "bc1",
     )
-    main_image = f"{name}.png"
-    main_atlas.save(graphics_out / main_image)
     layers: dict[str, dict[str, Any]] = {
         "main": image_layer_record(
             "complete", presence_counts["main"], main_image,
-            main_atlas, main_meta, []
+            (main_layout.width, main_layout.height), main_meta, []
         )
     }
 
@@ -1602,14 +1650,21 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
             for record in usable_records:
                 frame = shadow_map.get(record["ordinal"])
                 if frame is None:
-                    shadow_frames.append(transparent_frame(record, 1, 1, (0, 0)))
+                    # A placeholder still has to be block aligned, since the
+                    # whole layer is repacked as BC4 blocks.
+                    shadow_frames.append(transparent_frame(
+                        record, BLOCK_ALIGN, BLOCK_ALIGN, (0, 0)))
                 else:
                     shadow_frames.append(export_frame(frame, record))
-            shadow_atlas, shadow_meta, _ = pack_frames(
-                shadow_frames, frames_per_direction
+            shadow_layout = choose_layout(shadow_frames)
+            shadow_meta = frame_metadata(
+                shadow_frames, shadow_layout, frames_per_direction)
+            shadow_image = f"{name}_shadow.dds"
+            write_dds(
+                graphics_out / shadow_image,
+                shadow_layout.width, shadow_layout.height,
+                pack_blocks(shadow_frames, shadow_layout, "bc4"), "bc4",
             )
-            shadow_image = f"{name}_shadow.png"
-            shadow_atlas.save(graphics_out / shadow_image)
             shadow_status = "partial" if missing_shadow else "complete"
             if missing_shadow:
                 warnings.append(warning(
@@ -1620,7 +1675,7 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                 ))
             layers["shadow"] = image_layer_record(
                 shadow_status, presence_counts["shadow"], shadow_image,
-                shadow_atlas, shadow_meta, missing_shadow
+                (shadow_layout.width, shadow_layout.height), shadow_meta, missing_shadow
             )
         except Exception as exc:  # noqa: BLE001
             message = f"{source.name} shadow layer is invalid: {exc}"
@@ -1667,14 +1722,20 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                     )
                 player_frames.append(player_frame)
 
-            player_atlas, player_meta, _ = pack_frames(
-                player_frames, frames_per_direction, layout=main_layout,
-                preserve_pixels=True
+            # The layer ships as BC4 by copying the SLD's own blocks, which is
+            # lossless: the mask is never rewritten, so the values the GPU
+            # decodes are exactly the ones the source stored. The atlas reuses
+            # the main layout verbatim because the shader samples both layers
+            # with the same UVs.
+            validate_layout(player_frames, main_layout)
+            player_meta = frame_metadata(
+                player_frames, main_layout, frames_per_direction)
+            player_image = f"{name}_playercolor.dds"
+            write_dds(
+                graphics_out / player_image,
+                main_layout.width, main_layout.height,
+                pack_blocks(player_frames, main_layout, "bc4"), "bc4",
             )
-            if player_atlas.size != main_atlas.size:
-                raise ExportError("player-color atlas does not match main atlas")
-            player_image = f"{name}_playercolor.png"
-            player_atlas.save(graphics_out / player_image)
             player_status = "partial" if missing_player else "complete"
             if missing_player:
                 warnings.append(warning(
@@ -1686,7 +1747,7 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                 ))
             player_layer = image_layer_record(
                 player_status, presence_counts["player_color"], player_image,
-                player_atlas, player_meta, missing_player
+                (main_layout.width, main_layout.height), player_meta, missing_player
             )
             layers["player_color"] = player_layer
         except Exception as exc:  # noqa: BLE001
@@ -2378,7 +2439,7 @@ def export_particle_effect(args) -> int:
     atlas.save(graphics_out / image_name)
     layers = {
         "main": image_layer_record(
-            "complete", frame_count, image_name, atlas, metadata, []
+            "complete", frame_count, image_name, atlas.size, metadata, []
         ),
         "shadow": empty_layer_record("missing", 0),
         "outline": empty_layer_record("missing", 0),

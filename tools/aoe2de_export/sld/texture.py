@@ -19,6 +19,9 @@ class TextureImage:
     hotspot: tuple[int, int]
     source_ordinal: int
     source_frame_index: int
+    # The layer's own compressed blocks, row-major, so a frame can be repacked
+    # into a new atlas without a decode/re-encode round trip.
+    raw_blocks: bytes = b""
 
     @property
     def width(self) -> int:
@@ -54,4 +57,5 @@ class Texture:
                 frame.get_hotspot(),
                 int(record["ordinal"]),
                 int(record["frame_index"]),
+                frame.get_raw_blocks(),
             ))

@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import struct
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -18,22 +19,54 @@ TOOL_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOL_DIR))
 
 import aoe2de_export as exporter  # noqa: E402
+import block_atlas  # noqa: E402
+
+
+def solid_bc1_blocks(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """A BC1 block grid filled with one colour.
+
+    Both endpoints carry the same RGB565 value, which puts the block in
+    3-colour mode; every index selects endpoint 0, so the block reads back as
+    that colour at full alpha.
+    """
+    r5, g5, b5 = rgb[0] >> 3, rgb[1] >> 3, rgb[2] >> 3
+    g6 = rgb[1] >> 2
+    endpoint = (r5 << 11) | (g6 << 5) | b5
+    block = struct.pack("<HHI", endpoint, endpoint, 0)
+    return block * ((width // 4) * (height // 4))
+
+
+def solid_bc4_blocks(width: int, height: int, value: int) -> bytes:
+    """A BC4 block grid filled with one value; index 0 selects endpoint 0."""
+    block = bytes([value, value, 0, 0, 0, 0, 0, 0])
+    return block * ((width // 4) * (height // 4))
 
 
 class FakeDecodedFrame:
     def __init__(self, layer: int, record: dict[str, int], player_mismatch: bool = False):
         self.source_ordinal = record["ordinal"]
         self.source_frame_index = record["frame_index"]
+        # Real SLD frames are always a whole number of 4x4 blocks, because the
+        # format stores them that way; the fixtures follow suit so the block
+        # atlas path sees the same shapes it does in production. Main is BC1,
+        # shadow and player-colour are BC4, matching LAYER_TYPES.
         if layer == 1:
-            self.width, self.height = 3, 2
+            self.width, self.height = 4, 8
             self.hotspot = (1, 1)
             color = (80, 0, 0, 255)
         else:
-            self.width, self.height = 2, 3
+            # Player-colour must inherit the main frame's geometry.
+            self.width, self.height = 8, 4
             self.hotspot = (1, 2)
             color = (140, 140, 140, 255) if layer == 0 else (255, 17, 33, 127)
             if layer == 4 and player_mismatch:
-                self.width = 3
+                self.width = 12
+
+        if layer in (1, 4):
+            self.raw_blocks = solid_bc4_blocks(self.width, self.height, 128)
+        else:
+            self.raw_blocks = solid_bc1_blocks(self.width, self.height, color[:3])
+
         self._image = Image.new("RGBA", (self.width, self.height), color)
 
     def get_pil_image(self):
@@ -323,10 +356,16 @@ class ExporterTests(unittest.TestCase):
                 config["layers"]["main"]["atlas_w"],
                 config["layers"]["player_color"]["atlas_w"],
             )
-            mask = Image.open(old_target / "graphics" / "idleA_playercolor.png")
-            pixels = numpy.asarray(mask)
-            self.assertEqual("RGBA", mask.mode)
-            self.assertTrue(numpy.all(pixels[0:3, 0:2] == (255, 17, 33, 127)))
+            # The player-colour layer ships as a BC4 DDS assembled by copying
+            # the source blocks, so its payload is the atlas block grid and the
+            # fixture's own mask value has to survive the repack.
+            mask_dds = (old_target / "graphics" / "idleA_playercolor.dds").read_bytes()
+            self.assertEqual(b"DDS ", mask_dds[:4])
+            mask_blocks = mask_dds[128 + 20:]
+            atlas_w = config["layers"]["player_color"]["atlas_w"]
+            atlas_h = config["layers"]["player_color"]["atlas_h"]
+            self.assertEqual((atlas_w // 4) * (atlas_h // 4) * 8, len(mask_blocks))
+            self.assertIn(solid_bc4_blocks(8, 4, 128)[:8], mask_blocks)
             self.assertEqual(
                 "rgba8_bc4_decoded",
                 manifest["export_settings"]["player_color"]["format"],
@@ -1169,6 +1208,117 @@ class ExporterTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     SystemExit, r"python -m pip install genieutils-py"):
                 exporter.load_dat(Path("unused.dat"))
+
+
+class BlockAtlasTests(unittest.TestCase):
+    def make_frame(self, width, height, block, index=0):
+        return exporter.ExportFrame(
+            image=Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+            width=width, height=height, foot=(0, 0),
+            source_ordinal=index, source_frame_index=index,
+            raw_blocks=block * ((width // 4) * (height // 4)),
+        )
+
+    def test_transparent_bc1_block_is_not_zeroed(self):
+        # An all-zero BC1 block decodes to opaque black, so a zero fill would
+        # put solid black rectangles wherever a frame was never drawn.
+        self.assertNotEqual(block_atlas.TRANSPARENT_BC1, bytes(8))
+        self.assertEqual(0xFF, block_atlas.TRANSPARENT_BC1[4])
+
+    def test_pack_blocks_places_each_frame_at_its_slot(self):
+        blue = bytes([0x1F, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00])
+        red = bytes([0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00])
+        frames = [
+            self.make_frame(4, 4, blue, 0),
+            self.make_frame(8, 4, red, 1),
+        ]
+        layout = exporter.AtlasLayout(12, 4, ((0, 0, 4, 4), (4, 0, 8, 4)))
+
+        atlas = block_atlas.pack_blocks(frames, layout, "bc1")
+
+        self.assertEqual(12 * 4 // 16 * 8, len(atlas))
+        self.assertEqual(blue, atlas[0:8])
+        self.assertEqual(red, atlas[8:16])
+        self.assertEqual(red, atlas[16:24])
+
+    def test_pack_blocks_fills_gaps_with_the_transparent_block(self):
+        layout = exporter.AtlasLayout(8, 4, ((0, 0, 4, 4),))
+        frames = [self.make_frame(4, 4, bytes([1, 2, 3, 4, 5, 6, 7, 8]))]
+
+        atlas = block_atlas.pack_blocks(frames, layout, "bc1")
+
+        self.assertEqual(block_atlas.TRANSPARENT_BC1, atlas[8:16])
+
+    def test_frames_without_blocks_stay_transparent(self):
+        frame = self.make_frame(4, 4, bytes(8))
+        frame.raw_blocks = None
+        layout = exporter.AtlasLayout(4, 4, ((0, 0, 4, 4),))
+
+        atlas = block_atlas.pack_blocks([frame], layout, "bc4")
+
+        self.assertEqual(block_atlas.TRANSPARENT_BC4, atlas)
+
+    def test_pack_blocks_rejects_misaligned_input(self):
+        layout = exporter.AtlasLayout(8, 4, ((0, 0, 8, 4),))
+        with self.assertRaisesRegex(block_atlas.BlockAtlasError, "not block aligned"):
+            block_atlas.pack_blocks([self.make_frame(6, 4, bytes(8))], layout, "bc1")
+        with self.assertRaisesRegex(block_atlas.BlockAtlasError, "not block aligned"):
+            block_atlas.pack_blocks(
+                [self.make_frame(4, 4, bytes(8))],
+                exporter.AtlasLayout(6, 4, ((0, 0, 4, 4),)), "bc1")
+
+    def test_pack_blocks_rejects_a_short_block_grid(self):
+        frame = self.make_frame(8, 8, bytes(8))
+        frame.raw_blocks = bytes(8)
+        layout = exporter.AtlasLayout(8, 8, ((0, 0, 8, 8),))
+        with self.assertRaisesRegex(block_atlas.BlockAtlasError, "block bytes"):
+            block_atlas.pack_blocks([frame], layout, "bc1")
+
+    def test_dds_header_describes_the_payload(self):
+        blocks = block_atlas.TRANSPARENT_BC1 * ((16 // 4) * (8 // 4))
+        dds = block_atlas.build_dds(16, 8, blocks, "bc1")
+
+        self.assertEqual(b"DDS ", dds[:4])
+        self.assertEqual(124, struct.unpack_from("<I", dds, 4)[0])
+        self.assertEqual((8, 16), struct.unpack_from("<2I", dds, 12))
+        self.assertEqual(32, struct.unpack_from("<I", dds, 76)[0])   # ddspf.dwSize
+        self.assertEqual(0x4, struct.unpack_from("<I", dds, 80)[0])  # DDPF_FOURCC
+        self.assertEqual(0x30315844, struct.unpack_from("<I", dds, 84)[0])  # "DX10"
+        self.assertEqual(
+            (block_atlas.DXGI_BC1_UNORM, 2, 0, 1, 0),
+            struct.unpack_from("<5I", dds, 128),
+        )
+        self.assertEqual(128 + 20, len(dds) - len(blocks))
+        self.assertEqual(blocks, dds[128 + 20:])
+
+    def test_dds_rejects_a_payload_of_the_wrong_size(self):
+        with self.assertRaisesRegex(block_atlas.BlockAtlasError, "expected"):
+            block_atlas.build_dds(16, 8, bytes(8), "bc1")
+
+    def test_chosen_layout_is_block_aligned(self):
+        frames = exporter_tests_frames()
+        layout = exporter.choose_layout(frames)
+
+        self.assertEqual(0, layout.width % 4)
+        self.assertEqual(0, layout.height % 4)
+        for x, y, width, height in layout.slots:
+            self.assertEqual(0, x % 4)
+            self.assertEqual(0, y % 4)
+            self.assertEqual(0, width % 4)
+            self.assertEqual(0, height % 4)
+
+
+def exporter_tests_frames():
+    """Frame sizes with no common factor, so the packer cannot align by luck."""
+    return [
+        exporter.ExportFrame(
+            image=Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+            width=width, height=height, foot=(0, 0),
+            source_ordinal=index, source_frame_index=index,
+        )
+        for index, (width, height) in
+        enumerate([(12, 20)] * 6 + [(28, 8)] * 5 + [(8, 28)] * 4)
+    ]
 
 
 if __name__ == "__main__":
