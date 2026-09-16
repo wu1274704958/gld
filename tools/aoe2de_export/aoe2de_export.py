@@ -1528,7 +1528,7 @@ def warning(code: str, message: str, source_frames: list[int] | None = None) -> 
 
 def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                      directions: int, fps: float,
-                     sampling_mode: str = "timeline",
+                     sampling_mode: str | None = None,
                      dat_graphic: UnitAnimationGraphicMetadata | None = None):
     data = source.read_bytes()
     records = read_sld_frame_records(data)
@@ -1708,7 +1708,6 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         "direction_count": directions,
         "frames_per_direction": frames_per_direction,
         "fps": fps,
-        "sampling_mode": sampling_mode,
         "frame_order": "direction_major",
         "unused_source_frames": [
             record["frame_index"] for record in unused_records
@@ -1716,6 +1715,11 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         "warnings": warnings,
         "layers": layers,
     }
+    # Written only when the DAT actually states the sampling contract. Absent,
+    # the reader keeps its own default for the path it loaded through, which is
+    # what a source without DAT metadata should mean.
+    if sampling_mode is not None:
+        config["sampling_mode"] = sampling_mode
     if dat_graphic is not None:
         config["dat_graphic"] = {
             "graphic_id": dat_graphic.graphic_id,
@@ -1781,7 +1785,7 @@ def invalid_animation_record(source: Path, message: str) -> dict[str, Any]:
 
 def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path], out_dir: Path,
                 directions: int | None = None, record_name: str = "animations",
-                fps: float | None = None, sampling_mode: str = "timeline",
+                fps: float | None = None, sampling_mode: str | None = None,
                 dat_graphics: dict[str, UnitAnimationGraphicMetadata] | None = None) -> None:
     if not sources:
         return
@@ -2028,7 +2032,11 @@ def export_graphics(args) -> int:
     out_dir = clean_target(args.out, "graphics", args.name)
     directions = projectile_metadata.direction_count if projectile_metadata is not None else args.directions
     fps = projectile_metadata.fps if projectile_metadata is not None else args.fps
-    sampling_mode = projectile_metadata.sampling_mode if projectile_metadata is not None else "timeline"
+    # Without DAT metadata there is nothing to assert about sampling, and the
+    # renderer's default for this path is pitch_pose -- claiming "timeline"
+    # here would silently turn a direction-selected sprite into a looping
+    # animation. So the key is left out and the reader decides.
+    sampling_mode = projectile_metadata.sampling_mode if projectile_metadata is not None else None
     manifest = {
         "schema_version": GRAPHICS_SCHEMA_VERSION,
         "kind": "aoe2de_graphics",

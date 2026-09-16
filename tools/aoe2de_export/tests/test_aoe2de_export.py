@@ -740,6 +740,35 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(0, manifest["projectile"]["graphic_id"])
             self.assertEqual(-0.05, manifest["projectile"]["projectile_arc"])
 
+    def test_graphics_without_dat_metadata_omits_sampling_mode(self):
+        # The renderer's default for a graphics appearance is pitch_pose, so a
+        # config claiming "timeline" would turn a direction-selected sprite
+        # into a looping animation. With no DAT metadata there is nothing to
+        # claim about sampling, so the key has to be absent and the reader
+        # keeps its own default.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aoe2 = root / "aoe2"
+            graphics = exporter.graphics_dir(aoe2)
+            graphics.mkdir(parents=True)
+            source = graphics / "p_arrow_x2.sld"
+            source.write_bytes(make_sld([0x07] * 32))
+            out_root = root / "cache"
+            stdout = io.StringIO()
+            with mock.patch.object(exporter, "load_openage", return_value=(FakeSLD, FakeTexture)):
+                with contextlib.redirect_stdout(stdout):
+                    result = exporter.main([
+                        "--aoe2", str(aoe2), "--out", str(out_root),
+                        "--name", "p_arrow", "--graphics", source.name,
+                        "--directions", "32",
+                    ])
+            self.assertEqual(0, result)
+            config = json.loads(
+                (out_root / "graphics" / "p_arrow" / "graphics" / "p_arrow_x2.json").read_text()
+            )
+            self.assertEqual(32, config["direction_count"])
+            self.assertNotIn("sampling_mode", config)
+
     def test_projectile_graphic_uses_dat_pitch_pose_layout(self):
         metadata = exporter.resolve_projectile_graphic_metadata(
             fake_projectile_dat(
