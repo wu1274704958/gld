@@ -518,6 +518,37 @@ def resolve_unit_animation_graphic_metadata(
     return first
 
 
+def serialize_unit_audio(dat: Any, sources: dict[str, Path]) -> dict[str, Any]:
+    """Optional Graphic frame events, with signed DAT IDs normalized to uint32."""
+    animations = {}
+    for action in ("attackA", "attackB", "walkA", "deathA"):
+        if action not in sources:
+            continue
+        metadata = resolve_unit_animation_graphic_metadata(dat, sources[action])
+        if metadata is None or metadata.fps is None:
+            continue
+        graphic = dat.graphics[metadata.graphic_id]
+        events = []
+        def add(frame, event, direction):
+            if event in (-1, 0):
+                return
+            if not 0 <= frame < metadata.frames_per_direction:
+                raise ExportError(f"invalid sound frame {frame} in Graphic {metadata.graphic_id}")
+            events.append({"frame": frame, "event": event & 0xffffffff, "direction": direction})
+        add(0, int(graphic.wwise_sound_id), -1)
+        if graphic.angle_sounds_used:
+            for direction, row in enumerate(graphic.angle_sounds):
+                for suffix in ("", "_2", "_3"):
+                    add(int(getattr(row, "frame_num" + suffix)),
+                        int(getattr(row, "wwise_sound_id" + suffix)), direction)
+        animations[action] = {
+            "graphic_id": metadata.graphic_id, "fps": metadata.fps,
+            "frames": metadata.frames_per_direction, "directions": metadata.direction_count,
+            "events": events,
+        }
+    return {"schema_version": 1, "animations": animations}
+
+
 def resolve_projectile_graphic_metadata(dat: Any, civ_id: int, unit_id: int,
                                         source: Path) -> ProjectileGraphicMetadata:
     unit = get_dat_unit(dat, civ_id, unit_id)
@@ -552,6 +583,11 @@ def resolve_projectile_graphic_metadata(dat: Any, civ_id: int, unit_id: int,
     # mangonel stones (p_mangonel); it has the same time-loop sampling
     # contract as the already-supported type 1 cannonball.
     if direction_count == 1 and sequence_type in (1, 7) and frame_duration > 0.0:
+        sampling_mode = "time_loop"
+        fps = 1.0 / frame_duration
+    elif direction_count > 1 and sequence_type == 3 and frame_duration > 0.0:
+        # Direction selects the flight heading; frames animate a full spin.
+        # Mameluke scimitars (Graphic 5439) use 32 directions x 10 frames.
         sampling_mode = "time_loop"
         fps = 1.0 / frame_duration
     elif direction_count > 1 and sequence_type == 2:
@@ -1944,6 +1980,7 @@ def export_unit(args) -> int:
         "discovered_animations": discovered,
         "missing_animations": missing,
         "dat": dat_metadata,
+        "audio": serialize_unit_audio(dat, sources),
         "animations": {},
     }
     for action in missing:
