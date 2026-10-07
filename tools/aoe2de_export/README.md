@@ -7,6 +7,42 @@ collision/combat metadata. Generated game assets must not be committed.
 The SLD decoder under `sld/sld.pyx` is copied/adapted from openage. Keep the
 openage copyright/license notice in copied files.
 
+## Visual map export
+
+`--visual-map SCENARIO.aoe2scenario --out CACHE --name MAP_ID` exports an
+engine-neutral visual bundle to `CACHE/maps/MAP_ID`. Install the optional
+`requirements-visual-map.txt` first. Existing unit/graphic exports do not need it.
+
+For maps that share the same AoE2DE DAT, export the terrain library once, then
+export compact source maps that reference it:
+
+```text
+python aoe2de_export.py --terrain-library --aoe2 AOE2DE_DIR --out CACHE --name de-terrain
+python aoe2de_export.py --visual-map SCENARIO.aoe2scenario --static-object-library --aoe2 AOE2DE_DIR --out CACHE --name de-static
+python aoe2de_export.py --visual-map SCENARIO.aoe2scenario --map-terrain-library CACHE/terrain-libraries/de-terrain --map-object-library CACHE/object-libraries/de-static --map-objects none --aoe2 AOE2DE_DIR --out CACHE --name MAP_ID_WITH_FEATURES
+```
+
+The library contains the complete DAT terrain catalog (200 IDs in the tested DE version) and original DDS,
+PNG, and JSON files under `source/terrain/`; no terrain pixels are decoded or
+repacked. A compact map contains only `terrain.bin`, all placed-object metadata,
+and a manifest referring to the library's ID and DAT/catalog hashes. It never
+copies terrain assets or resolves a random player's visual civilization. The
+Recoil's native map adapter can consume the compact map. The optional static
+object library is DAT-versioned and contains reusable scenery atlases plus an
+index; maps reference it without duplicating the graphics.
+
+The bundle includes the tile grid, referenced terrain textures and source blend
+recipes, shared decoration sprite atlases, building annexes and atlas-particle
+dependencies. No triggers, AI, player economy, collision or gameplay definitions
+are emitted. The bundle retains source terrain ID, layer and elevation. Recoil
+now has a native adapter for compact terrain maps and DAT-selected static
+scenery; dynamic actors and gameplay behavior remain separate work.
+
+Use `--map-objects scenery|all|none`, `--map-player-civ PLAYER:CIV` for unresolved
+random civilizations, and explicitly opt into `--map-allow-incomplete` if needed.
+Existing output directories are never overwritten. See
+[the visual map format and usage guide](../../doc/aoe2de_visual_map_exporter.md).
+
 ## Build the local SLD extension
 
 ```powershell

@@ -1,0 +1,2 @@
+# Optional; existing unit/graphics export does not import this dependency.
+AoE2ScenarioParser==0.9.3

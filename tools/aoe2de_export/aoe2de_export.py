@@ -2596,6 +2596,24 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--page", type=positive_int, default=1)
     parser.add_argument("--unit", metavar="PREFIX")
     parser.add_argument("--building", metavar="PREFIX")
+    parser.add_argument("--visual-map", type=Path, metavar="SCENARIO",
+                        help="export a .aoe2scenario as a graphics-only map bundle")
+    parser.add_argument("--terrain-library", action="store_true",
+                        help="export one reusable terrain catalog and original source assets")
+    parser.add_argument("--map-terrain-library", type=Path, metavar="LIBRARY",
+                        help="export a compact source map referencing an existing terrain library")
+    parser.add_argument("--map-object-library", type=Path, metavar="LIBRARY",
+                        help="reference an existing shared static scenery graphic library")
+    parser.add_argument("--static-object-library", action="store_true",
+                        help="export one reusable static scenery graphic library from --visual-map")
+    parser.add_argument("--map-objects", choices=("scenery", "all", "none"), default="scenery",
+                        help="visual-map object selection; all still exports appearances only")
+    parser.add_argument("--map-player-civ", action="append", default=[], metavar="PLAYER:CIV",
+                        help="resolve a random/custom player's visual civilization to a DAT civ ID")
+    parser.add_argument("--map-allow-incomplete", action="store_true",
+                        help="write an explicitly incomplete bundle with missing-resource diagnostics")
+    parser.add_argument("--map-preview-size", type=positive_int, default=1024,
+                        help="maximum terrain-only diagnostic preview dimension (at most 4096)")
     parser.add_argument(
         "--particle-effect", metavar="EFFECT",
         help="export an AoE2DE raw-frame or TexturePacker-atlas one-shot particle effect",
@@ -2620,15 +2638,44 @@ def main(argv: list[str] | None = None) -> int:
         args.list is not None,
         args.unit is not None,
         args.building is not None,
+        args.visual_map is not None,
+        args.terrain_library,
         args.particle_effect is not None,
         bool(args.graphics),
     ))
     if selected_modes > 1:
         raise SystemExit(
-            "choose only one of --list, --unit, --building, --particle-effect, or --graphics"
+            "choose only one of --list, --unit, --building, --visual-map, --terrain-library, --particle-effect, or --graphics"
         )
     if args.projectile_unit_id is not None and not args.graphics:
         raise SystemExit("--projectile-unit-id is only valid with --graphics")
+    if args.map_terrain_library is not None and args.visual_map is None:
+        raise SystemExit("--map-terrain-library requires --visual-map")
+    if args.map_object_library is not None and args.visual_map is None:
+        raise SystemExit("--map-object-library requires --visual-map")
+    if args.static_object_library and args.visual_map is None:
+        raise SystemExit("--static-object-library requires --visual-map")
+    if args.static_object_library and (args.map_terrain_library is not None or args.map_object_library is not None):
+        raise SystemExit("--static-object-library cannot reference a map terrain/object library")
+    if args.map_object_library is not None and args.map_terrain_library is None:
+        raise SystemExit("--map-object-library requires --map-terrain-library")
+    if args.map_terrain_library is not None and args.map_objects != "none":
+        raise SystemExit("--map-terrain-library requires --map-objects none; objects remain in metadata")
+    if args.terrain_library:
+        if not args.out or not args.name:
+            raise SystemExit("--terrain-library requires --out and --name")
+        from visual_map import export_terrain_library
+        return export_terrain_library(args, sys.modules[__name__])
+    if args.visual_map is not None:
+        if args.dump_layers or args.animations is not None or args.unit_id is not None:
+            raise SystemExit("--visual-map cannot be combined with --dump-layers, --animations or --unit-id")
+        if not args.out or not args.name:
+            raise SystemExit("--visual-map requires --out and --name")
+        from visual_map import export_visual_map, export_static_object_library
+        # Reuse the already loaded module also when invoked as a script (__main__).
+        if args.static_object_library:
+            return export_static_object_library(args, sys.modules[__name__])
+        return export_visual_map(args, sys.modules[__name__])
     if args.list is not None:
         return list_units(args.aoe2, args.list, args.page)
     if not args.out:
@@ -2644,7 +2691,7 @@ def main(argv: list[str] | None = None) -> int:
         return export_particle_effect(args)
     if args.graphics:
         return export_graphics(args)
-    raise SystemExit("choose --list, --unit, --building, --particle-effect, or --graphics")
+    raise SystemExit("choose --list, --unit, --building, --visual-map, --terrain-library, --particle-effect, or --graphics")
 
 
 if __name__ == "__main__":
