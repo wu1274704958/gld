@@ -462,7 +462,7 @@ def _graphic_prefix_without_scale(value: str) -> str:
 
 
 def resolve_unit_animation_graphic_metadata(
-        dat: Any, source: Path) -> UnitAnimationGraphicMetadata | None:
+        dat: Any, source: Path, preferred_graphic_ids: tuple[int, ...] = ()) -> UnitAnimationGraphicMetadata | None:
     source_name = _graphic_prefix_without_scale(source.name).casefold()
     matches: list[UnitAnimationGraphicMetadata] = []
     for graphic_id, graphic in enumerate(getattr(dat, "graphics", ())):
@@ -502,6 +502,21 @@ def resolve_unit_animation_graphic_metadata(
 
     if not matches:
         return None
+    if source.is_file():
+        frame_count = len(read_sld_frame_records(source.read_bytes()))
+        matching_frames = [match for match in matches
+                           if match.direction_count * match.frames_per_direction <= frame_count <
+                           match.direction_count * (match.frames_per_direction + 1)]
+        if matching_frames:
+            matches = matching_frames
+    if preferred_graphic_ids:
+        preferred = [match for match in matches if match.graphic_id in preferred_graphic_ids]
+        if preferred:
+            matches = preferred
+    if len(matches) > 1 and preferred_graphic_ids:
+        matches.sort(key=lambda match: preferred_graphic_ids.index(match.graphic_id)
+                     if match.graphic_id in preferred_graphic_ids else len(preferred_graphic_ids))
+        matches = matches[:1]
     first = matches[0]
     timing = (
         first.direction_count, first.frames_per_direction,
@@ -1606,7 +1621,8 @@ def warning(code: str, message: str, source_frames: list[int] | None = None) -> 
 def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                      directions: int, fps: float,
                      sampling_mode: str | None = None,
-                     dat_graphic: UnitAnimationGraphicMetadata | None = None):
+                     dat_graphic: UnitAnimationGraphicMetadata | None = None,
+                     shadow_source: Path | None = None):
     data = source.read_bytes()
     records = read_sld_frame_records(data)
     source_frame_count = len(records)
@@ -1672,12 +1688,24 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
         )
     }
 
-    # Shadow has its own crop and UV layout, but shares physical frame order.
-    if presence_counts["shadow"] == 0:
+    # Some airborne Graphics ship their full ground shadow in a sibling SLD.
+    # Keep its original BC4 blocks and frame metadata, rather than deriving a
+    # shadow from the much weaker embedded layer of the body SLD.
+    shadow_records = records
+    shadow_sld = sld
+    if shadow_source is not None:
+        shadow_records = read_sld_frame_records(shadow_source.read_bytes())
+        if len(shadow_records) < usable_count or any(
+                a["frame_index"] != b["frame_index"]
+                for a, b in zip(usable_records, shadow_records[:usable_count])):
+            raise ExportError(f"{shadow_source.name} frame order does not match {source.name}")
+        shadow_sld = SLD(shadow_source.read_bytes())
+    shadow_count = len(layer_presence(shadow_records[:usable_count], "shadow"))
+    if shadow_count == 0:
         layers["shadow"] = empty_layer_record("missing", 0)
     else:
         try:
-            shadow_map = decoded_layer_map(Texture, sld, records, "shadow")
+            shadow_map = decoded_layer_map(Texture, shadow_sld, shadow_records, "shadow")
             missing_shadow = [
                 record["frame_index"] for record in usable_records
                 if record["ordinal"] not in shadow_map
@@ -1710,7 +1738,7 @@ def export_animation(SLD, Texture, source: Path, out_dir: Path, name: str,
                     missing_shadow,
                 ))
             layers["shadow"] = image_layer_record(
-                shadow_status, presence_counts["shadow"], shadow_image,
+                shadow_status, shadow_count, shadow_image,
                 (shadow_layout.width, shadow_layout.height), shadow_meta, missing_shadow
             )
         except Exception as exc:  # noqa: BLE001
@@ -1883,7 +1911,8 @@ def invalid_animation_record(source: Path, message: str) -> dict[str, Any]:
 def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path], out_dir: Path,
                 directions: int | None = None, record_name: str = "animations",
                 fps: float | None = None, sampling_mode: str | None = None,
-                dat_graphics: dict[str, UnitAnimationGraphicMetadata] | None = None) -> None:
+                dat_graphics: dict[str, UnitAnimationGraphicMetadata] | None = None,
+                shadow_source: Path | None = None) -> None:
     if not sources:
         return
     SLD, Texture = load_openage(args.openage)
@@ -1898,6 +1927,7 @@ def run_exports(args, manifest: dict[str, Any], sources: dict[str, Path], out_di
                     (args.fps if fps is None else fps),
                 sampling_mode,
                 dat_graphic,
+                shadow_source,
             )
             manifest[record_name][name] = record
             print(f"exported {source.name} -> {record['config']}")
@@ -1942,7 +1972,8 @@ def export_unit(args) -> int:
     dat_graphics: dict[str, UnitAnimationGraphicMetadata] = {}
     for action, source in sources.items():
         try:
-            metadata = resolve_unit_animation_graphic_metadata(dat, source)
+            metadata = resolve_unit_animation_graphic_metadata(
+                dat, source, tuple(graphic_id for graphic_id, _ in dat_match.graphics))
         except ExportError as exc:
             raise SystemExit(f"failed to resolve DAT timing for {source.name}: {exc}") from exc
         if metadata is None:
@@ -2087,7 +2118,17 @@ def export_graphics(args) -> int:
         raise SystemExit(f"graphics directory does not exist: {root}")
     validate_resource_id(args.name)
 
+    shadow_source = None
+    if args.shadow_graphics is not None:
+        if len(args.graphics) != 1:
+            raise SystemExit("--shadow-graphics requires exactly one --graphics source")
+        shadow_source = root / args.shadow_graphics
+        if not shadow_source.is_file():
+            raise SystemExit(f"missing shadow graphic: {shadow_source}")
+
     projectile_metadata = None
+    source_graphic = None
+    source_graphic_metadata = None
     if args.projectile_unit_id is not None:
         if len(args.graphics) != 1:
             raise SystemExit("--projectile-unit-id requires exactly one --graphics source")
@@ -2115,6 +2156,27 @@ def export_graphics(args) -> int:
                 f"{projectile_metadata.direction_count}"
             )
 
+    if args.graphic_id is not None:
+        if len(args.graphics) != 1:
+            raise SystemExit("--graphic-id requires exactly one --graphics source")
+        source = root / args.graphics[0]
+        dat = load_dat(args.dat or dat_path_for(args.aoe2))
+        if args.graphic_id >= len(dat.graphics):
+            raise SystemExit("--graphic-id is outside the DAT Graphic table")
+        source_graphic = dat.graphics[args.graphic_id]
+        if _graphic_prefix_without_scale(source_graphic.file_name).casefold() != _graphic_prefix_without_scale(source.name).casefold():
+            raise SystemExit("--graphic-id does not match the source SLD")
+        source_graphic_metadata = resolve_unit_animation_graphic_metadata(dat, source)
+        if source_graphic_metadata is None:
+            raise SystemExit("source SLD has no valid DAT animation metadata")
+        if (source_graphic_metadata.direction_count != int(source_graphic.angle_count) or
+                source_graphic_metadata.frames_per_direction != int(source_graphic.frame_count)):
+            raise SystemExit("source SLD and selected DAT Graphic disagree")
+        expected = int(source_graphic.angle_count) * int(source_graphic.frame_count)
+        actual = len(read_sld_frame_records(source.read_bytes()))
+        if not expected <= actual < expected + int(source_graphic.angle_count):
+            raise SystemExit(f"source SLD frame count does not match DAT Graphic {args.graphic_id}")
+
     requested = [Path(filename).stem for filename in args.graphics]
     if len(set(requested)) != len(requested):
         raise SystemExit("--graphics contains duplicate output names")
@@ -2128,13 +2190,15 @@ def export_graphics(args) -> int:
         if not (root / filename).is_file()
     ]
     out_dir = clean_target(args.out, "graphics", args.name)
-    directions = projectile_metadata.direction_count if projectile_metadata is not None else args.directions
-    fps = projectile_metadata.fps if projectile_metadata is not None else args.fps
+    directions = (projectile_metadata.direction_count if projectile_metadata is not None else
+                  source_graphic_metadata.direction_count if source_graphic_metadata is not None else args.directions)
+    fps = (projectile_metadata.fps if projectile_metadata is not None else
+           source_graphic_metadata.fps if source_graphic_metadata is not None else args.fps)
     # Without DAT metadata there is nothing to assert about sampling, and the
     # renderer's default for this path is pitch_pose -- claiming "timeline"
     # here would silently turn a direction-selected sprite into a looping
     # animation. So the key is left out and the reader decides.
-    sampling_mode = projectile_metadata.sampling_mode if projectile_metadata is not None else None
+    sampling_mode = projectile_metadata.sampling_mode if projectile_metadata is not None else args.graphic_sampling
     manifest = {
         "schema_version": GRAPHICS_SCHEMA_VERSION,
         "kind": "aoe2de_graphics",
@@ -2147,6 +2211,8 @@ def export_graphics(args) -> int:
         "missing_animations": missing,
         "animations": {},
     }
+    if args.graphic_presentation is not None:
+        manifest["presentation"] = args.graphic_presentation
     if projectile_metadata is not None:
         manifest["projectile"] = {
             "civ_id": projectile_metadata.civ_id,
@@ -2162,6 +2228,16 @@ def export_graphics(args) -> int:
                 "sampling_mode": projectile_metadata.sampling_mode,
             },
         }
+    if source_graphic is not None:
+        manifest["source_graphic"] = {
+            "graphic_id": args.graphic_id,
+            "wwise_sound_id": int(source_graphic.wwise_sound_id) & 0xFFFFFFFF,
+            "angle_count": int(source_graphic.angle_count),
+            "frame_count": int(source_graphic.frame_count),
+            "frame_duration": float(source_graphic.frame_duration),
+        }
+    if shadow_source is not None:
+        manifest["source_shadow_graphic"] = shadow_source.name
     for name in missing:
         message = f"requested graphic '{name}' is missing"
         print(f"warning: {message}")
@@ -2177,6 +2253,8 @@ def export_graphics(args) -> int:
     run_exports(
         args, manifest, sources, out_dir,
         directions=directions, fps=fps, sampling_mode=sampling_mode,
+        dat_graphics=({next(iter(sources)): source_graphic_metadata} if source_graphic_metadata is not None else None),
+        shadow_source=shadow_source,
     )
     finish_manifest(manifest)
     write_json(out_dir / "manifest.json", manifest)
@@ -2588,6 +2666,14 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--civ-id", type=non_negative_int, default=0)
     parser.add_argument("--unit-id", type=non_negative_int)
     parser.add_argument("--projectile-unit-id", type=non_negative_int)
+    parser.add_argument("--graphic-id", type=non_negative_int,
+                        help="read animation timing and sound event from this DAT Graphic")
+    parser.add_argument("--graphic-sampling", choices=("time_loop", "pitch_pose"),
+                        help="render sampling mode for a standalone Graphic")
+    parser.add_argument("--graphic-presentation", choices=("airborne",),
+                        help="render a standalone Graphic as an airborne appearance")
+    parser.add_argument("--shadow-graphics", metavar="SLD",
+                        help="sibling SLD containing the frame-aligned ground shadow layer")
     parser.add_argument("--unit-map", type=Path, default=DEFAULT_UNIT_MAP)
     parser.add_argument("--building-map", type=Path, default=DEFAULT_BUILDING_MAP)
     parser.add_argument("--out", type=Path, help="cache root directory")
@@ -2649,6 +2735,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.projectile_unit_id is not None and not args.graphics:
         raise SystemExit("--projectile-unit-id is only valid with --graphics")
+    if args.graphic_id is not None and not args.graphics:
+        raise SystemExit("--graphic-id is only valid with --graphics")
+    if args.graphic_sampling is not None and not args.graphics:
+        raise SystemExit("--graphic-sampling is only valid with --graphics")
+    if args.graphic_presentation is not None and not args.graphics:
+        raise SystemExit("--graphic-presentation is only valid with --graphics")
+    if args.shadow_graphics is not None and not args.graphics:
+        raise SystemExit("--shadow-graphics is only valid with --graphics")
+    if args.graphic_id is not None and args.projectile_unit_id is not None:
+        raise SystemExit("--graphic-id cannot be combined with --projectile-unit-id")
     if args.map_terrain_library is not None and args.visual_map is None:
         raise SystemExit("--map-terrain-library requires --visual-map")
     if args.map_object_library is not None and args.visual_map is None:

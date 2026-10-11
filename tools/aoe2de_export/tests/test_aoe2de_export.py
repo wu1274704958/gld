@@ -427,6 +427,23 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(0.0, metadata.frame_duration)
         self.assertIsNone(metadata.fps)
 
+    def test_shared_animation_uses_matching_frames_then_selected_unit_graphic(self):
+        dat = fake_unit_animation_dat(frame_count=1)
+        dat.graphics.append(SimpleNamespace(
+            file_name="u_test_idleA_x1", angle_count=2, frame_count=2,
+            sequence_type=3, frame_duration=0.04))
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "u_test_idleA_x2.sld"
+            source.write_bytes(make_sld([0x17] * 4))
+            metadata = exporter.resolve_unit_animation_graphic_metadata(dat, source, (0, 2))
+            self.assertEqual(2, metadata.graphic_id)
+            self.assertEqual(2, metadata.frames_per_direction)
+
+        dat.graphics[0].frame_count = 2
+        metadata = exporter.resolve_unit_animation_graphic_metadata(
+            dat, Path("u_test_idleA_x2.sld"), (2, 0))
+        self.assertEqual(2, metadata.graphic_id)
+
     def test_building_export_writes_schema_states_and_muzzle_candidate(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

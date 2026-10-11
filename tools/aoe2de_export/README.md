@@ -30,6 +30,8 @@ copies terrain assets or resolves a random player's visual civilization. The
 Recoil's native map adapter can consume the compact map. The optional static
 object library is DAT-versioned and contains reusable scenery atlases plus an
 index; maps reference it without duplicating the graphics.
+An empty dependency Graphic is omitted only when it is not a selected object
+appearance; a selected object's missing appearance remains an export error.
 
 The bundle includes the tile grid, referenced terrain textures and source blend
 recipes, shared decoration sprite atlases, building annexes and atlas-particle
@@ -172,6 +174,8 @@ SLD frame indexes in `unused_source_frames`.
 `resources/_common/dat/empires2_x2_p1.dat` below `--aoe2`; `--civ-id` defaults
 to Gaia (`0`). Unit selection is deterministic, in this order:
 
+For standalone animated scenery Graphics, `--graphics <SLD> --graphic-id <DAT Graphic ID> --graphic-sampling time_loop` reads the original direction count, frame timing and Wwise event from DAT. `--graphic-presentation airborne` marks a flying appearance so the renderer does not apply ground-foot depth correction. By default the exporter retains the main SLD's built-in shadow layer. When a Graphic has a frame-aligned sibling ground-shadow SLD (for example AoE2DE birds), pass `--shadow-graphics <shadow.sld>` to use its original BC4 shadow frames instead.
+
 1. `--unit-id` explicitly selects the unit in `--civ-id`.
 2. `--unit-map` is checked (default: `unit_dat_map.json` next to the exporter).
 3. The selected civilization is scanned for exactly one unit whose standing,
@@ -187,6 +191,11 @@ selections that do not reference the prefix are permitted with a warning:
   "u_cam_camel_scout": {"civ_id": 0, "unit_id": 448}
 }
 ```
+
+When several DAT Graphics share an SLD filename, the exporter selects the one
+matching the actual SLD frame count and prioritizes Graphics referenced by the
+selected unit (standing before walking/attack/death), rather than using an
+unrelated unit's animation timing.
 
 Example with an explicit mapping override:
 

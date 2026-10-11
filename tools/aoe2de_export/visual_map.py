@@ -792,6 +792,8 @@ def export_static_object_library(args, api) -> int:
             prefix = "map_" + dat_hash[:12] + "_g"
             published = []
             for graphic_id, record in sorted(graphics.records.items()):
+                if (record["status"] == "empty" and graphic_id not in selected.values()):
+                    continue
                 if record["status"] != "exported":
                     raise VisualMapError(f"static graphic {graphic_id} is incomplete: {record['status']}")
                 if not record.get("config"):
